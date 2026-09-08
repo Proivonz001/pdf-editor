@@ -1,0 +1,19 @@
+PDF Editor
+Copyright (c) 2026 Priamo Anfuso
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+Bundled third-party components keep their own licenses:
+- MuPDF (lib/mupdf*.js, lib/mupdf-wasm.wasm): AGPL-3.0, Artifex Software
+- pdf.js (lib/pdf.min.js, lib/pdf.worker.min.js): Apache-2.0, Mozilla
+- pdf-lib (lib/pdf-lib.min.js): MIT
+- fontkit (lib/fontkit.umd.js): MIT
+- Tesseract.js and tessdata (lib/tesseract/): Apache-2.0

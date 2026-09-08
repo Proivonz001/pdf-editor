@@ -1,0 +1,1376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Editor</title>
+<style>
+  :root{
+    --bg:#1e1f24; --panel:#2a2c33; --panel2:#34373f; --line:#3d4049;
+    --txt:#e8e9ec; --muted:#9aa0ab; --accent:#4f8cff; --accent2:#3a6fd0;
+    --danger:#e05656; --ok:#3fb56a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:"Segoe UI",system-ui,Arial,sans-serif;background:var(--bg);color:var(--txt);display:flex;flex-direction:column;overflow:hidden}
+
+  /* Toolbar */
+  #toolbar{display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  #toolbar .sep{width:1px;height:26px;background:var(--line);margin:0 4px}
+  button.tb{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:7px 11px;cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
+  button.tb:hover{background:#3f424c}
+  button.tb.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.tb.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.tb.primary:hover{background:var(--accent2)}
+  button.tb:disabled{opacity:.45;cursor:not-allowed}
+  #toolbar label{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:5px}
+  input[type=color]{width:30px;height:30px;border:1px solid var(--line);border-radius:6px;background:none;padding:2px;cursor:pointer}
+  input[type=number]{width:56px;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:5px}
+  .spacer{flex:1}
+
+  /* Layout */
+  #main{flex:1;display:flex;min-height:0}
+  #sidebar{width:170px;background:var(--panel);border-right:1px solid var(--line);overflow:auto;padding:10px;flex-shrink:0}
+  #sidebar h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+  .thumb{position:relative;background:#fff;border:2px solid transparent;border-radius:6px;margin-bottom:10px;cursor:pointer;overflow:hidden}
+  .thumb.sel{border-color:var(--accent)}
+  .thumb canvas{display:block;width:100%}
+  .thumb .pno{position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.6);color:#fff;font-size:11px;padding:1px 6px;border-radius:4px}
+  .thumb .badge{position:absolute;right:4px;top:4px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:1px 5px;border-radius:4px}
+  .thumb .pgbtns{position:absolute;right:3px;bottom:3px;display:none;gap:3px}
+  .thumb:hover .pgbtns{display:flex}
+  .thumb .pgbtns button{background:rgba(0,0,0,.7);color:#fff;border:none;border-radius:4px;width:22px;height:22px;cursor:pointer;font-size:12px;line-height:1}
+  .thumb .pgbtns button:hover{background:var(--accent)}
+
+  #viewer{flex:1;overflow:auto;padding:24px;display:flex;flex-direction:column;align-items:center;gap:22px}
+  .page{position:relative;background:#fff;box-shadow:0 4px 18px rgba(0,0,0,.45);flex-shrink:0}
+  .page canvas.base{display:block}
+  .page canvas.draw{position:absolute;left:0;top:0}
+  .page .annlayer{position:absolute;left:0;top:0;width:100%;height:100%}
+  .ann{position:absolute;box-sizing:border-box}
+  .ann.sel{outline:1.5px dashed var(--accent);outline-offset:1px}
+  .ann .grip{position:absolute;left:-9px;top:-9px;width:16px;height:16px;background:var(--accent);border:2px solid #fff;border-radius:50%;cursor:move;display:none;z-index:5}
+  .ann .handle{position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;background:var(--accent);border:2px solid #fff;border-radius:3px;cursor:nwse-resize;display:none;z-index:5}
+  .ann .del{position:absolute;right:-11px;top:-11px;width:20px;height:20px;background:var(--danger);color:#fff;border:2px solid #fff;border-radius:50%;cursor:pointer;display:none;z-index:6;font:bold 14px/16px Arial;text-align:center}
+  .ann.sel .grip,.ann.sel .handle,.ann.sel .del{display:block}
+  .ann.text{min-width:30px;padding:2px 3px}
+  .ann.text .edit{outline:none;white-space:pre-wrap;word-break:break-word;cursor:text}
+  .ann.rect{}
+  .ann.image img{width:100%;height:100%;display:block;pointer-events:none}
+
+  /* Empty / drop state */
+  #empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);text-align:center}
+  #empty .drop{border:2px dashed var(--line);border-radius:16px;padding:48px 60px;transition:.15s}
+  #empty .drop.over{border-color:var(--accent);background:rgba(79,140,255,.08)}
+  #empty h2{color:var(--txt);margin:6px 0}
+  #status{position:fixed;bottom:14px;right:16px;background:var(--panel2);border:1px solid var(--line);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:.2s;pointer-events:none}
+  #status.show{opacity:1}
+  .hint{font-size:12px;color:var(--muted);padding:0 6px}
+  .ann.grid svg{display:block;width:100%;height:100%;pointer-events:none}
+  .ann.shape{min-width:4px;min-height:4px}
+  .ann.shape svg{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+  #toolbar select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;padding:6px}
+
+  /* Modale firma */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50}
+  .modal[hidden]{display:none}
+  .modalbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;width:min(560px,92vw);max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .modalbox h3{margin:0 0 10px}
+  .modalbox h4{margin:16px 0 8px;font-size:13px;color:var(--muted)}
+  #sigPad{width:100%;height:180px;background:#fff;border:1px dashed var(--line);border-radius:8px;touch-action:none;cursor:crosshair}
+  .modalbox .row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .modalbox .row.end{justify-content:flex-end}
+  .siglist{display:flex;flex-wrap:wrap;gap:10px}
+  .sigitem{border:1px solid var(--line);border-radius:8px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:5px;background:var(--panel2)}
+  .sigitem img{width:130px;height:54px;object-fit:contain;background:#fff;border-radius:4px}
+  .sigitem .b{display:flex;gap:5px}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button class="tb primary" id="btnOpen">📂 Open PDF</button>
+  <button class="tb" id="btnAppend" disabled>➕ Merge PDF</button>
+  <div class="sep"></div>
+  <button class="tb" id="btnUndo" disabled title="Undo (Ctrl+Z)">↶</button>
+  <button class="tb" id="btnRedo" disabled title="Redo (Ctrl+Y)">↷</button>
+  <div class="sep"></div>
+  <button class="tb active" data-tool="select" disabled>🖱️ Move</button>
+  <button class="tb" data-tool="text" disabled>🅣 Text</button>
+  <button class="tb" data-tool="edittext" disabled title="Click a word or line to edit it in place (same page)">✎ Edit text</button>
+  <button class="tb" id="btnEditAll" disabled title="Make all the text editable ON the same page (high quality, like the single-line mode)">✎✎ All text</button>
+  <button class="tb" id="btnCopyPage" disabled title="Create a NEW rebuilt page with all the text editable">➕ Copy to new page</button>
+  <button class="tb" data-tool="highlight" disabled>🖍️ Highlight</button>
+  <button class="tb" data-tool="whiteout" disabled>⬜ Erase</button>
+  <button class="tb" data-tool="draw" disabled>✏️ Pen</button>
+  <button class="tb" data-tool="grid" disabled>▦ Grid</button>
+  <button class="tb" data-tool="shape-line" disabled>／ Line</button>
+  <button class="tb" data-tool="shape-rect" disabled>▭ Rectangle</button>
+  <button class="tb" data-tool="shape-arrow" disabled>↗ Arrow</button>
+  <button class="tb" data-tool="image" disabled>🖼️ Image</button>
+  <button class="tb" id="btnSign" disabled>✍️ Signature</button>
+  <button class="tb" id="btnOCR" disabled title="Recognise the text of a scanned PDF">🔎 OCR</button>
+  <select id="ocrLang" title="OCR language"><option value="eng">English</option><option value="ita">Italian</option><option value="ita+eng">ITA+ENG</option></select>
+  <div class="sep"></div>
+  <label>Color <input type="color" id="color" value="#e02424"></label>
+  <label>Size <input type="number" id="size" value="16" min="6" max="200"></label>
+  <button class="tb" id="btnBold" disabled title="Bold"><b>B</b></button>
+  <button class="tb" id="btnItalic" disabled title="Italic"><i>I</i></button>
+  <label title="Grid: rows × columns">▦ <input type="number" id="gridRows" value="3" min="1" max="50" style="width:44px"> × <input type="number" id="gridCols" value="3" min="1" max="50" style="width:44px"></label>
+  <div class="spacer"></div>
+  <span id="muBadge" class="hint" title="Real text-removal engine (MuPDF / WASM)">⏳ engine…</span>
+  <span class="hint">✕ or Del to remove</span>
+  <button class="tb primary" id="btnExport" disabled>💾 Export PDF</button>
+</div>
+
+<div id="main">
+  <div id="sidebar"><h3>Pages</h3><div id="thumbs"></div></div>
+  <div id="viewer">
+    <div id="empty">
+      <div class="drop" id="drop">
+        <h2>Drop a PDF here</h2>
+        <div>or click “Open PDF” above</div>
+        <div style="font-size:12px;margin-top:10px">Everything happens in your browser — no file is ever uploaded.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="status"></div>
+
+<input type="file" id="fileOpen" accept="application/pdf" hidden>
+<input type="file" id="fileAppend" accept="application/pdf" hidden>
+<input type="file" id="fileImage" accept="image/*" hidden>
+
+<div id="sigModal" class="modal" hidden>
+  <div class="modalbox">
+    <h3>✍️ Signature</h3>
+    <div class="hint" style="padding:0 0 8px">Draw your signature below (mouse or finger), save it and reuse it whenever you want.</div>
+    <canvas id="sigPad" width="520" height="180"></canvas>
+    <div class="row">
+      <label>Color <input type="color" id="sigColor" value="#0b1f44"></label>
+      <button class="tb" id="sigClear">Clear</button>
+      <button class="tb primary" id="sigSave">💾 Save signature</button>
+    </div>
+    <h4>Saved signatures (stored locally on this device)</h4>
+    <div id="sigList" class="siglist"></div>
+    <div class="row end"><button class="tb" id="sigClose">Close</button></div>
+  </div>
+</div>
+
+<script src="lib/pdf.min.js"></script>
+<script src="lib/pdf-lib.min.js"></script>
+<script src="lib/fontkit.umd.js"></script>
+<script src="lib/tesseract/tesseract.min.js"></script>
+<script>
+"use strict";
+
+/* ===== Config ===== */
+const RENDER_SCALE = 1.5;            // punti PDF -> pixel a schermo
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js";
+
+/* ===== Stato ===== */
+let sources = {};            // id -> { bytes: Uint8Array }
+let srcSeq = 0;
+let pages = [];              // [{ id, sourceId, pageIndex, rotation, annotations:[], drawCanvas, drawCtx, el, ... }]
+let pageSeq = 0;
+let tool = "select";
+let selected = null;         // ann DOM element selezionato
+let defaultStyle = { bold:false, italic:false }; // stile per il nuovo testo
+
+/* ===== Helper UI ===== */
+const $ = s => document.querySelector(s);
+const viewer = $("#viewer");
+const thumbsBox = $("#thumbs");
+let statusTimer;
+function status(msg){
+  const s = $("#status"); s.textContent = msg; s.classList.add("show");
+  clearTimeout(statusTimer); statusTimer = setTimeout(()=>s.classList.remove("show"), 2200);
+}
+function hexToRgb(hex){
+  const n = parseInt(hex.slice(1),16);
+  return PDFLib.rgb(((n>>16)&255)/255, ((n>>8)&255)/255, (n&255)/255);
+}
+
+/* ===== Pop-up interni all'app (al posto di alert/confirm del browser) ===== */
+function appDialog(msg, opts){
+  opts=opts||{};
+  return new Promise(res=>{
+    const ov=document.createElement("div"); ov.className="modal";
+    const box=document.createElement("div"); box.className="modalbox"; box.style.maxWidth="440px";
+    const p=document.createElement("div"); p.textContent=msg; p.style.whiteSpace="pre-wrap"; p.style.marginBottom="14px";
+    const row=document.createElement("div"); row.className="row end";
+    const done=v=>{ ov.remove(); document.removeEventListener("keydown",onKey,true); res(v); };
+    if(opts.confirm){ const no=document.createElement("button"); no.className="tb"; no.textContent=opts.cancelText||"Cancel"; no.onclick=()=>done(false); row.appendChild(no); }
+    const ok=document.createElement("button"); ok.className="tb primary"; ok.textContent=opts.okText||"OK"; ok.onclick=()=>done(true); row.appendChild(ok);
+    box.append(p,row); ov.appendChild(box); document.body.appendChild(ov);
+    const onKey=e=>{ if(e.key==="Escape"){ e.stopPropagation(); done(false);} else if(e.key==="Enter"){ e.stopPropagation(); done(true);} };
+    document.addEventListener("keydown",onKey,true);
+    ok.focus();
+  });
+}
+function appAlert(msg){ return appDialog(msg,{}); }
+function appConfirm(msg){ return appDialog(msg,{confirm:true}); }
+
+/* ===== Apertura file ===== */
+$("#btnOpen").onclick = ()=> $("#fileOpen").click();
+$("#btnAppend").onclick = ()=> $("#fileAppend").click();
+$("#fileOpen").onchange = e => { if(e.target.files[0]) loadPdf(e.target.files[0], true); e.target.value=""; };
+$("#fileAppend").onchange = e => { if(e.target.files[0]) loadPdf(e.target.files[0], false); e.target.value=""; };
+
+const drop = $("#drop");
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
+drop.addEventListener("drop", e=>{
+  const f = e.dataTransfer.files[0];
+  if(f && f.type==="application/pdf") loadPdf(f, true);
+});
+
+async function loadPdf(file, replace){
+  status("Loading the PDF…");
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const sourceId = "s"+(srcSeq++);
+  sources[sourceId] = { bytes: buf };
+  // copia per pdf.js (evita il detach del buffer)
+  const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+  if(replace){ pages = []; viewer.innerHTML=""; }
+  else $("#empty") && $("#empty").remove();
+  for(let i=1;i<=pdf.numPages;i++){
+    pages.push({ id:"p"+(pageSeq++), sourceId, pageIndex:i-1, rotation:0,
+                 annotations:[], drawCanvas:null, drawCtx:null, drawVer:0, _pdf:pdf, _num:i, el:null });
+  }
+  enableTools(true);
+  await renderAll();
+  resetHistory(); record();   // stato iniziale per annulla/ripristina
+  status(`PDF loaded (${pdf.numPages} pages)`);
+}
+
+function enableTools(on){
+  document.querySelectorAll("[data-tool]").forEach(b=>b.disabled=!on);
+  $("#btnAppend").disabled=!on; $("#btnExport").disabled=!on;
+  $("#btnBold").disabled=!on; $("#btnItalic").disabled=!on;
+  $("#btnSign").disabled=!on; $("#btnOCR").disabled=!on; $("#btnEditAll").disabled=!on; $("#btnCopyPage").disabled=!on;
+  updateUndoButtons();
+}
+$("#btnEditAll").onclick=()=>editAllInPlace();
+$("#btnCopyPage").onclick=()=>convertAllText();
+
+/* ===== Render di tutte le pagine ===== */
+async function renderAll(){
+  const empty = $("#empty"); if(empty) empty.remove();
+  viewer.innerHTML=""; thumbsBox.innerHTML="";
+  for(const pe of pages){ await renderPage(pe); buildThumb(pe); }
+}
+
+async function renderPage(pe){
+  let page=null, viewport;
+  if(pe.synthetic){ viewport={ width: pe.wpt*RENDER_SCALE, height: pe.hpt*RENDER_SCALE }; }
+  else { page = await pe._pdf.getPage(pe._num); viewport = page.getViewport({ scale: RENDER_SCALE }); }
+  const wrap = document.createElement("div");
+  wrap.className="page"; wrap.dataset.id=pe.id;
+  wrap.style.width = viewport.width+"px";
+  wrap.style.height = viewport.height+"px";
+
+  const base = document.createElement("canvas");
+  base.className="base";
+  base.width = viewport.width*DPR; base.height = viewport.height*DPR;
+  base.style.width = viewport.width+"px"; base.style.height = viewport.height+"px";
+  const ctx = base.getContext("2d");
+  if(pe.synthetic){ ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,base.width,base.height); }
+  else { await page.render({ canvasContext:ctx, viewport, transform:[DPR,0,0,DPR,0,0] }).promise; }
+
+  const draw = document.createElement("canvas");
+  draw.className="draw";
+  draw.width = viewport.width; draw.height = viewport.height; // 1px = 1px schermo per la penna
+  draw.style.width = viewport.width+"px"; draw.style.height = viewport.height+"px";
+  pe.drawCanvas = draw; pe.drawCtx = draw.getContext("2d");
+
+  const annlayer = document.createElement("div");
+  annlayer.className="annlayer";
+
+  wrap.append(base, draw, annlayer);
+  viewer.appendChild(wrap);
+  pe.el = wrap; pe.annEl = annlayer; pe.dispW=viewport.width; pe.dispH=viewport.height;
+
+  if(pe.synthetic){ pe.textItems=[]; } else { await extractText(pe, page, viewport); }
+  applyToolPointer(pe);
+  attachPageEvents(pe);
+  // ridisegna annotazioni esistenti (dopo riordino/rotazione)
+  pe.annotations.forEach(a=>renderAnn(pe,a));
+}
+
+function buildThumb(pe){
+  const t = document.createElement("div");
+  t.className="thumb"; t.dataset.id=pe.id;
+  const c = document.createElement("canvas");
+  const src = pe.el.querySelector("canvas.base");
+  const w=140, h=Math.round(140*src.height/src.width);
+  c.width=w; c.height=h;
+  c.getContext("2d").drawImage(src,0,0,w,h);
+  t.appendChild(c);
+  const pno=document.createElement("div"); pno.className="pno"; pno.textContent=pages.indexOf(pe)+1; t.appendChild(pno);
+  if(pe.rotation){ const b=document.createElement("div"); b.className="badge"; b.textContent="↻"+pe.rotation+"°"; t.appendChild(b); }
+  const btns=document.createElement("div"); btns.className="pgbtns";
+  btns.innerHTML=`<button title="Up">▲</button><button title="Down">▼</button><button title="Rotate">↻</button><button title="Delete">🗑</button>`;
+  const [up,down,rot,del]=btns.querySelectorAll("button");
+  up.onclick=e=>{e.stopPropagation();movePage(pe,-1);};
+  down.onclick=e=>{e.stopPropagation();movePage(pe,1);};
+  rot.onclick=e=>{e.stopPropagation();pe.rotation=(pe.rotation+90)%360;refreshThumbs();status("Rotation will be applied on export");};
+  del.onclick=e=>{e.stopPropagation();deletePage(pe);};
+  t.appendChild(btns);
+  t.onclick=()=>pe.el.scrollIntoView({behavior:"smooth",block:"start"});
+  thumbsBox.appendChild(t);
+}
+function refreshThumbs(){ thumbsBox.innerHTML=""; pages.forEach(buildThumb); }
+
+function movePage(pe,dir){
+  const i=pages.indexOf(pe), j=i+dir;
+  if(j<0||j>=pages.length) return;
+  pages.splice(i,1); pages.splice(j,0,pe);
+  reorderDom();
+}
+function reorderDom(){ pages.forEach(pe=>viewer.appendChild(pe.el)); refreshThumbs(); }
+async function deletePage(pe){
+  if(pages.length<=1){ status("You cannot delete the only page"); return; }
+  if(!(await appConfirm("Delete this page?"))) return;
+  pages=pages.filter(p=>p!==pe); pe.el.remove(); refreshThumbs();
+}
+
+/* ===== Selezione strumento ===== */
+document.querySelectorAll("[data-tool]").forEach(b=>{
+  b.onclick=()=>{
+    tool=b.dataset.tool;
+    document.querySelectorAll("[data-tool]").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    if(tool!=="select") deselect();
+    pages.forEach(applyToolPointer);
+  };
+});
+function applyToolPointer(pe){
+  if(!pe.drawCanvas) return;
+  const drawing = tool==="draw";
+  pe.drawCanvas.style.pointerEvents = drawing?"auto":"none";
+  pe.annEl.style.pointerEvents = drawing?"none":"auto";
+  pe.drawCanvas.style.cursor = drawing?"crosshair":"default";
+  pe.annEl.style.cursor = (tool==="select")?"default":"crosshair";
+}
+
+/* ===== Eventi pagina (crea annotazioni + penna) ===== */
+function attachPageEvents(pe){
+  // penna
+  let drawingNow=false;
+  pe.drawCanvas.addEventListener("pointerdown",e=>{
+    if(tool!=="draw")return;
+    drawingNow=true; pe.drawCanvas.setPointerCapture(e.pointerId);
+    const ctx=pe.drawCtx, p=local(pe.drawCanvas,e);
+    ctx.strokeStyle=$("#color").value; ctx.lineWidth=Math.max(1,+$("#size").value/6);
+    ctx.lineCap="round"; ctx.lineJoin="round"; ctx.beginPath(); ctx.moveTo(p.x,p.y);
+  });
+  pe.drawCanvas.addEventListener("pointermove",e=>{
+    if(!drawingNow)return; const p=local(pe.drawCanvas,e);
+    pe.drawCtx.lineTo(p.x,p.y); pe.drawCtx.stroke();
+  });
+  pe.drawCanvas.addEventListener("pointerup",()=>{ if(drawingNow){ drawingNow=false; pe.drawVer=(pe.drawVer||0)+1; record(); } });
+
+  // creazione text / rect / grid / image / deselect
+  let creating=null;
+  pe.annEl.addEventListener("pointerdown",e=>{
+    if(e.target.closest(".ann")) return; // gestito dall'annotazione
+    const p=local(pe.annEl,e);
+    if(tool==="text"){
+      const a={type:"text",x:p.x,y:p.y,w:200,h:24,text:"",fontSize:+$("#size").value,color:$("#color").value,bold:defaultStyle.bold,italic:defaultStyle.italic};
+      pe.annotations.push(a); const el=renderAnn(pe,a); selectAnn(el);
+      const ed=el.querySelector(".edit"); ed.focus(); record();
+    } else if(tool==="highlight"||tool==="whiteout"){
+      const white = tool==="whiteout";
+      const a={type:"rect",x:p.x,y:p.y,w:1,h:1,
+               color: white?"#ffffff":$("#color").value,
+               opacity: white?1:0.4};
+      pe.annotations.push(a); const el=renderAnn(pe,a);
+      creating={a,el,sx:p.x,sy:p.y}; pe.annEl.setPointerCapture(e.pointerId);
+    } else if(tool==="grid"){
+      const a={type:"grid",x:p.x,y:p.y,w:1,h:1,
+               rows:Math.max(1,+$("#gridRows").value||3), cols:Math.max(1,+$("#gridCols").value||3),
+               color:$("#color").value, lineWidth:1};
+      pe.annotations.push(a); const el=renderAnn(pe,a);
+      creating={a,el,sx:p.x,sy:p.y}; pe.annEl.setPointerCapture(e.pointerId);
+    } else if(tool && tool.indexOf("shape-")===0){
+      const shape=tool.split("-")[1];
+      const a={type:"shape", shape, x:p.x, y:p.y, w:1, h:1,
+               color:$("#color").value, lineWidth:Math.max(1,Math.round((+$("#size").value||16)/8)),
+               p1:[0,0], p2:[1,1]};
+      pe.annotations.push(a); const el=renderAnn(pe,a);
+      creating={a,el,sx:p.x,sy:p.y}; pe.annEl.setPointerCapture(e.pointerId);
+    } else if(tool==="image"){
+      if(pendingStampData){ placeImageAt(pe,p,pendingStampData.dataUrl,pendingStampData.format); pendingStampData=null; }
+      else { pendingImagePage=pe; pendingImagePt=p; $("#fileImage").click(); }
+    } else if(tool==="edittext"){
+      startEditExisting(pe,p);
+    } else if(tool==="select"){
+      deselect();
+    }
+  });
+  pe.annEl.addEventListener("pointermove",e=>{
+    if(!creating)return; const p=local(pe.annEl,e);
+    const a=creating.a;
+    a.x=Math.min(creating.sx,p.x); a.y=Math.min(creating.sy,p.y);
+    a.w=Math.abs(p.x-creating.sx); a.h=Math.abs(p.y-creating.sy);
+    if(a.type==="shape" && a.shape!=="rect"){   // endpoint relativi al bbox (direzione del trascinamento)
+      a.p1=[ creating.sx<=p.x?0:1, creating.sy<=p.y?0:1 ];
+      a.p2=[ creating.sx<=p.x?1:0, creating.sy<=p.y?1:0 ];
+    }
+    placeAnn(creating.el,a);
+  });
+  pe.annEl.addEventListener("pointerup",()=>{
+    if(creating){ if(creating.a.w<4){creating.a.w=80;creating.a.h=20;placeAnn(creating.el,creating.a);} selectAnn(creating.el); creating=null; record(); }
+  });
+}
+function local(el,e){ const r=el.getBoundingClientRect(); return {x:e.clientX-r.left, y:e.clientY-r.top}; }
+
+/* ===== Immagini / firma ===== */
+let pendingImagePage=null, pendingImagePt=null;
+let pendingStampData=null;   // {dataUrl, format} per piazzare una firma salvata
+function readFileDataURL(f){ return new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f);}); }
+function placeImageAt(pe,p,dataUrl,format){
+  const img=new Image();
+  img.onload=()=>{
+    const maxW=240, scale=Math.min(1,maxW/img.width);
+    const w=img.width*scale, h=img.height*scale;
+    const a={type:"image",x:p.x,y:p.y,w,h,dataUrl,format};
+    pe.annotations.push(a); selectAnn(renderAnn(pe,a)); record();
+  };
+  img.src=dataUrl;
+}
+$("#fileImage").onchange=async e=>{
+  const f=e.target.files[0]; e.target.value="";
+  if(!f||!pendingImagePage)return;
+  const dataUrl=await readFileDataURL(f);
+  placeImageAt(pendingImagePage, pendingImagePt, dataUrl, f.type.includes("png")?"png":"jpg");
+  pendingImagePage=null;
+};
+
+/* ===== Modifica del testo esistente (click-to-edit) ===== */
+function activateSelectTool(){ document.querySelector('[data-tool="select"]').click(); }
+
+async function extractText(pe, page, viewport){
+  pe.textItems=[];
+  try{
+    const tc=await page.getTextContent();
+    for(const it of tc.items){
+      if(!it.str || !it.str.trim()) continue;
+      const tx=pdfjsLib.Util.transform(viewport.transform, it.transform); // -> spazio schermo
+      const fh=Math.hypot(tx[2],tx[3]);          // dimensione font in px
+      if(!fh) continue;
+      // nome reale del font (es. "ABCDEF+Arial-BoldMT") per stile e riuso
+      let probe="", psName="";
+      try{ const fo=page.commonObjs.get(it.fontName); if(fo){ psName=fo.name||""; probe=psName+" "+(fo.loadedName||""); } }catch(e){}
+      const st=tc.styles && tc.styles[it.fontName];
+      if(st && st.fontFamily) probe+=" "+st.fontFamily;
+      probe=probe.toLowerCase();
+      const bold=/bold|black|heavy|semib|extrab|[-,_ ]bd\b|[-,_]?bold/.test(probe);
+      const italic=/italic|oblique|[-,_ ]it\b/.test(probe);
+      pe.textItems.push({ str:it.str, x:tx[4], y:tx[5]-fh, w:(it.width||0)*viewport.scale, h:fh, fontSize:fh, bold, italic, font:psName });
+    }
+  }catch(e){ console.warn("Text extraction failed:", e); }
+}
+
+function findTextItemAt(pe,p){
+  if(!pe.textItems) return null;
+  const tol=3; let best=null;
+  for(const it of pe.textItems){
+    if(p.x>=it.x-tol && p.x<=it.x+it.w+tol && p.y>=it.y-tol && p.y<=it.y+it.h+tol){
+      if(!best || it.w*it.h<best.w*best.h) best=it;   // preferisci il blocco più piccolo
+    }
+  }
+  return best;
+}
+
+function sampleBg(pe,x,y){
+  try{
+    const c=pe.el.querySelector("canvas.base"), ctx=c.getContext("2d");
+    const px=Math.round(x*DPR), py=Math.round(y*DPR);
+    if(px<0||py<0||px>=c.width||py>=c.height) return "#ffffff";
+    const d=ctx.getImageData(px,py,1,1).data;
+    const lum=0.299*d[0]+0.587*d[1]+0.114*d[2];
+    if(lum<60) return "#ffffff";                       // probabilmente sopra un glifo
+    return "#"+[d[0],d[1],d[2]].map(v=>v.toString(16).padStart(2,"0")).join("");
+  }catch(e){ return "#ffffff"; }
+}
+
+// Ricava il colore del testo campionando i pixel "inchiostro" (più diversi dallo sfondo)
+function sampleTextColor(pe, it, bgHex){
+  try{
+    const c=pe.el.querySelector("canvas.base"), ctx=c.getContext("2d");
+    let x=Math.max(0,Math.round(it.x*DPR)), y=Math.max(0,Math.round(it.y*DPR));
+    let w=Math.round(Math.max(2,it.w)*DPR), h=Math.round(Math.max(2,it.h)*DPR);
+    w=Math.min(w,c.width-x); h=Math.min(h,c.height-y);
+    if(w<=0||h<=0) return "#000000";
+    const data=ctx.getImageData(x,y,w,h).data, bg=hexArr(bgHex);
+    let maxD=0;
+    for(let i=0;i<data.length;i+=4){
+      const d=Math.abs(data[i]-bg[0])+Math.abs(data[i+1]-bg[1])+Math.abs(data[i+2]-bg[2]);
+      if(d>maxD) maxD=d;
+    }
+    if(maxD<40) return "#000000";                      // nessun inchiostro evidente
+    const thr=maxD*0.6; let r=0,g=0,b=0,n=0;
+    for(let i=0;i<data.length;i+=4){
+      const d=Math.abs(data[i]-bg[0])+Math.abs(data[i+1]-bg[1])+Math.abs(data[i+2]-bg[2]);
+      if(d>=thr){ r+=data[i]; g+=data[i+1]; b+=data[i+2]; n++; }
+    }
+    return n? rgbHex(Math.round(r/n),Math.round(g/n),Math.round(b/n)) : "#000000";
+  }catch(e){ return "#000000"; }
+}
+function hexArr(h){ const n=parseInt(h.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function rgbHex(r,g,b){ return "#"+[r,g,b].map(v=>v.toString(16).padStart(2,"0")).join(""); }
+// Sfondo robusto per la copertura: campiona più punti nei margini della parola,
+// prende il colore dominante e, su pagina bianca, evita le toppe grigie.
+function pickBg(pe, it){
+  try{
+    const c=pe.el.querySelector("canvas.base"), ctx=c.getContext("2d");
+    const cx=it.x+it.w/2;
+    const pts=[[it.x-7,it.y+it.h/2],[it.x+it.w+7,it.y+it.h/2],[cx,it.y-7],[cx,it.y+it.h+7],[it.x-7,it.y-7],[it.x+it.w+7,it.y+it.h+7]];
+    const counts=new Map();
+    for(const [sx,sy] of pts){
+      const px=Math.round(sx*DPR), py=Math.round(sy*DPR);
+      if(px<0||py<0||px>=c.width||py>=c.height) continue;
+      const d=ctx.getImageData(px,py,1,1).data;
+      if(0.299*d[0]+0.587*d[1]+0.114*d[2] < 80) continue;  // scarta inchiostro/scuro
+      const key=(d[0]>>4)+"_"+(d[1]>>4)+"_"+(d[2]>>4);
+      const e=counts.get(key)||{n:0,r:0,g:0,b:0}; e.n++; e.r+=d[0]; e.g+=d[1]; e.b+=d[2]; counts.set(key,e);
+    }
+    let best=null; for(const e of counts.values()) if(!best||e.n>best.n) best=e;
+    const corner=samplePageBg(c), ca=hexArr(corner), pageWhite=ca[0]>235&&ca[1]>235&&ca[2]>235;
+    if(!best) return pageWhite ? "#ffffff" : corner;
+    const r=Math.round(best.r/best.n), g=Math.round(best.g/best.n), b=Math.round(best.b/best.n);
+    const sat=Math.max(r,g,b)-Math.min(r,g,b), light=(r+g+b)/3>170;
+    if(pageWhite && (sat<28 || light)) return "#ffffff";   // su pagina bianca niente grigi/neutri chiari
+    if(r>238&&g>238&&b>238) return "#ffffff";
+    return rgbHex(r,g,b);
+  }catch(e){ return "#ffffff"; }
+}
+
+// rende UN elemento di testo modificabile sul posto (copertura pixel + casella con stile/colore/font)
+// group: id opzionale per tenere insieme le caselle della stessa riga
+function makeItemEditable(pe, it, group){
+  const bg=pickBg(pe, it);                    // colore sfondo robusto (no toppe grigie)
+  const color=sampleTextColor(pe, it, bg);   // colore reale dell'inchiostro
+  const mask=makeTextMask(pe, it, bg);       // copre SOLO i pixel della scritta
+  let cov;
+  if(mask){
+    cov={type:"image", x:mask.x, y:mask.y, w:mask.w, h:mask.h, dataUrl:mask.dataUrl, format:"png", isCover:true, group};
+  } else {
+    cov={type:"rect", x:it.x-2, y:it.y-2, w:it.w+4, h:it.h*1.3+2, color:bg, opacity:1, isCover:true, group};
+  }
+  pe.annotations.push(cov); renderAnn(pe, cov);
+  const txt={type:"text", x:it.x, y:it.y, w:Math.max(40,it.w+12), h:it.h, text:it.str,
+             fontSize:it.fontSize, color, bold:!!it.bold, italic:!!it.italic, fontRef:it.font, group,
+             redact:{x:it.x-1, y:it.y-1, w:it.w+2, h:it.h*1.12+1}};  // regione stretta per rimozione reale (MuPDF)
+  pe.annotations.push(txt); return renderAnn(pe,txt);
+}
+function startEditExisting(pe,p){
+  const it=findTextItemAt(pe,p);
+  if(!it){ status("No text here — click an existing word"); return; }
+  const el=makeItemEditable(pe, it);
+  activateSelectTool(); selectAnn(el);
+  const ed=el.querySelector(".edit"); ed.focus();
+  const r=document.createRange(); r.selectNodeContents(ed); r.collapse(false);
+  const sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  record();
+}
+// raggruppa gli item in righe (per y) e unisce i run con stesso stile (divide dove cambia)
+function mergeRuns(items){
+  const sorted=items.slice().sort((a,b)=>(a.y-b.y)||(a.x-b.x));
+  const lines=[];
+  for(const it of sorted){
+    let L=lines.find(L=>Math.abs(L.y-it.y)<Math.max(4,it.h*0.6));
+    if(!L){ L={y:it.y, items:[]}; lines.push(L); }
+    L.items.push(it);
+  }
+  const out=[]; let gi=0;
+  for(const L of lines){
+    L.items.sort((a,b)=>a.x-b.x);
+    const gid="grp_"+(gi++)+"_"+Math.round(L.y);
+    const runs=[]; let cur=null;
+    for(const it of L.items){
+      const key=(it.font||"")+"|"+Math.round(it.fontSize)+"|"+(it.bold?1:0)+"|"+(it.italic?1:0);
+      const gap=cur?(it.x-(cur.x+cur.w)):0;
+      if(cur && cur.key===key && gap < it.fontSize*2.0){
+        cur.str += (gap > it.fontSize*0.12 ? " " : "") + it.str;
+        cur.w=(it.x+it.w)-cur.x; cur.h=Math.max(cur.h,it.h);
+      } else {
+        cur={key, str:it.str, x:it.x, y:it.y, w:it.w, h:it.h, fontSize:it.fontSize, bold:it.bold, italic:it.italic, font:it.font};
+        runs.push(cur);
+      }
+    }
+    out.push({gid, runs});
+  }
+  return out;
+}
+// "All text" SUL POSTO: applica il metodo del singolo (makeItemEditable) a tutte
+// le righe della pagina corrente. Stessa qualità del singolo, originale nitido, no nuova pagina.
+function editAllInPlace(pe){
+  pe = pe || getVisiblePage();
+  if(!pe){ appAlert("Open a PDF first."); return; }
+  if(pe.synthetic){ status("This is already an editable page"); return; }
+  const items=(pe.textItems||[]).filter(it=>it.str && it.str.trim());
+  if(!items.length){ status("No real text here — for scans use 🔎 OCR"); return; }
+  if(pe._allEditable){ status("The text of this page is already editable"); return; }
+  const linesRuns=mergeRuns(items); let n=0;
+  for(const L of linesRuns){ for(const r of L.runs){ makeItemEditable(pe, r, L.gid); n++; } }
+  pe._allEditable=true;
+  activateSelectTool(); record();
+  status("All text editable in place: "+linesRuns.length+" lines, "+n+" boxes");
+}
+// "Copy to new page": crea una NUOVA pagina modificabile (originale intatto).
+// Sfondo = pagina con il solo testo rimosso (foto/tabelle/forme restano) +
+// caselle di testo con dimensione/colore/grassetto/font esatti, unite per riga e raggruppate.
+async function convertAllText(pe){
+  pe = pe || getVisiblePage();
+  if(!pe){ appAlert("Open a PDF first."); return; }
+  const src = pe.el && pe.el.querySelector("canvas.base");
+  const items=(pe.textItems||[]).filter(it=>it.str && it.str.trim());
+  if(pe.synthetic){ status("This is already an editable page"); return; }
+  if(!items.length){ status("No real text here — for scans use 🔎 OCR"); return; }
+  $("#btnEditAll").disabled=true;
+  try{
+    status("Creating the editable page…");
+    const np=addBlankPageAfter(pe, pe.dispW/RENDER_SCALE, pe.dispH/RENDER_SCALE);
+    await renderPage(np); pe.el.after(np.el);
+    const pageBg=hexArr(samplePageBg(src));
+    // sfondo fedele: la pagina con il solo testo rimosso
+    const pseudo=items.map(it=>({bbox:{x0:it.x*DPR,y0:it.y*DPR,x1:(it.x+it.w)*DPR,y1:(it.y+it.h)*DPR}}));
+    const bgURL=buildScanBackground(src, pseudo);
+    if(bgURL) np.annotations.push({type:"image", x:0, y:0, w:np.dispW, h:np.dispH, dataUrl:bgURL, format:"jpg", isCover:true});
+    // testo modificabile (unito per riga, diviso per stile, raggruppato)
+    const linesRuns=mergeRuns(items); let nBoxes=0;
+    for(const L of linesRuns){
+      for(const r of L.runs){
+        const b={x0:r.x*DPR,y0:r.y*DPR,x1:(r.x+r.w)*DPR,y1:(r.y+r.h)*DPR};
+        np.annotations.push({ type:"text", x:r.x, y:r.y, w:Math.max(40,r.w+10), h:r.h, text:r.str,
+          fontSize:r.fontSize, color:sampleInkColor(src,b,pageBg), bold:!!r.bold, italic:!!r.italic,
+          fontRef:r.font, fontSrc:pe.sourceId, group:L.gid });
+        nBoxes++;
+      }
+    }
+    np.annotations.forEach(a=>renderAnn(np,a));
+    refreshThumbs(); np.el.scrollIntoView({behavior:"smooth",block:"start"}); record();
+    status("New editable page created: "+linesRuns.length+" lines, "+nBoxes+" boxes");
+  }catch(e){ console.error(e); appAlert("Error: "+e.message); status("Operation failed"); }
+  finally{ $("#btnEditAll").disabled=false; }
+}
+// Maschera che copre SOLO i pixel dell'inchiostro col colore di sfondo (PNG trasparente altrove)
+function makeTextMask(pe, it, bgHex){
+  try{
+    const base=pe.el.querySelector("canvas.base"), bctx=base.getContext("2d");
+    let x=Math.max(0,Math.round(it.x*DPR)), y=Math.max(0,Math.round(it.y*DPR));
+    let w=Math.round(it.w*DPR), h=Math.round(it.h*1.3*DPR);
+    w=Math.min(w, base.width-x); h=Math.min(h, base.height-y);
+    if(w<=1||h<=1) return null;
+    const src=bctx.getImageData(x,y,w,h).data, bg=hexArr(bgHex);
+    const cov=document.createElement("canvas"); cov.width=w; cov.height=h;
+    const cctx=cov.getContext("2d"); const od=cctx.createImageData(w,h), dd=od.data;
+    const thr=42; let any=false;
+    for(let i=0;i<src.length;i+=4){
+      const dist=Math.abs(src[i]-bg[0])+Math.abs(src[i+1]-bg[1])+Math.abs(src[i+2]-bg[2]);
+      if(dist>thr){ dd[i]=bg[0];dd[i+1]=bg[1];dd[i+2]=bg[2];dd[i+3]=255; any=true; }
+    }
+    if(!any) return null;
+    cctx.putImageData(od,0,0);
+    // dilatazione di 1px (8 direzioni) per coprire i bordi anti-alias
+    const out=document.createElement("canvas"); out.width=w; out.height=h; const octx=out.getContext("2d");
+    [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,1],[-1,1],[1,-1],[0,0]].forEach(o=>octx.drawImage(cov,o[0],o[1]));
+    return { x:x/DPR, y:y/DPR, w:w/DPR, h:h/DPR, dataUrl: out.toDataURL("image/png") };
+  }catch(e){ return null; }
+}
+
+/* ===== Render di una annotazione (DOM) ===== */
+function renderAnn(pe,a){
+  const el=document.createElement("div");
+  el.className="ann "+a.type; el._ann=a; el._page=pe;
+  if(a.type==="text"){
+    el.innerHTML=`<div class="edit" contenteditable="true"></div>`;
+    const ed=el.querySelector(".edit");
+    ed.textContent=a.text;
+    ed.style.fontSize=a.fontSize+"px"; ed.style.color=a.color; ed.style.lineHeight=1.2;
+    ed.style.fontWeight=a.bold?"700":"400"; ed.style.fontStyle=a.italic?"italic":"normal";
+    ed.addEventListener("input",()=>{a.text=ed.innerText;});
+    ed.addEventListener("blur",()=>record());
+    ed.addEventListener("pointerdown",e=>{ if(tool==="select"){ e.stopPropagation(); selectAnn(el);} });
+  } else if(a.type==="image"){
+    const im=document.createElement("img"); im.src=a.dataUrl; el.appendChild(im);
+  } else if(a.type==="grid"){
+    el.appendChild(buildGridSVG(a));
+  } else if(a.type==="shape"){
+    el.appendChild(buildShapeSVG(a));
+  }
+  // grip (sposta) + handle (ridimensiona) + del (elimina)
+  const grip=document.createElement("div"); grip.className="grip";
+  const handle=document.createElement("div"); handle.className="handle";
+  const del=document.createElement("div"); del.className="del"; del.textContent="×"; del.title="Delete";
+  del.addEventListener("pointerdown",e=>{ e.stopPropagation(); e.preventDefault(); removeAnn(el); });
+  el.append(grip,handle,del);
+  enableDrag(el,grip); enableResize(el,handle);
+  el.addEventListener("pointerdown",e=>{
+    if(tool==="select" && !e.target.classList.contains("edit")){ selectAnn(el); }
+  });
+  pe.annEl.appendChild(el);
+  placeAnn(el,a); styleRect(el,a);
+  return el;
+}
+function placeAnn(el,a){ el.style.left=a.x+"px"; el.style.top=a.y+"px"; el.style.width=a.w+"px";
+  if(a.type!=="text") el.style.height=a.h+"px";
+  if(a.type==="shape") rebuildShape(el); }
+function styleRect(el,a){ if(a.type==="rect"){ el.style.background=a.color; el.style.opacity=a.opacity; } }
+function buildGridSVG(a){
+  const NS="http://www.w3.org/2000/svg";
+  const svg=document.createElementNS(NS,"svg");
+  svg.setAttribute("viewBox","0 0 100 100"); svg.setAttribute("preserveAspectRatio","none");
+  const mk=(x1,y1,x2,y2)=>{ const l=document.createElementNS(NS,"line");
+    l.setAttribute("x1",x1);l.setAttribute("y1",y1);l.setAttribute("x2",x2);l.setAttribute("y2",y2);
+    l.setAttribute("stroke",a.color); l.setAttribute("stroke-width",a.lineWidth||1);
+    l.setAttribute("vector-effect","non-scaling-stroke"); svg.appendChild(l); };
+  for(let i=0;i<=a.cols;i++){ const x=i/a.cols*100; mk(x,0,x,100); }
+  for(let j=0;j<=a.rows;j++){ const y=j/a.rows*100; mk(0,y,100,y); }
+  return svg;
+}
+function rebuildGrid(el){ const a=el._ann; const old=el.querySelector("svg"); if(old) old.remove(); el.insertBefore(buildGridSVG(a), el.firstChild); }
+function buildShapeSVG(a){
+  const NS="http://www.w3.org/2000/svg", w=Math.max(1,a.w), h=Math.max(1,a.h), col=a.color, lw=a.lineWidth||2;
+  const svg=document.createElementNS(NS,"svg");
+  svg.setAttribute("viewBox","0 0 "+w+" "+h); svg.setAttribute("preserveAspectRatio","none");
+  if(a.shape==="rect"){
+    const r=document.createElementNS(NS,"rect");
+    r.setAttribute("x",lw/2); r.setAttribute("y",lw/2);
+    r.setAttribute("width",Math.max(0,w-lw)); r.setAttribute("height",Math.max(0,h-lw));
+    r.setAttribute("fill","none"); r.setAttribute("stroke",col); r.setAttribute("stroke-width",lw);
+    svg.appendChild(r);
+  } else {
+    const p1=[ (a.p1?a.p1[0]:0)*w, (a.p1?a.p1[1]:0)*h ], p2=[ (a.p2?a.p2[0]:1)*w, (a.p2?a.p2[1]:1)*h ];
+    const ln=document.createElementNS(NS,"line");
+    ln.setAttribute("x1",p1[0]); ln.setAttribute("y1",p1[1]); ln.setAttribute("x2",p2[0]); ln.setAttribute("y2",p2[1]);
+    ln.setAttribute("stroke",col); ln.setAttribute("stroke-width",lw); ln.setAttribute("stroke-linecap","round");
+    svg.appendChild(ln);
+    if(a.shape==="arrow"){
+      const ang=Math.atan2(p2[1]-p1[1],p2[0]-p1[0]), hl=Math.max(8,lw*4), a1=ang-Math.PI/7, a2=ang+Math.PI/7;
+      const tri=document.createElementNS(NS,"polygon");
+      const pts=[ p2, [p2[0]-hl*Math.cos(a1),p2[1]-hl*Math.sin(a1)], [p2[0]-hl*Math.cos(a2),p2[1]-hl*Math.sin(a2)] ];
+      tri.setAttribute("points",pts.map(p=>p[0]+","+p[1]).join(" ")); tri.setAttribute("fill",col);
+      svg.appendChild(tri);
+    }
+  }
+  return svg;
+}
+function rebuildShape(el){ const a=el._ann; const old=el.querySelector("svg"); if(old) old.remove(); el.insertBefore(buildShapeSVG(a), el.firstChild); }
+
+function selectAnn(el){
+  deselect(); selected=el; el.classList.add("sel");
+  if(el._ann.type==="text"){
+    const a=el._ann;
+    $("#color").value=a.color; $("#size").value=Math.round(a.fontSize);
+  } else if(el._ann.type==="grid"){
+    const a=el._ann; $("#color").value=a.color; $("#gridRows").value=a.rows; $("#gridCols").value=a.cols;
+  } else if(el._ann.type==="shape"){
+    $("#color").value=el._ann.color;
+  }
+  syncStyleButtons();
+}
+function deselect(){ if(selected){selected.classList.remove("sel"); selected=null;} syncStyleButtons(); }
+
+/* ----- controlli stile testo (colore, dimensione, B, I) ----- */
+function syncStyleButtons(){
+  let b,i;
+  if(selected && selected._ann.type==="text"){ b=selected._ann.bold; i=selected._ann.italic; }
+  else { b=defaultStyle.bold; i=defaultStyle.italic; }
+  $("#btnBold").classList.toggle("active",!!b);
+  $("#btnItalic").classList.toggle("active",!!i);
+}
+function toggleStyle(which){
+  if(selected && selected._ann.type==="text"){
+    const a=selected._ann; a[which]=!a[which];
+    const ed=selected.querySelector(".edit");
+    ed.style.fontWeight=a.bold?"700":"400"; ed.style.fontStyle=a.italic?"italic":"normal";
+    record();
+  } else {
+    defaultStyle[which]=!defaultStyle[which];
+  }
+  syncStyleButtons();
+}
+$("#btnBold").onclick=()=>toggleStyle("bold");
+$("#btnItalic").onclick=()=>toggleStyle("italic");
+$("#color").addEventListener("input",()=>{
+  if(!selected) return; const a=selected._ann;
+  if(a.type==="text"){ a.color=$("#color").value; selected.querySelector(".edit").style.color=a.color; }
+  else if(a.type==="grid"){ a.color=$("#color").value; rebuildGrid(selected); }
+  else if(a.type==="shape"){ a.color=$("#color").value; rebuildShape(selected); }
+  else if(a.type==="rect"){ a.color=$("#color").value; selected.style.background=a.color; }
+});
+$("#size").addEventListener("input",()=>{
+  if(selected && selected._ann.type==="text"){
+    const v=Math.max(6,+$("#size").value); selected._ann.fontSize=v;
+    selected.querySelector(".edit").style.fontSize=v+"px";
+  }
+});
+// righe/colonne della griglia selezionata
+["#gridRows","#gridCols"].forEach(sel=>$(sel).addEventListener("change",()=>{
+  if(selected && selected._ann.type==="grid"){
+    const a=selected._ann;
+    a.rows=Math.max(1,+$("#gridRows").value||1); a.cols=Math.max(1,+$("#gridCols").value||1);
+    rebuildGrid(selected); record();
+  }
+}));
+// conferma valore (rilascio) -> passo di annullamento
+["#color","#size"].forEach(sel=>$(sel).addEventListener("change",()=>{ if(selected) record(); }));
+
+function removeAnn(el){
+  const a=el._ann, pe=el._page;
+  pe.annotations=pe.annotations.filter(x=>x!==a);
+  el.remove();
+  if(selected===el){ selected=null; syncStyleButtons(); }
+  record();
+}
+document.addEventListener("keydown",e=>{
+  if((e.key==="Delete"||e.key==="Backspace") && selected){
+    const a=selected._ann;
+    const editing=document.activeElement && document.activeElement.classList
+                  && document.activeElement.classList.contains("edit");
+    // se sto scrivendo in una casella NON vuota, lascio cancellare i caratteri
+    if(a.type==="text" && editing && (a.text||"").length>0) return;
+    e.preventDefault();
+    removeAnn(selected);
+  }
+});
+
+/* drag & resize generici (in coordinate locali della pagina, mai ruotate) */
+function enableDrag(el,grip){
+  let st=null;
+  const dn=e=>{ if(tool!=="select")return; e.stopPropagation(); e.preventDefault();
+    selectAnn(el);
+    const grp=el._ann.group;   // se appartiene a una riga raggruppata, sposta tutta la riga
+    const members = grp ? [...el._page.annEl.children].filter(c=>c._ann && c._ann.group===grp) : [el];
+    st={mx:e.clientX,my:e.clientY, items:members.map(m=>({el:m,x:m._ann.x,y:m._ann.y}))};
+    grip.setPointerCapture(e.pointerId); };
+  grip.addEventListener("pointerdown",dn);
+  grip.addEventListener("pointermove",e=>{ if(!st)return; const dx=e.clientX-st.mx, dy=e.clientY-st.my;
+    for(const m of st.items){ m.el._ann.x=m.x+dx; m.el._ann.y=m.y+dy; placeAnn(m.el,m.el._ann); } });
+  grip.addEventListener("pointerup",()=>{ if(st){ st=null; record(); } });
+}
+function enableResize(el,handle){
+  let st=null;
+  handle.addEventListener("pointerdown",e=>{ if(tool!=="select")return; e.stopPropagation(); e.preventDefault();
+    st={mx:e.clientX,my:e.clientY,w:el._ann.w,h:el._ann.h,fs:el._ann.fontSize};
+    handle.setPointerCapture(e.pointerId); });
+  handle.addEventListener("pointermove",e=>{ if(!st)return;
+    const a=el._ann; a.w=Math.max(20,st.w+(e.clientX-st.mx));
+    if(a.type==="text"){ a.fontSize=Math.max(6,Math.round(st.fs*(a.w/st.w)));
+      el.querySelector(".edit").style.fontSize=a.fontSize+"px"; }
+    else a.h=Math.max(8,st.h+(e.clientY-st.my));
+    placeAnn(el,a); });
+  handle.addEventListener("pointerup",()=>{ if(st){ st=null; record(); } });
+}
+
+/* ===== Esportazione ===== */
+$("#btnExport").onclick=exportPdf;
+async function exportPdf(){
+  try{
+    status("Generating the PDF…"); deselect();
+    const out=await PDFLib.PDFDocument.create();
+    if(FK){ try{ out.registerFontkit(FK); }catch(e){} }
+    const SF=PDFLib.StandardFonts;
+    const fonts={
+      normal:      await out.embedFont(SF.Helvetica),
+      bold:        await out.embedFont(SF.HelveticaBold),
+      italic:      await out.embedFont(SF.HelveticaOblique),
+      bolditalic:  await out.embedFont(SF.HelveticaBoldOblique),
+    };
+    const pickFont=a=>fonts[((a.bold?"bold":"")+(a.italic?"italic":""))||"normal"];
+
+    // --- pre-pass MuPDF: estrae i font incorporati E rimuove davvero il testo originale ---
+    const srcBytes={};
+    for(const sid in sources) srcBytes[sid]=sources[sid].bytes;
+    const fontMapBySource={};
+    let removedReal=false;
+    if(muReady){
+      const redactBySource={};
+      for(const pe of pages){
+        const rects=pe.annotations.filter(a=>a.type==="text"&&a.redact).map(a=>a.redact);
+        if(rects.length){ (redactBySource[pe.sourceId]||(redactBySource[pe.sourceId]=new Map())).set(pe.pageIndex,rects); }
+      }
+      // sorgenti necessarie anche solo per il riuso del font (es. pagina ricreata dal testo reale)
+      const needFont=new Set();
+      for(const pe of pages) for(const a of pe.annotations)
+        if(a.type==="text" && a.fontRef){ const s=a.fontSrc||pe.sourceId; if(s && sources[s]) needFont.add(s); }
+      const allSids=new Set([...Object.keys(redactBySource), ...needFont]);
+      for(const sid of allSids){
+        try{
+          const res=muProcessSource(srcBytes[sid], redactBySource[sid]||new Map());
+          srcBytes[sid]=res.bytes; fontMapBySource[sid]=res.fonts;
+          if(redactBySource[sid]) removedReal=true;
+        }catch(e){ console.warn("MuPDF fallito per",sid,e); }
+      }
+    }
+
+    // riuso del font reale incorporato (con verifica copertura + ripiego su Helvetica)
+    const embCache={};
+    let usedEmbedded=false;
+    const findFontBytes=(sid,ref)=>{
+      const map=fontMapBySource[sid]; if(!map||!ref) return null;
+      if(map[ref]) return map[ref];
+      const strip=s=>s&&s.indexOf('+')>=0?s.split('+')[1]:s;
+      const base=strip(ref);
+      for(const k in map){ if(strip(k)===base) return map[k]; }
+      const norm=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      const nb=norm(base);
+      for(const k in map){ const kb=norm(strip(k)); if(kb && (kb===nb||kb.indexOf(nb)>=0||nb.indexOf(kb)>=0)) return map[k]; }
+      return null;
+    };
+    const embeddedFontFor=async(a,sid)=>{
+      if(!FK||!a.fontRef) return null;
+      const useSid=a.fontSrc||sid;
+      const bytes=findFontBytes(useSid,a.fontRef); if(!bytes) return null;
+      try{ const probe=FK.create(bytes);
+        for(const ch of (a.text||'')){ if(ch==='\n')continue;
+          if(probe.hasGlyphForCodePoint && !probe.hasGlyphForCodePoint(ch.codePointAt(0))) return null; }
+      }catch(e){ return null; }
+      const ck=useSid+'|'+a.fontRef;
+      if(embCache[ck]==='fail') return null;
+      if(embCache[ck]){ usedEmbedded=true; return embCache[ck]; }
+      try{ const fnt=await out.embedFont(bytes,{subset:true}); embCache[ck]=fnt; usedEmbedded=true; return fnt; }
+      catch(e){ embCache[ck]='fail'; return null; }
+    };
+
+    const docCache={};
+    for(const pe of pages){
+      let pg;
+      if(pe.synthetic){
+        pg=out.addPage([pe.wpt, pe.hpt]);
+      } else {
+        if(!docCache[pe.sourceId]) docCache[pe.sourceId]=await PDFLib.PDFDocument.load(srcBytes[pe.sourceId]);
+        const [cp]=await out.copyPages(docCache[pe.sourceId],[pe.pageIndex]); pg=cp; out.addPage(pg);
+      }
+      const pw=pg.getWidth(), ph=pg.getHeight();
+      const f=1/RENDER_SCALE; // px schermo -> punti PDF
+
+      // 1) penna (raster) sotto le altre annotazioni
+      if(pe.drawCanvas && !isCanvasBlank(pe.drawCanvas)){
+        const png=await out.embedPng(pe.drawCanvas.toDataURL("image/png"));
+        pg.drawImage(png,{x:0,y:0,width:pw,height:ph});
+      }
+      // 2) annotazioni vettoriali
+      for(const a of pe.annotations){
+        const x=a.x*f, w=a.w*f;
+        if(a.type==="rect"){
+          const h=a.h*f;
+          pg.drawRectangle({x, y:ph-a.y*f-h, width:w, height:h, color:hexToRgb(a.color), opacity:a.opacity});
+        } else if(a.type==="image"){
+          const h=a.h*f;
+          const bytes=dataUrlToBytes(a.dataUrl);
+          const img=a.format==="png"?await out.embedPng(bytes):await out.embedJpg(bytes);
+          pg.drawImage(img,{x, y:ph-a.y*f-h, width:w, height:h});
+        } else if(a.type==="text"){
+          const fs=a.fontSize*f;
+          let font=await embeddedFontFor(a, pe.sourceId);   // font reale del PDF, se possibile
+          const emb=!!font;
+          if(!font) font=pickFont(a);                        // ripiego: Helvetica
+          const lines=(a.text||"").split("\n");
+          let ty=ph-a.y*f-fs;       // baseline prima riga
+          for(const line of lines){
+            pg.drawText(emb?line:sanitize(line),{x, y:ty, size:fs, font, color:hexToRgb(a.color)});
+            ty-=fs*1.2;
+          }
+        } else if(a.type==="grid"){
+          const gw=a.w*f, gh=a.h*f, gx=x, gy=ph-a.y*f-gh;
+          const col=hexToRgb(a.color), th=a.lineWidth||1;
+          for(let i=0;i<=a.cols;i++){ const xx=gx+gw*i/a.cols; pg.drawLine({start:{x:xx,y:gy},end:{x:xx,y:gy+gh},thickness:th,color:col}); }
+          for(let j=0;j<=a.rows;j++){ const yy=gy+gh*j/a.rows; pg.drawLine({start:{x:gx,y:yy},end:{x:gx+gw,y:yy},thickness:th,color:col}); }
+        } else if(a.type==="shape"){
+          const gw=a.w*f, gh=a.h*f, gx=x, gtop=a.y*f, col=hexToRgb(a.color), th=Math.max(0.5,(a.lineWidth||2)*f);
+          if(a.shape==="rect"){
+            pg.drawRectangle({x:gx, y:ph-gtop-gh, width:gw, height:gh, borderColor:col, borderWidth:th, opacity:0, borderOpacity:1});
+          } else {
+            const p1x=gx+a.p1[0]*gw, p1y=ph-(gtop+a.p1[1]*gh), p2x=gx+a.p2[0]*gw, p2y=ph-(gtop+a.p2[1]*gh);
+            pg.drawLine({start:{x:p1x,y:p1y}, end:{x:p2x,y:p2y}, thickness:th, color:col});
+            if(a.shape==="arrow"){
+              const ang=Math.atan2(p2y-p1y,p2x-p1x), hl=Math.max(6,(a.lineWidth||2)*f*4), aL=ang-Math.PI/7, aR=ang+Math.PI/7;
+              pg.drawLine({start:{x:p2x,y:p2y}, end:{x:p2x-hl*Math.cos(aL),y:p2y-hl*Math.sin(aL)}, thickness:th, color:col});
+              pg.drawLine({start:{x:p2x,y:p2y}, end:{x:p2x-hl*Math.cos(aR),y:p2y-hl*Math.sin(aR)}, thickness:th, color:col});
+            }
+          }
+        }
+      }
+      // 3) rotazione
+      if(pe.rotation){
+        const base=pg.getRotation().angle||0;
+        pg.setRotation(PDFLib.degrees((base+pe.rotation)%360));
+      }
+    }
+    const bytes=await out.save();
+    const blob=new Blob([bytes],{type:"application/pdf"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download="documento-modificato.pdf"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+    let msg="PDF exported ✔";
+    if(removedReal && usedEmbedded) msg+=" (text removed + original font reused)";
+    else if(removedReal) msg+=" (original text truly removed)";
+    else if(usedEmbedded) msg+=" (font originale riusato)";
+    status(msg);
+  }catch(err){ console.error(err); appAlert("Error while exporting:\n"+err.message); }
+}
+function isCanvasBlank(c){ const d=c.getContext("2d").getImageData(0,0,c.width,c.height).data;
+  for(let i=3;i<d.length;i+=4){ if(d[i]!==0) return false; } return true; }
+function dataUrlToBytes(u){ const b=atob(u.split(",")[1]); const arr=new Uint8Array(b.length);
+  for(let i=0;i<b.length;i++)arr[i]=b.charCodeAt(i); return arr; }
+function sanitize(s){ return s.replace(/[^\x00-\xFF]/g,"?"); } // Helvetica = Latin-1
+
+/* ===== Annulla / Ripristina (undo/redo) ===== */
+let history=[], hpos=-1;
+function snapshot(){
+  return pages.map(pe=>({
+    id: pe.id,
+    ann: JSON.parse(JSON.stringify(pe.annotations)),
+    draw: (pe.drawCanvas && !isCanvasBlank(pe.drawCanvas)) ? pe.drawCanvas.toDataURL("image/png") : null,
+    dv: pe.drawVer||0
+  }));
+}
+function resetHistory(){ history=[]; hpos=-1; }
+function record(){
+  const snap=snapshot();
+  snap.sig=JSON.stringify(snap.map(s=>[s.id, s.ann, s.dv]));
+  if(hpos>=0 && history[hpos].sig===snap.sig) return;   // nessun cambiamento reale
+  history=history.slice(0,hpos+1);
+  history.push(snap); hpos++;
+  if(history.length>40){ history.shift(); hpos--; }
+  updateUndoButtons();
+}
+function restore(snap){
+  deselect();
+  for(const s of snap){
+    const pe=pages.find(p=>p.id===s.id); if(!pe) continue;
+    pe.annotations=JSON.parse(JSON.stringify(s.ann));
+    pe.annEl.innerHTML="";
+    pe.annotations.forEach(a=>renderAnn(pe,a));
+    const ctx=pe.drawCtx; ctx.clearRect(0,0,pe.drawCanvas.width,pe.drawCanvas.height);
+    if(s.draw){ const im=new Image(); im.onload=()=>ctx.drawImage(im,0,0,pe.drawCanvas.width,pe.drawCanvas.height); im.src=s.draw; }
+    pe.drawVer=s.dv||0;
+  }
+  updateUndoButtons();
+}
+function undo(){ if(hpos<=0) return; hpos--; restore(history[hpos]); status("Undone"); }
+function redo(){ if(hpos>=history.length-1) return; hpos++; restore(history[hpos]); status("Redone"); }
+function updateUndoButtons(){
+  const u=$("#btnUndo"), r=$("#btnRedo");
+  if(u) u.disabled = !(pages.length && hpos>0);
+  if(r) r.disabled = !(pages.length && hpos<history.length-1);
+}
+$("#btnUndo").onclick=undo;
+$("#btnRedo").onclick=redo;
+document.addEventListener("keydown",e=>{
+  if(!(e.ctrlKey||e.metaKey)) return;
+  const k=e.key.toLowerCase();
+  // se sto scrivendo nel testo, lascio l'annulla nativo del campo
+  const editing=document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("edit");
+  if(editing) return;
+  if(k==="z" && !e.shiftKey){ e.preventDefault(); undo(); }
+  else if(k==="y" || (k==="z" && e.shiftKey)){ e.preventDefault(); redo(); }
+});
+
+/* ===== Firma disegnata a mano, salvata in locale (localStorage) ===== */
+const SIG_KEY="pdfeditor_firme";
+function loadSigs(){ try{ return JSON.parse(localStorage.getItem(SIG_KEY)||"[]"); }catch(e){ return []; } }
+function storeSigs(a){ try{ localStorage.setItem(SIG_KEY, JSON.stringify(a)); return true; }catch(e){ appAlert("Storage full: the signature could not be saved."); return false; } }
+
+$("#btnSign").onclick=()=>{ $("#sigModal").hidden=false; clearSigPad(); renderSigList(); };
+$("#sigClose").onclick=()=>{ $("#sigModal").hidden=true; };
+$("#sigClear").onclick=clearSigPad;
+$("#sigSave").onclick=()=>{
+  const data=trimCanvas($("#sigPad"));
+  if(!data){ appAlert("Draw the signature in the white area first."); return; }
+  const sigs=loadSigs(); sigs.push(data);
+  if(storeSigs(sigs)){ renderSigList(); clearSigPad(); status("Signature saved locally"); }
+};
+function clearSigPad(){ const c=$("#sigPad"); c.getContext("2d").clearRect(0,0,c.width,c.height); }
+function renderSigList(){
+  const box=$("#sigList"), sigs=loadSigs(); box.innerHTML="";
+  if(!sigs.length){ box.innerHTML='<div class="hint" style="padding:0">No saved signatures. Draw one and press “Save signature”.</div>'; return; }
+  sigs.forEach((d,i)=>{
+    const item=document.createElement("div"); item.className="sigitem";
+    const im=document.createElement("img"); im.src=d;
+    const bar=document.createElement("div"); bar.className="b";
+    const use=document.createElement("button"); use.className="tb"; use.textContent="Usa"; use.onclick=()=>useSig(d);
+    const del=document.createElement("button"); del.className="tb"; del.textContent="🗑"; del.title="Delete";
+    del.onclick=()=>{ const arr=loadSigs(); arr.splice(i,1); storeSigs(arr); renderSigList(); };
+    bar.append(use,del); item.append(im,bar); box.appendChild(item);
+  });
+}
+function useSig(dataUrl){
+  if(!pages.length){ appAlert("Open a PDF first."); return; }
+  pendingStampData={dataUrl, format:"png"};
+  $("#sigModal").hidden=true;
+  document.querySelector('[data-tool="image"]').click();  // attiva la modalità inserimento
+  status("Click the spot in the PDF where the signature should go");
+}
+// disegno sul pad firma
+(function(){
+  const c=$("#sigPad"); if(!c) return; const ctx=c.getContext("2d");
+  let drawing=false, last=null;
+  const pos=e=>{ const r=c.getBoundingClientRect(); return {x:(e.clientX-r.left)*(c.width/r.width), y:(e.clientY-r.top)*(c.height/r.height)}; };
+  c.addEventListener("pointerdown",e=>{ drawing=true; last=pos(e); c.setPointerCapture(e.pointerId); });
+  c.addEventListener("pointermove",e=>{ if(!drawing)return; const p=pos(e);
+    ctx.strokeStyle=$("#sigColor").value; ctx.lineWidth=2.6; ctx.lineCap="round"; ctx.lineJoin="round";
+    ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last=p; });
+  c.addEventListener("pointerup",()=>drawing=false);
+})();
+// ritaglia ai pixel non trasparenti -> PNG con sfondo trasparente (o null se vuoto)
+function trimCanvas(c){
+  const ctx=c.getContext("2d"), w=c.width, h=c.height, d=ctx.getImageData(0,0,w,h).data;
+  let minX=w,minY=h,maxX=0,maxY=0,found=false;
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){ if(d[(y*w+x)*4+3]>10){ found=true;
+    if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; } }
+  if(!found) return null;
+  const pad=8; minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad); maxX=Math.min(w-1,maxX+pad); maxY=Math.min(h-1,maxY+pad);
+  const tw=maxX-minX+1, th=maxY-minY+1;
+  const t=document.createElement("canvas"); t.width=tw; t.height=th;
+  t.getContext("2d").drawImage(c, minX,minY,tw,th, 0,0,tw,th);
+  return t.toDataURL("image/png");
+}
+
+/* ===== OCR (Tesseract.js, in locale) per PDF scansionati ===== */
+function getVisiblePage(){
+  const vr=viewer.getBoundingClientRect(); let best=pages[0], bestD=Infinity;
+  for(const pe of pages){ if(!pe.el) continue; const r=pe.el.getBoundingClientRect();
+    const d=Math.abs((r.top+r.bottom)/2-(vr.top+vr.bottom)/2); if(d<bestD){ bestD=d; best=pe; } }
+  return best;
+}
+$("#btnOCR").onclick=runOCR;
+function addBlankPageAfter(refPe, wpt, hpt){
+  const pe={ id:"p"+(pageSeq++), synthetic:true, wpt, hpt, rotation:0,
+             annotations:[], drawCanvas:null, drawCtx:null, drawVer:0, el:null };
+  pages.splice(pages.indexOf(refPe)+1, 0, pe);
+  return pe;
+}
+function samplePageBg(src){
+  try{
+    const x=src.getContext("2d"); const pts=[[2,2],[src.width-3,2],[2,src.height-3],[src.width-3,src.height-3]];
+    let r=0,g=0,b=0; for(const p of pts){ const d=x.getImageData(p[0],p[1],1,1).data; r+=d[0];g+=d[1];b+=d[2]; }
+    return rgbHex(Math.round(r/4),Math.round(g/4),Math.round(b/4));
+  }catch(e){ return "#ffffff"; }
+}
+// sfondo fedele: copia della scansione cancellando SOLO i pixel del testo
+// (per colore), così immagini/tabelle/forme di altri colori NON vengono cancellate
+function buildScanBackground(src, lines){
+  try{
+    const c=document.createElement("canvas"); c.width=src.width; c.height=src.height;
+    const ctx=c.getContext("2d"); ctx.drawImage(src,0,0);
+    for(const ln of lines) eraseTextPixels(ctx, src, ln.bbox);
+    return c.toDataURL("image/jpeg", 0.92);
+  }catch(e){ return null; }
+}
+// colore di sfondo locale di un riquadro (per fondere il testo cancellato)
+function regionBg(src, X, Y, W, H){
+  try{
+    const ctx=src.getContext("2d");
+    const pts=[[X+1,Y+1],[X+W-2,Y+1],[X+1,Y+H-2],[X+W-2,Y+H-2],[X+(W>>1),Y+1],[X+(W>>1),Y+H-2]];
+    const counts=new Map();
+    for(const [px,py] of pts){ if(px<0||py<0||px>=src.width||py>=src.height) continue;
+      const d=ctx.getImageData(px,py,1,1).data;
+      if(0.299*d[0]+0.587*d[1]+0.114*d[2]<80) continue;
+      const k=(d[0]>>4)+"_"+(d[1]>>4)+"_"+(d[2]>>4);
+      const e=counts.get(k)||{n:0,r:0,g:0,b:0}; e.n++; e.r+=d[0]; e.g+=d[1]; e.b+=d[2]; counts.set(k,e);
+    }
+    let best=null; for(const e of counts.values()) if(!best||e.n>best.n) best=e;
+    const corner=samplePageBg(src), ca=hexArr(corner), white=ca[0]>235&&ca[1]>235&&ca[2]>235;
+    if(!best) return white?"#ffffff":corner;
+    const r=Math.round(best.r/best.n),g=Math.round(best.g/best.n),b=Math.round(best.b/best.n);
+    if(white && (Math.max(r,g,b)-Math.min(r,g,b)<28 || (r+g+b)/3>170)) return "#ffffff";
+    return rgbHex(r,g,b);
+  }catch(e){ return "#ffffff"; }
+}
+// cancella nel riquadro SOLO i pixel di inchiostro (distanza dallo sfondo, a forma di glifo,
+// stessa logica di makeTextMask del "Edit single text"): pulito, e non tocca le aree
+// fuori dai glifi (le immagini/forme che non stanno dentro al riquadro stretto del testo restano)
+function eraseTextPixels(dstCtx, src, bbox){
+  let X=Math.max(0,Math.round(bbox.x0)-1), Y=Math.max(0,Math.round(bbox.y0)-1);
+  let W=Math.round(bbox.x1-bbox.x0)+2, H=Math.round((bbox.y1-bbox.y0)*1.15)+2;
+  W=Math.min(W, src.width-X); H=Math.min(H, src.height-Y);
+  if(W<=1||H<=1) return;
+  const sctx=src.getContext("2d");
+  const reg=sctx.getImageData(X,Y,W,H), d=reg.data;
+  const bg=hexArr(regionBg(src,X,Y,W,H));
+  const thr=48;                                    // inchiostro = distante dallo sfondo
+  const mask=new Uint8Array(W*H);
+  for(let p=0,i=0;p<W*H;p++,i+=4){
+    const dBg=Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2]);
+    if(dBg>thr) mask[p]=1;
+  }
+  const md=mask.slice();                           // dilata 1px (copre l'anti-alias)
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){ if(mask[y*W+x]){
+    if(x>0)md[y*W+x-1]=1; if(x<W-1)md[y*W+x+1]=1; if(y>0)md[(y-1)*W+x]=1; if(y<H-1)md[(y+1)*W+x]=1; } }
+  const out=dstCtx.getImageData(X,Y,W,H), od=out.data;
+  for(let p=0,i=0;p<W*H;p++,i+=4){ if(md[p]){ od[i]=bg[0]; od[i+1]=bg[1]; od[i+2]=bg[2]; od[i+3]=255; } }
+  dstCtx.putImageData(out,X,Y);
+}
+// colore dell'inchiostro nella riga (pixel più diversi dallo sfondo)
+function sampleInkColor(src, b, bg){
+  try{
+    const ctx=src.getContext("2d");
+    const X=Math.max(0,Math.round(b.x0)),Y=Math.max(0,Math.round(b.y0));
+    const W=Math.min(src.width-X,Math.round(b.x1-b.x0)),H=Math.min(src.height-Y,Math.round(b.y1-b.y0));
+    if(W<=0||H<=0) return "#000000";
+    const d=ctx.getImageData(X,Y,W,H).data; let maxD=0;
+    for(let i=0;i<d.length;i+=4){ const dist=Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2]); if(dist>maxD)maxD=dist; }
+    if(maxD<40) return "#000000";
+    const thr=maxD*0.6; let r=0,g=0,bl=0,n=0;
+    for(let i=0;i<d.length;i+=4){ const dist=Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2]); if(dist>=thr){ r+=d[i];g+=d[i+1];bl+=d[i+2];n++; } }
+    return n? rgbHex(Math.round(r/n),Math.round(g/n),Math.round(bl/n)) : "#000000";
+  }catch(e){ return "#000000"; }
+}
+// spessore tipico del tratto rispetto all'altezza riga (per stimare il grassetto)
+function lineStrokeRatio(src, b, bg){
+  try{
+    const ctx=src.getContext("2d");
+    const X=Math.max(0,Math.round(b.x0)),Y=Math.max(0,Math.round(b.y0));
+    const W=Math.min(src.width-X,Math.round(b.x1-b.x0)),H=Math.min(src.height-Y,Math.round(b.y1-b.y0));
+    if(W<3||H<3) return 0;
+    const d=ctx.getImageData(X,Y,W,H).data, runs=[];
+    for(let yy=0;yy<H;yy++){ let run=0;
+      for(let xx=0;xx<W;xx++){ const i=(yy*W+xx)*4;
+        const ink=(Math.abs(d[i]-bg[0])+Math.abs(d[i+1]-bg[1])+Math.abs(d[i+2]-bg[2]))>80;
+        if(ink) run++; else { if(run>0&&run<H*0.6) runs.push(run); run=0; } }
+      if(run>0&&run<H*0.6) runs.push(run); }
+    if(!runs.length) return 0; runs.sort((a,b)=>a-b); return runs[runs.length>>1]/H;
+  }catch(e){ return 0; }
+}
+async function runOCR(){
+  if(!pages.length){ appAlert("Open a PDF first."); return; }
+  const pe=getVisiblePage(), lang=$("#ocrLang").value||"eng";
+  const src=pe.el && pe.el.querySelector("canvas.base");
+  if(!src){ appAlert("Page not ready."); return; }
+  // se la pagina ha testo reale (PDF digitale) usa il metodo preciso (nuova pagina), non l'OCR
+  if(pe.textItems && pe.textItems.length){ await convertAllText(pe); return; }
+  if(typeof Tesseract==="undefined"){ appAlert("OCR engine not available (lib/tesseract)."); return; }
+  $("#btnOCR").disabled=true;
+  try{
+    status("OCR: preparing the engine…");
+    const worker=await Tesseract.createWorker(lang, 1, {
+      workerPath:"lib/tesseract/worker.min.js", corePath:"lib/tesseract", langPath:"lib/tesseract/lang",
+      logger:m=>{ if(m.status==="recognizing text") status("OCR: "+Math.round((m.progress||0)*100)+"%"); }
+    });
+    status("OCR: recognising…");
+    const { data }=await worker.recognize(src, {}, { blocks:true });
+    await worker.terminate();
+    const lines=[];
+    (data.blocks||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>{ if(l.text && l.text.trim()) lines.push(l); })));
+
+    // nuova pagina editabile, stessa dimensione, subito dopo l'originale
+    const np=addBlankPageAfter(pe, pe.dispW/RENDER_SCALE, pe.dispH/RENDER_SCALE);
+    await renderPage(np); pe.el.after(np.el);
+
+    // 1) sfondo fedele (scansione senza il testo) -> conserva foto/tabelle/forme
+    const bgURL=buildScanBackground(src, lines);
+    if(bgURL) np.annotations.push({ type:"image", x:0, y:0, w:np.dispW, h:np.dispH, dataUrl:bgURL, format:"jpg", isCover:true });
+    // 2) testo OCR in caselle modificabili, con colore e grassetto riconosciuti
+    const pageBg=hexArr(samplePageBg(src));
+    const ratios=lines.map(l=>lineStrokeRatio(src,l.bbox,pageBg));
+    const pos=ratios.filter(r=>r>0).slice().sort((a,b)=>a-b);
+    const med=pos.length? pos[pos.length>>1] : 0.13;
+    const boldThr=Math.max(0.16, med*1.4);
+    let n=0;
+    for(let li=0; li<lines.length; li++){
+      const ln=lines[li], b=ln.bbox; const x=b.x0/DPR, y=b.y0/DPR, w=(b.x1-b.x0)/DPR, h=(b.y1-b.y0)/DPR;
+      if(w<4||h<4) continue;
+      const color=sampleInkColor(src, b, pageBg);
+      const bold = ratios[li] > boldThr;
+      np.annotations.push({ type:"text", x, y, w:Math.max(20,w+6), h, text:ln.text.replace(/\s+$/,""),
+                            fontSize:Math.max(8,h*0.82), color, bold, italic:false, ocr:true });
+      n++;
+    }
+    np.annotations.forEach(a=>renderAnn(np,a));
+    refreshThumbs();
+    np.el.scrollIntoView({behavior:"smooth", block:"start"});
+    record();
+    status("OCR: new editable page created ("+n+" lines of text)");
+  }catch(e){ console.error(e); appAlert("OCR error:\n"+e.message); status("OCR failed"); }
+  finally{ $("#btnOCR").disabled=false; }
+}
+
+/* ===== Motore di rimozione REALE del testo (MuPDF / WASM) ===== */
+let MU=null, muReady=false;
+function setMuBadge(state){
+  const b=$("#muBadge"); if(!b) return;
+  if(state==="on"){ b.textContent="● Real removal: ON"; b.style.color="var(--ok)"; }
+  else if(state==="off"){ b.textContent="○ Real removal: n/a"; b.style.color="var(--muted)"; }
+  else { b.textContent="⏳ carico motore…"; b.style.color="var(--muted)"; }
+}
+async function loadMu(){
+  setMuBadge("loading");
+  const urls=[
+    "./lib/mupdf.js",                                       // locale (offline)
+    "https://cdn.jsdelivr.net/npm/mupdf@1.27.0/dist/mupdf.js", // ripiego CDN
+    "https://esm.sh/mupdf"
+  ];
+  for(const u of urls){
+    try{
+      const m=await import(u);
+      MU=m.default && (m.default.Document||m.default.PDFDocument) ? m.default : m;
+      try{ if(MU.ready && typeof MU.ready.then==="function") await MU.ready; }catch(e){}
+      if(MU && (MU.Document||MU.PDFDocument)){ muReady=true; setMuBadge("on"); console.log("MuPDF caricato da",u); return; }
+    }catch(e){ console.warn("MuPDF non caricato da",u,e); }
+  }
+  setMuBadge("off");
+}
+// estrae i file font incorporati dal PDF -> { nomeBaseFont: Uint8Array }
+function extractEmbeddedFonts(doc){
+  const map={};
+  let n=0; try{ n=doc.countObjects(); }catch(e){ return map; }
+  const R=o=>{ try{ return o==null?null:(o.resolve?o.resolve():o); }catch(e){ return null; } };
+  const nm=o=>{ try{ return (o&&o.isName&&o.isName())?o.asName():null; }catch(e){ return null; } };
+  for(let k=1;k<n;k++){
+    const obj=R(doc.newIndirect(k));
+    if(!obj||!obj.isDictionary||!obj.isDictionary()) continue;
+    if(nm(obj.get("Type"))!=="Font") continue;
+    const baseName=nm(obj.get("BaseFont")); if(!baseName) continue;
+    let desc=R(obj.get("FontDescriptor"));
+    if(!(desc&&desc.isDictionary&&desc.isDictionary())){
+      const df=R(obj.get("DescendantFonts"));
+      if(df&&df.isArray&&df.isArray()){ const fr=R(df.get(0)); if(fr) desc=R(fr.get("FontDescriptor")); }
+    }
+    if(!(desc&&desc.isDictionary&&desc.isDictionary())) continue;
+    let bytes=null;
+    for(const key of ["FontFile2","FontFile3","FontFile"]){
+      try{ const s=desc.get(key); if(s&&s.isStream&&s.isStream()){ bytes=s.readStream().asUint8Array(); break; } }catch(e){}
+    }
+    if(bytes && !map[baseName]) map[baseName]=bytes;  // NB: lo stream NON va risolto
+  }
+  return map;
+}
+// apre il PDF una sola volta: estrae i font e rimuove davvero il testo nelle regioni indicate
+function muProcessSource(bytes, pageMap){
+  const Doc = MU.Document || MU.PDFDocument;
+  const doc = Doc.openDocument(bytes, "application/pdf");
+  let fonts={};
+  try{ fonts=extractEmbeddedFonts(doc); }catch(e){ console.warn("estrazione font fallita:",e); }
+  try{
+    for(const [pi, rects] of pageMap){
+      const page = doc.loadPage(pi);
+      for(const r of rects){
+        const a = page.createAnnotation("Redact");
+        a.setRect([ r.x/RENDER_SCALE, r.y/RENDER_SCALE, (r.x+r.w)/RENDER_SCALE, (r.y+r.h)/RENDER_SCALE ]);
+      }
+      page.applyRedactions(false);   // false = non disegnare riquadri neri
+    }
+  }catch(e){ console.warn("redazione fallita:",e); }
+  const buf = doc.saveToBuffer ? doc.saveToBuffer("compress") : doc.toBuffer();
+  const out = buf.asUint8Array().slice();   // copia: il buffer MuPDF viene liberato
+  try{ if(doc.destroy) doc.destroy(); }catch(e){}
+  return { bytes: out, fonts };
+}
+
+/* ===== fontkit: per leggere e re-incorporare i font (caricato in locale via UMD) ===== */
+let FK = (typeof window!=="undefined" && window.fontkit) ? window.fontkit : null;
+if(FK) console.log("fontkit pronto (locale)"); else console.warn("fontkit non disponibile");
+
+loadMu();
+
+</script>
+</body>
+</html>
