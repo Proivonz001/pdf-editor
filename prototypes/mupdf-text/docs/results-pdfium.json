@@ -1,0 +1,269 @@
+{
+ "engine": "pdfium via pypdfium2 5.11.0, pypdf 6.13.3",
+ "rows": [
+  {
+   "id": "chrome-calibri",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-specials",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.036,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-missing-glyphs",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-georgia",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 468,
+   "maxShiftOfLineRestPt": 0.0481,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-consolas",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-bold",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-red",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-multi",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 468,
+   "maxShiftOfLineRestPt": 0.0481,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "fullfont-identity-path",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cff-cid-subset",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "std14-times-bold",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "xobject-cm-link",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "tz-tc-spacing",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-whole-line",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "word-calibri",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "word-cambria",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "rl-helvetica-std14",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "2->2",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "rl-arial-custom-enc",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "2->2",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "rl-green",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 197,
+   "maxShiftOfLineRestPt": 0.012,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "2->2",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "rl-rotate90-upright",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0001,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "2->2",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "chrome-rotate90-crop",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "enc-owner-aes256",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "enc-user-rc4",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "enc-user-aes128",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "3->3",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  }
+ ]
+}

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MuPDF text prototype</title>
+<style>
+  :root { --bg: #fbfaf7; --fg: #1d1c1a; --muted: #6b675f; --line: #e2ded5; --ok: #1f7a3a; --bad: #b3261e; --mark: #ffe94d; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1a18; --fg: #ece9e2; --muted: #a29d93; --line: #3a3833; --ok: #6fcf8a; --bad: #ff8a80; } }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 span { background: var(--mark); color: #1d1c1a; padding: 0 4px; }
+  h2 { font-size: 16px; margin: 24px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 16px; max-width: 70ch; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); background: var(--mark); color: #1d1c1a; border-radius: 4px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select { font: inherit; padding: 4px 6px; border: 1px solid var(--line); background: transparent; color: inherit; border-radius: 4px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  #status { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pass { color: var(--ok); font-weight: 600; } .fail { color: var(--bad); font-weight: 600; }
+  .seg { white-space: pre; border-bottom: 3px solid; }
+  .seg.original { border-color: #2e9e52; }
+  .seg.fallback { border-color: #e0453a; background: rgba(224,69,58,.18); }
+  .seg.original-sibling, .seg.document-same-line { border-color: #3f7fe0; }
+  .crops { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; }
+  .crops figure { margin: 0; }
+  .crops canvas { max-width: 100%; border: 1px solid var(--line); background: #fff; display: block; }
+  figcaption { font-size: 12px; color: var(--muted); }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<h1>MuPDF-only text replacement <span>prototype</span></h1>
+<p class="lead">Everything runs in a Web Worker with <code>lib/mupdf.js</code>. Segments: green = original embedded font,
+blue = same font program in another dict / font the document used on that line, red = fallback (built-in Nimbus or CJK).</p>
+
+<div class="row"><button id="runSuite" disabled>Run test suite</button><span id="status">loading MuPDF…</span></div>
+<div class="wrap"><table id="results" hidden>
+  <thead><tr><th>case</th><th>result</th><th>replacement (by font source)</th><th>baseline Δ</th><th>glyph ids</th><th>px changed outside</th><th>edit ms</th><th>save ms</th><th>size in → out</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+<div class="crops" id="suiteCrops"></div>
+
+<h2>1 · Render in the worker</h2>
+<div class="row">
+  <select id="renderFile">
+    <option>chrome-subset.pdf</option><option>word-winansi.pdf</option><option>reportlab-form.pdf</option>
+    <option>chrome-rotate90-crop.pdf</option><option>enc-owner-aes256.pdf</option>
+  </select>
+  <button id="render" disabled>Render page 1 at 1.5×</button><span id="renderInfo"></span>
+</div>
+<canvas id="renderCanvas" style="max-width:100%;border:1px solid var(--line)"></canvas>
+
+<h2>2 · Try your own PDF</h2>
+<div class="row">
+  <input type="file" id="file" accept="application/pdf">
+  <label>password <input id="pw" size="10"></label>
+  <label>page <input id="pg" type="number" value="1" min="1" style="width:4em"></label>
+</div>
+<div class="row">
+  <label>find <input id="find" size="24"></label>
+  <label>replace with <input id="repl" size="30"></label>
+  <button id="edit" disabled>Replace and save</button> <a id="dl" hidden download="edited.pdf">download result</a>
+</div>
+<pre id="editInfo" class="wrap"></pre>
+<div class="crops" id="editCrops"></div>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const worker = new Worker(new URL("./src/worker.mjs", import.meta.url), { type: "module" });
+const draw = (bitmap, caption, into) => {
+  const fig = document.createElement("figure");
+  const c = document.createElement("canvas");
+  c.width = bitmap.width; c.height = bitmap.height;
+  c.style.width = Math.round(bitmap.width / devicePixelRatio) + "px";
+  c.getContext("2d").drawImage(bitmap, 0, 0);
+  fig.append(c);
+  const cap = document.createElement("figcaption"); cap.textContent = caption; fig.append(cap);
+  into.append(fig);
+};
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+let suiteStart = 0;
+worker.onmessage = ({ data: m }) => {
+  if (m.type === "ready") {
+    $("status").textContent = `MuPDF ready in worker (${m.initMs.toFixed(0)} ms init)`;
+    for (const id of ["runSuite", "render", "edit"]) $(id).disabled = false;
+  } else if (m.type === "case") {
+    const r = m.result, tb = $("results").tBodies[0];
+    (window.__results ||= []).push(r);
+    $("results").hidden = false;
+    const segs = (r.edits || []).map((e) => e.segments.map((s) => `<span class="seg ${s.source}" title="${esc(s.fontName)}">${esc(s.text)}</span>`).join("")).join(" ; ");
+    const v = r.verify || { edits: [] };
+    const t = r.timings || {};
+    const editMs = ["stext", "glyphs", "fontAnalysis", "plan", "redact", "write"].reduce((a, k) => a + (t[k] || 0), 0);
+    tb.insertAdjacentHTML("beforeend", `<tr><td>${r.id}</td><td class="${r.ok ? "pass" : "fail"}">${r.ok ? "PASS" : "FAIL"}${r.error ? "<br>" + esc(r.error.split("\n")[0]) : ""}</td>
+      <td>${segs}</td><td class="num">${v.edits.map((e) => e.baselineDelta).join(" ")}</td><td class="num">${v.edits.map((e) => e.glyphIdsSameAsElsewhere).join(" ")}</td>
+      <td class="num">${Object.values(v.pixelsChangedOutsideEdits || {}).join(" ")}</td><td class="num">${editMs.toFixed(1)}</td><td class="num">${t.save ?? ""}</td>
+      <td class="num">${r.sizeIn ?? ""} → ${r.sizeOut ?? ""}</td></tr>`);
+    for (const c of m.crops) draw(c.bitmap, c.name, $("suiteCrops"));
+    $("status").textContent = `running… ${tb.rows.length} cases done`;
+  } else if (m.type === "suite-done") {
+    $("status").textContent = `${m.pass}/${m.count} cases pass · suite ${(m.totalMs / 1000).toFixed(1)} s in the worker`;
+    $("runSuite").disabled = false;
+    window.__suite = m;
+  } else if (m.type === "render-done") {
+    const c = $("renderCanvas");
+    c.width = m.bitmap.width; c.height = m.bitmap.height;
+    c.getContext("2d").drawImage(m.bitmap, 0, 0);
+    $("renderInfo").textContent = `open ${m.openMs.toFixed(1)} ms · render ${m.renderMs.toFixed(1)} ms · ImageBitmap ${m.bitmapMs.toFixed(1)} ms · ${m.bitmap.width}×${m.bitmap.height}`;
+    window.__render = { openMs: m.openMs, renderMs: m.renderMs, bitmapMs: m.bitmapMs, w: m.bitmap.width, h: m.bitmap.height };
+  } else if (m.type === "edit-done") {
+    $("editCrops").textContent = "";
+    for (const c of m.crops) draw(c.bitmap, c.name, $("editCrops"));
+    const segs = m.edit.segments.map((s) => `${s.source}: "${s.text}" (${s.fontName})`).join("\n");
+    $("editInfo").textContent = `${segs}\nmissing: ${m.edit.missing.join("") || "none"}\nverify: ${JSON.stringify(m.verify.edits[0])}\nsave ${m.saveMs.toFixed(1)} ms, ${m.out.length} bytes`;
+    const a = $("dl"); a.href = URL.createObjectURL(new Blob([m.out], { type: "application/pdf" })); a.hidden = false;
+  } else if (m.type === "error") {
+    $("status").textContent = "error: " + m.message.split("\n")[0];
+    $("editInfo").textContent = m.message;
+    $("runSuite").disabled = false;
+  }
+};
+$("runSuite").onclick = () => {
+  $("runSuite").disabled = true;
+  $("results").tBodies[0].textContent = ""; $("suiteCrops").textContent = "";
+  worker.postMessage({ type: "suite" });
+};
+$("render").onclick = () => worker.postMessage({ type: "render", file: $("renderFile").value, scale: 1.5 });
+$("edit").onclick = async () => {
+  const f = $("file").files[0];
+  if (!f) { $("editInfo").textContent = "pick a PDF first"; return; }
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  worker.postMessage({ type: "edit", bytes, password: $("pw").value, page: +$("pg").value, find: $("find").value, replace: $("repl").value }, [bytes.buffer]);
+};
+</script>
+</body>
+</html>

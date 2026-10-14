@@ -1,0 +1,4087 @@
+{
+ "runtime": "node v22.14.0",
+ "mupdf": "lib/mupdf.js 1.27.0",
+ "wasmInitMs": 71.8,
+ "subset": "fallback",
+ "results": [
+  {
+   "id": "chrome-calibri",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 3,
+    "renderPage1_5x": 21.4,
+    "stext": 3.8,
+    "glyphs": 3.7,
+    "fontAnalysis": 11.6,
+    "plan": 4.2,
+    "redact": 6.7,
+    "write": 0.7,
+    "save": 3.1,
+    "verify": 54.4
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "importo",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       70.48400115966797,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       70.48400115966797,
+       125.57421875,
+       102.2146224975586,
+       140.22265625
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "importo",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "015d 0175 0189 017d 018c 019a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 70.484 704.92 Tm\n/F5 12 Tf <015d01750189017d018c019a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 3.7927999999999997,
+      "glyphs": 3.731700000000018,
+      "fontAnalysis": 11.646299999999997,
+      "plan": 4.236699999999985,
+      "redact": 6.6936000000000035,
+      "write": 0.6699999999999875
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 72627,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "importo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       70.48,
+       125.57,
+       109.98,
+       140.22
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-specials",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.2,
+    "renderPage1_5x": 4.8,
+    "stext": 1.4,
+    "glyphs": 1.6,
+    "fontAnalysis": 6.6,
+    "plan": 19.7,
+    "redact": 1.6,
+    "write": 0.2,
+    "save": 6.3,
+    "verify": 33.8
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "speciale",
+     "replacement": "“nuova” è l’€ già perché città",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "8/8 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": -0.001,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       275.90234375,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       275.90234375,
+       125.57421875,
+       315.1663818359375,
+       140.22265625
+      ],
+      "gids": {
+       "s": 400,
+       "p": 393,
+       "e": 286,
+       "c": 272,
+       "i": 349,
+       "a": 258,
+       "l": 367
+      }
+     },
+     "segments": [
+      {
+       "text": "“n",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "035e 0176",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "u",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "0056",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "ova” è l’€ già perché città",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "017d 01c0 0102 035f 0003 011f 0003 016f 035b 03a6 0003 0150 015d 0103 0003 0189 011e 018c 0110 015a 0120 0003 0110 015d 019a 019a 0103",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 275.9024 704.92 Tm\n/F5 12 Tf <035e0176> Tj\n/FPE1 12 Tf <0056> Tj\n/F5 12 Tf <017d01c00102035f0003011f0003016f035b03a600030150015d010300030189011e018c0110015a012000030110015d019a019a0103> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 1.4323999999999728,
+      "glyphs": 1.565999999999974,
+      "fontAnalysis": 6.587699999999984,
+      "plan": 19.689999999999998,
+      "redact": 1.616700000000037,
+      "write": 0.1682999999999879
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 82466,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "speciale",
+      "replacement": "“nuova” è l’€ già perché città",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0.0001,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "30/30",
+      "glyphIdsSameAsElsewhere": "29/29",
+      "newBBox": [
+       275.9,
+       124.1,
+       417.35,
+       140.59
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-missing-glyphs",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.2,
+    "renderPage1_5x": 4.8,
+    "stext": 1.3,
+    "glyphs": 1.6,
+    "fontAnalysis": 6.1,
+    "plan": 16.4,
+    "redact": 1.3,
+    "write": 0.5,
+    "save": 19.5,
+    "verify": 46.9
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "concordato",
+     "replacement": "più Größe ñ Ω ✓",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "10/10 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       104.92662811279297,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       104.92662811279297,
+       125.57421875,
+       160.02908325195312,
+       140.22265625
+      ],
+      "gids": {
+       "c": 272,
+       "o": 381,
+       "n": 374,
+       "r": 396,
+       "d": 282,
+       "a": 258,
+       "t": 410
+      }
+     },
+     "segments": [
+      {
+       "text": "pi",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "0189 015d",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "ù",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "00e1",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": " ",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "G",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "0028",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "r",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "018c",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "öß",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "00da 0095",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "e ",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "011e 0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "ñ",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "00d7",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": " ",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "Ω",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "0245",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": " ",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "✓",
+       "source": "fallback",
+       "fontName": "Droid Sans Fallback Regular",
+       "resource": "FPE2",
+       "codes": "048f",
+       "why": "no code maps to this character"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 104.9266 704.92 Tm\n/F5 12 Tf <0189015d> Tj\n/FPE1 12 Tf <00e1> Tj\n/F5 12 Tf <0003> Tj\n/FPE1 12 Tf <0028> Tj\n/F5 12 Tf <018c> Tj\n/FPE1 12 Tf <00da0095> Tj\n/F5 12 Tf <011e0003> Tj\n/FPE1 12 Tf <00d7> Tj\n/F5 12 Tf <0003> Tj\n/FPE1 12 Tf <0245> Tj\n/F5 12 Tf <0003> Tj\n/FPE2 12 Tf <048f> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 1.3162000000000376,
+      "glyphs": 1.5579000000000178,
+      "fontAnalysis": 6.050400000000025,
+      "plan": 16.361199999999997,
+      "redact": 1.3228000000000293,
+      "write": 0.49059999999997217
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 90792,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "concordato",
+      "replacement": "più Größe ñ Ω ✓",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "15/15",
+      "glyphIdsSameAsElsewhere": "8/8",
+      "newBBox": [
+       104.93,
+       124.1,
+       192.65,
+       140.59
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-georgia",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.9,
+    "stext": 4.4,
+    "glyphs": 1.6,
+    "fontAnalysis": 6.9,
+    "plan": 5.6,
+    "redact": 1.1,
+    "write": 0.2,
+    "save": 4.2,
+    "verify": 38.6
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "venerdì",
+     "replacement": "sabato",
+     "page": 0,
+     "original": {
+      "fontName": "CAAAAA+Georgia",
+      "pdfFont": {
+       "key": "F6",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "7/7 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0.002,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       283.0759582519531,
+       167
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       283.0759582519531,
+       155.99609375,
+       323.04791259765625,
+       169.630859375
+      ],
+      "gids": {
+       "v": 89,
+       "e": 72,
+       "n": 81,
+       "r": 85,
+       "d": 71,
+       "ì": 117
+      }
+     },
+     "segments": [
+      {
+       "text": "sa",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "0056 0044",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "b",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "0043",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "ato",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "0044 0057 0052",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 283.076 674.92 Tm\n/F6 12 Tf <00560044> Tj\n/FPE1 12 Tf <0043> Tj\n/F6 12 Tf <004400570052> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 4.4424999999999955,
+      "glyphs": 1.5815999999999804,
+      "fontAnalysis": 6.857599999999991,
+      "plan": 5.56839999999994,
+      "redact": 1.1048000000000684,
+      "write": 0.1936999999999216
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 82482,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "venerdì",
+      "replacement": "sabato",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "6/6",
+      "glyphIdsSameAsElsewhere": "5/5",
+      "newBBox": [
+       283.08,
+       154.36,
+       316.96,
+       170.37
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-consolas",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.8,
+    "stext": 0.6,
+    "glyphs": 0.6,
+    "fontAnalysis": 2.1,
+    "plan": 1.9,
+    "redact": 1,
+    "write": 0.1,
+    "save": 3.2,
+    "verify": 31.7
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "99,90",
+     "replacement": "149,00",
+     "page": 0,
+     "original": {
+      "fontName": "DAAAAA+Consolas",
+      "pdfFont": {
+       "key": "F7",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "5/5 glyph ids reproduced",
+      "size": 10.995,
+      "fontSize": 10.995,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       219.17263793945312,
+       195.50001525878906
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       219.17263793945312,
+       185.38546752929688,
+       249.40029907226562,
+       198.25950622558594
+      ],
+      "gids": {
+       "0": 613,
+       "9": 624,
+       ",": 345
+      }
+     },
+     "segments": [
+      {
+       "text": "1",
+       "source": "original",
+       "fontName": "DAAAAA+Consolas",
+       "resource": "F7",
+       "codes": "0268",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "4",
+       "source": "fallback",
+       "fontName": "Courier",
+       "resource": "FPE1",
+       "codes": "0015",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "9,00",
+       "source": "original",
+       "fontName": "DAAAAA+Consolas",
+       "resource": "F7",
+       "codes": "0270 0159 0265 0265",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "mono",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 219.1726 646.42 Tm\n/F7 10.995 Tf <0268> Tj\n/FPE1 10.995 Tf <0015> Tj\n/F7 10.995 Tf <0270015902650265> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.6417999999999893,
+      "glyphs": 0.5571999999999662,
+      "fontAnalysis": 2.1446999999999434,
+      "plan": 1.887399999999957,
+      "redact": 1.0417999999999665,
+      "write": 0.12970000000007076
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 79806,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "99,90",
+      "replacement": "149,00",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "6/6",
+      "glyphIdsSameAsElsewhere": "1/1",
+      "newBBox": [
+       219.17,
+       185.25,
+       256.01,
+       198.99
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-bold",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.6,
+    "stext": 0.9,
+    "glyphs": 1.5,
+    "fontAnalysis": 6,
+    "plan": 2.9,
+    "redact": 1.3,
+    "write": 0.2,
+    "save": 4.2,
+    "verify": 32.1
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "Pagamento",
+     "replacement": "Saldo",
+     "page": 0,
+     "original": {
+      "fontName": "AAAAAA+Calibri-Bold",
+      "pdfFont": {
+       "key": "F4",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "9/9 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       62,
+       270.5
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       62,
+       259.07421875,
+       118.11420440673828,
+       273.72265625
+      ],
+      "gids": {
+       "P": 87,
+       "a": 258,
+       "g": 336,
+       "m": 373,
+       "e": 286,
+       "n": 374,
+       "t": 410,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "S",
+       "source": "fallback",
+       "fontName": "Helvetica-Bold",
+       "resource": "FPE1",
+       "codes": "0034",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "a",
+       "source": "original",
+       "fontName": "AAAAAA+Calibri-Bold",
+       "resource": "F4",
+       "codes": "0102",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "l",
+       "source": "fallback",
+       "fontName": "Helvetica-Bold",
+       "resource": "FPE1",
+       "codes": "004d",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "do",
+       "source": "original",
+       "fontName": "AAAAAA+Calibri-Bold",
+       "resource": "F4",
+       "codes": "011a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": true,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 62 571.42 Tm\n/FPE1 12 Tf <0034> Tj\n/F4 12 Tf <0102> Tj\n/FPE1 12 Tf <004d> Tj\n/F4 12 Tf <011a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.9383000000000266,
+      "glyphs": 1.5164999999999509,
+      "fontAnalysis": 5.9623000000000275,
+      "plan": 2.8863000000000056,
+      "redact": 1.3210000000000264,
+      "write": 0.17189999999993688
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 82487,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "Pagamento",
+      "replacement": "Saldo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "5/5",
+      "glyphIdsSameAsElsewhere": "2/2",
+      "newBBox": [
+       62,
+       257.66,
+       92.17,
+       274.18
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-red",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.7,
+    "stext": 0.7,
+    "glyphs": 0.7,
+    "fontAnalysis": 9.3,
+    "plan": 2.2,
+    "redact": 1.1,
+    "write": 0.2,
+    "save": 4.1,
+    "verify": 33.7
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "Importante",
+     "replacement": "Urgente",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "10/10 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0.7529411764705882,
+       0.2235294117647059,
+       0.16862745098039217
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       288.171875,
+       270.5
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       288.171875,
+       259.07421875,
+       343.2787780761719,
+       273.72265625
+      ],
+      "gids": {
+       "I": 47,
+       "m": 373,
+       "p": 393,
+       "o": 381,
+       "r": 396,
+       "t": 410,
+       "a": 258,
+       "n": 374,
+       "e": 286
+      }
+     },
+     "segments": [
+      {
+       "text": "U",
+       "source": "fallback",
+       "fontName": "Helvetica",
+       "resource": "FPE1",
+       "codes": "0036",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "rgente",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "018c 0150 011e 0176 019a 011e",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0.7529 0.2235 0.1686 rg\n1 0 0 1 288.1719 571.42 Tm\n/FPE1 12 Tf <0036> Tj\n/F5 12 Tf <018c0150011e0176019a011e> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.745200000000068,
+      "glyphs": 0.7084999999999582,
+      "fontAnalysis": 9.315600000000018,
+      "plan": 2.161299999999983,
+      "redact": 1.1295000000000073,
+      "write": 0.15059999999994034
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 82408,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "Importante",
+      "replacement": "Urgente",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "6/6",
+      "newBBox": [
+       288.17,
+       257.6,
+       328.95,
+       274.09
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-multi",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.7,
+    "stext": 6.8,
+    "glyphs": 1.9,
+    "fontAnalysis": 14.4,
+    "plan": 7.7,
+    "redact": 3.6,
+    "write": 0.8,
+    "save": 5.6,
+    "verify": 51
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "costo",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       70.48400115966797,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       70.48400115966797,
+       125.57421875,
+       102.2146224975586,
+       140.22265625
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "costo",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "0110 017d 0190 019a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 70.484 704.92 Tm\n/F5 12 Tf <0110017d0190019a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 4.271399999999971,
+      "glyphs": 0.6828000000000429,
+      "fontAnalysis": 4.99860000000001,
+      "plan": 2.928100000000086,
+      "redact": 1.1754999999999427,
+      "write": 0.3512000000000626
+     }
+    },
+    {
+     "find": "venerdì",
+     "replacement": "lunedì",
+     "page": 0,
+     "original": {
+      "fontName": "CAAAAA+Georgia",
+      "pdfFont": {
+       "key": "F6",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "7/7 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0.002,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       283.0759582519531,
+       167
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       283.0759582519531,
+       155.99609375,
+       323.04791259765625,
+       169.630859375
+      ],
+      "gids": {
+       "v": 89,
+       "e": 72,
+       "n": 81,
+       "r": 85,
+       "d": 71,
+       "ì": 117
+      }
+     },
+     "segments": [
+      {
+       "text": "l",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "004f",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "u",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "0056",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "nedì",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "0051 0048 0047 0075",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 283.076 674.92 Tm\n/F6 12 Tf <004f> Tj\n/FPE1 12 Tf <0056> Tj\n/F6 12 Tf <0051004800470075> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.7491999999999734,
+      "glyphs": 0.6233000000000857,
+      "fontAnalysis": 4.773599999999988,
+      "plan": 2.699999999999932,
+      "redact": 1.296100000000024,
+      "write": 0.2522999999999911
+     }
+    },
+    {
+     "find": "Milano",
+     "replacement": "Forlì",
+     "page": 0,
+     "original": {
+      "fontName": "CAAAAA+Georgia",
+      "pdfFont": {
+       "key": "F6",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0.12156862745098039,
+       0.3058823529411765,
+       0.611764705882353
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       236.5520477294922,
+       300.5
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       236.5520477294922,
+       289.49609375,
+       274.2320251464844,
+       303.130859375
+      ],
+      "gids": {
+       "M": 48,
+       "i": 76,
+       "l": 79,
+       "a": 68,
+       "n": 81,
+       "o": 82
+      }
+     },
+     "segments": [
+      {
+       "text": "Forlì",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "0029 0052 0055 004f 0075",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0.1216 0.3059 0.6118 rg\n1 0 0 1 236.5521 541.42 Tm\n/F6 12 Tf <002900520055004f0075> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 1.7742999999999256,
+      "glyphs": 0.5546000000000504,
+      "fontAnalysis": 4.601499999999987,
+      "plan": 2.1018000000000256,
+      "redact": 1.0596000000000458,
+      "write": 0.13190000000008695
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 82493,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "costo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "5/5",
+      "glyphIdsSameAsElsewhere": "5/5",
+      "newBBox": [
+       70.48,
+       125.57,
+       96.92,
+       140.22
+      ]
+     },
+     {
+      "find": "venerdì",
+      "replacement": "lunedì",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "6/6",
+      "glyphIdsSameAsElsewhere": "5/5",
+      "newBBox": [
+       283.08,
+       154.36,
+       315.8,
+       170.37
+      ]
+     },
+     {
+      "find": "Milano",
+      "replacement": "Forlì",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "5/5",
+      "glyphIdsSameAsElsewhere": "5/5",
+      "newBBox": [
+       236.55,
+       289.5,
+       262.08,
+       303.13
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "fullfont-identity-path",
+   "file": "fullfont-partial-tounicode.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 9.5,
+    "stext": 0.2,
+    "glyphs": 0.1,
+    "fontAnalysis": 4,
+    "plan": 9.9,
+    "redact": 0.3,
+    "write": 0.6,
+    "save": 0.2,
+    "verify": 20.4
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "base",
+     "replacement": "unitario “ÀÉ” – ñ",
+     "page": 0,
+     "original": {
+      "fontName": "NotoSansSC-Regular",
+      "pdfFont": {
+       "key": "F1",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "4/4 glyph ids reproduced",
+      "size": 16,
+      "fontSize": 16,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       125.67999267578125,
+       82
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       125.67999267578125,
+       67.91999816894531,
+       160.92799377441406,
+       83.91999816894531
+      ],
+      "gids": {
+       "b": 67,
+       "a": 66,
+       "s": 84,
+       "e": 70
+      }
+     },
+     "segments": [
+      {
+       "text": "unitario “ÀÉ” – ñ",
+       "source": "original",
+       "fontName": "NotoSansSC-Regular",
+       "resource": "F1",
+       "codes": "0056 004f 004a 0055 0042 0053 004a 0050 0001 00c2 007d 0086 00c3 0001 00bd 0001 00ae",
+       "how": "font cmap (Identity CID=GID)"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 7,
+     "widthsAdded": 5,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 125.68 760 Tm\n/F1 16 Tf <0056004f004a005500420053004a0050000100c2007d008600c3000100bd000100ae> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.16919999999993252,
+      "glyphs": 0.11750000000006366,
+      "fontAnalysis": 4.014999999999986,
+      "plan": 9.888000000000034,
+      "redact": 0.28369999999995343,
+      "write": 0.6450999999999567
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 14619,
+   "sizeOut": 14920,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "base",
+      "replacement": "unitario “ÀÉ” – ñ",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "17/17",
+      "glyphIdsSameAsElsewhere": "10/10",
+      "newBBox": [
+       125.68,
+       67.92,
+       265.14,
+       83.92
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "cff-cid-subset",
+   "file": "cff-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 3.8,
+    "stext": 0.2,
+    "glyphs": 0.1,
+    "fontAnalysis": 9.7,
+    "plan": 13.9,
+    "redact": 1,
+    "write": 0.1,
+    "save": 0.3,
+    "verify": 26.6
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "costo € “ok”",
+     "page": 0,
+     "original": {
+      "fontName": "XKBUQR+Times-Roman",
+      "pdfFont": {
+       "key": "FC",
+       "path": [],
+       "subtype": "Type0/CIDFontType0",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       135.99600219726562,
+       112
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       135.99600219726562,
+       99.36399841308594,
+       167.97601318359375,
+       115.37200164794922
+      ],
+      "gids": {
+       "p": 81,
+       "r": 83,
+       "e": 70,
+       "z": 91,
+       "o": 80
+      }
+     },
+     "segments": [
+      {
+       "text": "costo € “ok”",
+       "source": "original",
+       "fontName": "XKBUQR+Times-Roman",
+       "resource": "FC",
+       "codes": "0044 0050 0054 0055 0050 0001 0107 0001 0069 0050 004c 0077",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 135.996 730 Tm\n/FC 12 Tf <0044005000540055005000010107000100690050004c0077> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.20249999999987267,
+      "glyphs": 0.13010000000008404,
+      "fontAnalysis": 9.7029,
+      "plan": 13.915599999999813,
+      "redact": 0.9803000000001703,
+      "write": 0.1429000000000542
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 13514,
+   "sizeOut": 13781,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "costo € “ok”",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "12/12",
+      "glyphIdsSameAsElsewhere": "12/12",
+      "newBBox": [
+       136,
+       99.36,
+       195.98,
+       115.37
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "std14-times-bold",
+   "file": "cff-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 3.1,
+    "stext": 0.2,
+    "glyphs": 0.1,
+    "fontAnalysis": 7.3,
+    "plan": 5,
+    "redact": 0.9,
+    "write": 0.1,
+    "save": 0.3,
+    "verify": 23.6
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "grassetto",
+     "replacement": "nero più",
+     "page": 0,
+     "original": {
+      "fontName": "Times-Bold",
+      "pdfFont": {
+       "key": "FS",
+       "path": [],
+       "subtype": "Type1",
+       "encoding": "simple",
+       "embedded": false,
+       "toUnicode": false
+      },
+      "fontDictVerified": "9/9 glyph ids reproduced",
+      "size": 18,
+      "fontSize": 18,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       122.50799560546875,
+       82
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       122.50799560546875,
+       63.20800018310547,
+       191.4840087890625,
+       88.13800048828125
+      ],
+      "gids": {
+       "g": 72,
+       "r": 83,
+       "a": 66,
+       "s": 84,
+       "e": 70,
+       "t": 85,
+       "o": 80
+      }
+     },
+     "segments": [
+      {
+       "text": "nero più",
+       "source": "original",
+       "fontName": "Times-Bold",
+       "resource": "FS",
+       "codes": "6e 65 72 6f 20 70 69 f9",
+       "how": "Encoding"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": true,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 122.508 760 Tm\n/FS 18 Tf <6e65726f207069f9> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.22450000000003456,
+      "glyphs": 0.1326000000001386,
+      "fontAnalysis": 7.342399999999998,
+      "plan": 5.0496999999998025,
+      "redact": 0.9145000000000891,
+      "write": 0.12879999999995562
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 13514,
+   "sizeOut": 13762,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "grassetto",
+      "replacement": "nero più",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "8/8",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       122.51,
+       63.21,
+       187.02,
+       88.14
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "xobject-cm-link",
+   "file": "xobject-tz-link.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 2.6,
+    "stext": 0.2,
+    "glyphs": 0.1,
+    "fontAnalysis": 5,
+    "plan": 3.6,
+    "redact": 1.6,
+    "write": 0.1,
+    "save": 0.2,
+    "verify": 22.5
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "totale",
+     "replacement": "saldo €",
+     "page": 0,
+     "original": {
+      "fontName": "Helvetica",
+      "pdfFont": {
+       "key": "F1",
+       "path": [],
+       "subtype": "Type1",
+       "encoding": "simple",
+       "embedded": false,
+       "toUnicode": false
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 14.4,
+      "fontSize": 14.4,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       183.24159240722656,
+       151.99993896484375
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       183.24159240722656,
+       136.5199432373047,
+       218.4639892578125,
+       156.3055419921875
+      ],
+      "gids": {
+       "t": 85,
+       "o": 80,
+       "a": 66,
+       "l": 77,
+       "e": 70
+      }
+     },
+     "segments": [
+      {
+       "text": "saldo €",
+       "source": "original",
+       "fontName": "Helvetica",
+       "resource": "F1",
+       "codes": "73 61 6c 64 6f 20 80",
+       "how": "Encoding"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 1,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 183.2416 690 Tm\n/F1 14.4 Tf <73616c646f2080> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.17089999999984684,
+      "glyphs": 0.10789999999997235,
+      "fontAnalysis": 4.987099999999828,
+      "plan": 3.590199999999868,
+      "redact": 1.556400000000167,
+      "write": 0.11799999999993815
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 1168,
+   "sizeOut": 1445,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "totale",
+      "replacement": "saldo €",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0.0001,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "6/6",
+      "newBBox": [
+       183.24,
+       136.52,
+       229.67,
+       156.31
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": [
+      {
+       "page": 0,
+       "uri": "https://example.com/totale"
+      }
+     ]
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": [
+      {
+       "page": 0,
+       "uri": "https://example.com/totale"
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "tz-tc-spacing",
+   "file": "xobject-tz-link.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 1.6,
+    "stext": 0.2,
+    "glyphs": 0.1,
+    "fontAnalysis": 5.2,
+    "plan": 3.2,
+    "redact": 0.8,
+    "write": 0.1,
+    "save": 0.2,
+    "verify": 20.4
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "largo",
+     "replacement": "stretto",
+     "page": 0,
+     "original": {
+      "fontName": "Helvetica",
+      "pdfFont": {
+       "key": "F1",
+       "path": [],
+       "subtype": "Type1",
+       "encoding": "simple",
+       "embedded": false,
+       "toUnicode": false
+      },
+      "fontDictVerified": "5/5 glyph ids reproduced",
+      "size": 11.272,
+      "fontSize": 11,
+      "horizontalScale": 105,
+      "charSpacing": 1.5,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       190.23211669921875,
+       282
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       190.23211669921875,
+       270.17498779296875,
+       222.20774841308594,
+       285.28900146484375
+      ],
+      "gids": {
+       "l": 77,
+       "a": 66,
+       "r": 83,
+       "g": 72,
+       "o": 80
+      }
+     },
+     "segments": [
+      {
+       "text": "stretto",
+       "source": "original",
+       "fontName": "Helvetica",
+       "resource": "F1",
+       "codes": "73 74 72 65 74 74 6f",
+       "how": "Encoding"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n105 Tz\n1.5 Tc\n1 0 0 1 190.2321 560 Tm\n/F1 11 Tf <7374726574746f> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.17830000000003565,
+      "glyphs": 0.1309000000001106,
+      "fontAnalysis": 5.1676000000002205,
+      "plan": 3.2196000000001277,
+      "redact": 0.7660000000000764,
+      "write": 0.11130000000002838
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 1168,
+   "sizeOut": 1446,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "largo",
+      "replacement": "stretto",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0.0004,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       190.23,
+       270.17,
+       231.78,
+       285.29
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": [
+      {
+       "page": 0,
+       "uri": "https://example.com/totale"
+      }
+     ]
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 0,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": [
+      {
+       "page": 0,
+       "uri": "https://example.com/totale"
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-whole-line",
+   "file": "chrome-subset.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 5,
+    "stext": 0.8,
+    "glyphs": 0.6,
+    "fontAnalysis": 14.8,
+    "plan": 5.1,
+    "redact": 3.5,
+    "write": 0.3,
+    "save": 6,
+    "verify": 33.6
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "Firmato: Ufficio Commerciale — Milano",
+     "replacement": "Firmato: Direzione Commerciale — Forlì (FC), 15/10/2026",
+     "page": 0,
+     "original": {
+      "fontName": "CAAAAA+Georgia",
+      "pdfFont": {
+       "key": "F6",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "37/37 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0.12156862745098039,
+       0.3058823529411765,
+       0.611764705882353
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       62,
+       300.5
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       62,
+       289.49609375,
+       274.2320251464844,
+       303.130859375
+      ],
+      "gids": {
+       "F": 41,
+       "i": 76,
+       "r": 85,
+       "m": 80,
+       "a": 68,
+       "t": 87,
+       "o": 82,
+       ":": 29,
+       " ": 3,
+       "U": 56,
+       "f": 73,
+       "c": 70,
+       "C": 38,
+       "e": 72,
+       "l": 79,
+       "—": 178,
+       "M": 48,
+       "n": 81
+      }
+     },
+     "segments": [
+      {
+       "text": "Firmato: ",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "0029 004c 0055 0050 0044 0057 0052 001d 0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "D",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "0025",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "ire",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "004c 0055 0048",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "z",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "005b",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "ione Commerciale — Forlì ",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "004c 0052 0051 0048 0003 0026 0052 0050 0050 0048 0055 0046 004c 0044 004f 0048 0003 00b2 0003 0029 0052 0055 004f 0075 0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "(",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "0009",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "FC",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "0029 0026",
+       "how": "ToUnicode"
+      },
+      {
+       "text": ")",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "000a",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": ", ",
+       "source": "original",
+       "fontName": "CAAAAA+Georgia",
+       "resource": "F6",
+       "codes": "000f 0003",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "15/10/2026",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "0012 0016 0010 0012 0011 0010 0013 0011 0013 0017",
+       "why": "no code maps to this character"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0.1216 0.3059 0.6118 rg\n1 0 0 1 62 541.42 Tm\n/F6 12 Tf <0029004c00550050004400570052001d0003> Tj\n/FPE1 12 Tf <0025> Tj\n/F6 12 Tf <004c00550048> Tj\n/FPE1 12 Tf <005b> Tj\n/F6 12 Tf <004c00520051004800030026005200500050004800550046004c0044004f0048000300b20003002900520055004f00750003> Tj\n/FPE1 12 Tf <0009> Tj\n/F6 12 Tf <00290026> Tj\n/FPE1 12 Tf <000a> Tj\n/F6 12 Tf <000f0003> Tj\n/FPE1 12 Tf <0012001600100012001100100013001100130017> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.7914000000000669,
+      "glyphs": 0.6308000000001357,
+      "fontAnalysis": 14.791000000000167,
+      "plan": 5.1358000000000175,
+      "redact": 3.509599999999864,
+      "write": 0.3170000000000073
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73485,
+   "sizeOut": 83451,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "Firmato: Ufficio Commerciale — Milano",
+      "replacement": "Firmato: Direzione Commerciale — Forlì (FC), 15/10/2026",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "55/55",
+      "glyphIdsSameAsElsewhere": "31/31",
+      "newBBox": [
+       62,
+       287.86,
+       363.93,
+       303.87
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "word-calibri",
+   "file": "word-winansi.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.5,
+    "renderPage1_5x": 12.7,
+    "stext": 0.9,
+    "glyphs": 1,
+    "fontAnalysis": 13,
+    "plan": 20.2,
+    "redact": 1.5,
+    "write": 0.2,
+    "save": 0.6,
+    "verify": 46.6
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "importo “è” l’€",
+     "page": 0,
+     "original": {
+      "fontName": "BCDGEE+Calibri",
+      "pdfFont": {
+       "key": "F3",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       65.13600158691406,
+       129.739990234375
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       65.13600158691406,
+       120.739990234375,
+       97.48799133300781,
+       132.739990234375
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "importo “è” l’€",
+       "source": "original",
+       "fontName": "BCDGEE+Calibri",
+       "resource": "F3",
+       "codes": "015d 0175 0189 017d 018c 019a 017d 0003 035e 011f 035f 0003 016f 035b 03a6",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 65.136 712.18 Tm\n/F3 12 Tf <015d01750189017d018c019a017d0003035e011f035f0003016f035b03a6> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.9447000000000116,
+      "glyphs": 0.9963000000000193,
+      "fontAnalysis": 13.004500000000007,
+      "plan": 20.19640000000004,
+      "redact": 1.5304000000000997,
+      "write": 0.17090000000007421
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 220661,
+   "sizeOut": 220873,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "importo “è” l’€",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "15/15",
+      "glyphIdsSameAsElsewhere": "15/15",
+      "newBBox": [
+       65.14,
+       120.74,
+       137.92,
+       132.74
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 2,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 2,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "word-cambria",
+   "file": "word-winansi.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.2,
+    "renderPage1_5x": 9.5,
+    "stext": 0.6,
+    "glyphs": 0.5,
+    "fontAnalysis": 5.8,
+    "plan": 6.8,
+    "redact": 1.4,
+    "write": 0.2,
+    "save": 5.8,
+    "verify": 46.9
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "venerdì",
+     "replacement": "lunedì",
+     "page": 0,
+     "original": {
+      "fontName": "BCDIEE+Cambria",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/7 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0.002,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       270.3860168457031,
+       154.94000244140625
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       270.3860168457031,
+       143.54000854492188,
+       309.0979919433594,
+       157.7239990234375
+      ],
+      "gids": {
+       "v": 152,
+       "e": 135,
+       "n": 144,
+       "r": 148,
+       "d": 134,
+       "ì": 28793
+      }
+     },
+     "segments": [
+      {
+       "text": "l",
+       "source": "original",
+       "fontName": "BCDIEE+Cambria",
+       "resource": "F5",
+       "codes": "008e",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "u",
+       "source": "fallback",
+       "fontName": "Times-Roman",
+       "resource": "FPE1",
+       "codes": "0056",
+       "why": "no code maps to this character"
+      },
+      {
+       "text": "ned",
+       "source": "original",
+       "fontName": "BCDIEE+Cambria",
+       "resource": "F5",
+       "codes": "0090 0087 0086",
+       "how": "ToUnicode"
+      },
+      {
+       "text": "ì",
+       "source": "document-same-line",
+       "fontName": "BCDJEE+DengXian",
+       "resource": "F6",
+       "codes": "7079",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "serif",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 270.386 686.98 Tm\n/F5 12 Tf <008e> Tj\n/FPE1 12 Tf <0056> Tj\n/F5 12 Tf <009000870086> Tj\n/F6 12 Tf <7079> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.6155999999998585,
+      "glyphs": 0.5489000000000033,
+      "fontAnalysis": 5.835100000000011,
+      "plan": 6.814200000000028,
+      "redact": 1.3778999999999542,
+      "write": 0.23430000000007567
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 220661,
+   "sizeOut": 230658,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "venerdì",
+      "replacement": "lunedì",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "6/6",
+      "glyphIdsSameAsElsewhere": "4/4",
+      "newBBox": [
+       270.39,
+       142.3,
+       301.54,
+       158.31
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 2,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 2,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "rl-helvetica-std14",
+   "file": "reportlab-form.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 8.4,
+    "stext": 0.3,
+    "glyphs": 0.4,
+    "fontAnalysis": 5.3,
+    "plan": 10,
+    "redact": 1.2,
+    "write": 0.2,
+    "save": 0.4,
+    "verify": 27.4
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "saldo",
+     "replacement": "acconto è “ok” l’€",
+     "page": 0,
+     "original": {
+      "fontName": "Helvetica",
+      "pdfFont": {
+       "key": "F1",
+       "path": [],
+       "subtype": "Type1",
+       "encoding": "simple",
+       "embedded": false,
+       "toUnicode": false
+      },
+      "fontDictVerified": "5/5 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       170.7359619140625,
+       102
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       170.7359619140625,
+       89.0999984741211,
+       199.41595458984375,
+       105.58799743652344
+      ],
+      "gids": {
+       "s": 84,
+       "a": 66,
+       "l": 77,
+       "d": 69,
+       "o": 80
+      }
+     },
+     "segments": [
+      {
+       "text": "acconto è “ok” l’€",
+       "source": "original",
+       "fontName": "Helvetica",
+       "resource": "F1",
+       "codes": "61 63 63 6f 6e 74 6f 20 e8 20 93 6f 6b 94 20 6c 92 80",
+       "how": "Encoding"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 170.736 740 Tm\n/F1 12 Tf <6163636f6e746f20e820936f6b94206c9280> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.28960000000006403,
+      "glyphs": 0.3623999999999796,
+      "fontAnalysis": 5.3429000000001,
+      "plan": 9.982700000000023,
+      "redact": 1.169300000000021,
+      "write": 0.20810000000005857
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 48766,
+   "sizeOut": 48166,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "saldo",
+      "replacement": "acconto è “ok” l’€",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "18/18",
+      "glyphIdsSameAsElsewhere": "14/14",
+      "newBBox": [
+       170.74,
+       89.1,
+       262.1,
+       105.59
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "rl-arial-custom-enc",
+   "file": "reportlab-form.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 3.4,
+    "stext": 0.4,
+    "glyphs": 0.2,
+    "fontAnalysis": 3.1,
+    "plan": 9.6,
+    "redact": 1,
+    "write": 0.1,
+    "save": 0.4,
+    "verify": 27.3
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "Rossi",
+     "replacement": "Bianchi & C. più",
+     "page": 0,
+     "original": {
+      "fontName": "AAAAAA+ArialMT",
+      "pdfFont": {
+       "key": "F3+0",
+       "path": [],
+       "subtype": "TrueType",
+       "encoding": "simple",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "5/5 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       147.37197875976562,
+       132
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       147.37197875976562,
+       123.263671875,
+       177.37197875976562,
+       134.525390625
+      ],
+      "gids": {
+       "R": 57,
+       "o": 86,
+       "s": 90,
+       "i": 80
+      }
+     },
+     "segments": [
+      {
+       "text": "Bianchi & C. più",
+       "source": "original",
+       "fontName": "AAAAAA+ArialMT",
+       "resource": "F3+0",
+       "codes": "42 69 61 6e 63 68 69 20 26 20 43 2e 20 70 69 06",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n1 0 0 1 147.372 710 Tm\n/F3+0 12 Tf <4269616e636869202620432e20706906> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.449100000000044,
+      "glyphs": 0.1895999999999276,
+      "fontAnalysis": 3.0652999999999793,
+      "plan": 9.631000000000085,
+      "redact": 1.042599999999993,
+      "write": 0.13820000000009713
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 48766,
+   "sizeOut": 48165,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "Rossi",
+      "replacement": "Bianchi & C. più",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "16/16",
+      "glyphIdsSameAsElsewhere": "10/10",
+      "newBBox": [
+       147.37,
+       123.26,
+       232.74,
+       134.53
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "rl-green",
+   "file": "reportlab-form.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.1,
+    "stext": 0.3,
+    "glyphs": 0.2,
+    "fontAnalysis": 5.3,
+    "plan": 1.7,
+    "redact": 1.1,
+    "write": 0.1,
+    "save": 0.4,
+    "verify": 26.5
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "venerdì",
+     "replacement": "lunedì",
+     "page": 0,
+     "original": {
+      "fontName": "AAAAAA+ArialMT",
+      "pdfFont": {
+       "key": "F3+0",
+       "path": [],
+       "subtype": "TrueType",
+       "encoding": "simple",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "7/7 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": -0.002,
+      "color": [
+       0.12156862745098039,
+       0.47843137254901963,
+       0.22745098039215686
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       120.03598022460938,
+       152
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       120.03598022460938,
+       143.263671875,
+       160.05596923828125,
+       154.525390625
+      ],
+      "gids": {
+       "v": 93,
+       "e": 76,
+       "n": 85,
+       "r": 89,
+       "d": 75,
+       "ì": 4
+      }
+     },
+     "segments": [
+      {
+       "text": "lunedì",
+       "source": "original",
+       "fontName": "AAAAAA+ArialMT",
+       "resource": "F3+0",
+       "codes": "6c 75 6e 65 64 04",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0.1216 0.4784 0.2275 rg\n1 0 0 1 120.036 690 Tm\n/F3+0 12 Tf <6c756e656404> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.30490000000008877,
+      "glyphs": 0.23279999999999745,
+      "fontAnalysis": 5.295800000000099,
+      "plan": 1.7128999999999905,
+      "redact": 1.1097999999999502,
+      "write": 0.14660000000003492
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 48766,
+   "sizeOut": 48161,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "venerdì",
+      "replacement": "lunedì",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "6/6",
+      "glyphIdsSameAsElsewhere": "5/5",
+      "newBBox": [
+       120.04,
+       143.26,
+       152.72,
+       154.53
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "rl-rotate90-upright",
+   "file": "reportlab-form.pdf",
+   "page": 2,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 2,
+    "stext": 0.2,
+    "glyphs": 0.1,
+    "fontAnalysis": 5.3,
+    "plan": 2.8,
+    "redact": 0.9,
+    "write": 0.2,
+    "save": 0.4,
+    "verify": 14.7
+   },
+   "encrypted": "",
+   "renderSize": "848x780",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "costo",
+     "page": 1,
+     "original": {
+      "fontName": "Helvetica",
+      "pdfFont": {
+       "key": "F1",
+       "path": [],
+       "subtype": "Type1",
+       "encoding": "simple",
+       "embedded": false,
+       "toUnicode": false
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 14,
+      "fontSize": 14,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "Gray",
+      "mode": "fill",
+      "origin": [
+       158.947998046875,
+       55
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       158.947998046875,
+       39.94999694824219,
+       200.9619903564453,
+       59.18600082397461
+      ],
+      "gids": {
+       "p": 81,
+       "r": 83,
+       "e": 70,
+       "z": 91,
+       "o": 80
+      }
+     },
+     "segments": [
+      {
+       "text": "costo",
+       "source": "original",
+       "fontName": "Helvetica",
+       "resource": "F1",
+       "codes": "63 6f 73 74 6f",
+       "how": "Encoding"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 g\n0 1 -1 0 95 188.948 Tm\n/F1 14 Tf <636f73746f> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.18360000000006949,
+      "glyphs": 0.12100000000009459,
+      "fontAnalysis": 5.262400000000071,
+      "plan": 2.837199999999939,
+      "redact": 0.8599000000001524,
+      "write": 0.165599999999813
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 48766,
+   "sizeOut": 48179,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "costo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "5/5",
+      "glyphIdsSameAsElsewhere": "3/3",
+      "newBBox": [
+       158.95,
+       39.95,
+       192.41,
+       59.19
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "2": 0
+    },
+    "structureBefore": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 2,
+     "outlineItems": 2,
+     "acroFormFields": 2,
+     "widgets": [
+      {
+       "page": 0,
+       "name": "nome",
+       "type": "text",
+       "value": "Mario"
+      },
+      {
+       "page": 0,
+       "name": "pagato",
+       "type": "checkbox",
+       "value": "Yes"
+      }
+     ],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "chrome-rotate90-crop",
+   "file": "chrome-rotate90-crop.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.1,
+    "renderPage1_5x": 4.7,
+    "stext": 0.8,
+    "glyphs": 0.7,
+    "fontAnalysis": 5.3,
+    "plan": 2.6,
+    "redact": 1.2,
+    "write": 0.1,
+    "save": 0.6,
+    "verify": 26.3
+   },
+   "encrypted": "",
+   "renderSize": "1158x818",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "importo",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       659.9199829101562,
+       40.48400115966797
+      ],
+      "dir": [
+       0,
+       1
+      ],
+      "bbox": [
+       656.6973266601562,
+       40.48400115966797,
+       671.3457641601562,
+       72.2146224975586
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "importo",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "015d 0175 0189 017d 018c 019a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 70.484 704.92 Tm\n/F5 12 Tf <015d01750189017d018c019a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.7801999999999225,
+      "glyphs": 0.6647000000000389,
+      "fontAnalysis": 5.324399999999969,
+      "plan": 2.5833000000000084,
+      "redact": 1.202600000000075,
+      "write": 0.13040000000000873
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 73535,
+   "sizeOut": 72669,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "importo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       656.7,
+       40.48,
+       671.35,
+       79.98
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "enc-owner-aes256",
+   "file": "enc-owner-aes256.pdf",
+   "page": 1,
+   "timings": {
+    "open": 26.6,
+    "renderPage1_5x": 8.9,
+    "stext": 0.8,
+    "glyphs": 0.7,
+    "fontAnalysis": 6.1,
+    "plan": 2.8,
+    "redact": 1.2,
+    "write": 0.1,
+    "save": 0.9,
+    "verify": 56.5
+   },
+   "encrypted": "",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "importo",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       70.48400115966797,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       70.48400115966797,
+       125.57421875,
+       102.2146224975586,
+       140.22265625
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "importo",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "015d 0175 0189 017d 018c 019a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 70.484 704.92 Tm\n/F5 12 Tf <015d01750189017d018c019a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.7876000000001113,
+      "glyphs": 0.7483000000001994,
+      "fontAnalysis": 6.0702000000001135,
+      "plan": 2.821100000000115,
+      "redact": 1.2175999999999476,
+      "write": 0.13180000000011205
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 78216,
+   "sizeOut": 72700,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "importo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       70.48,
+       125.57,
+       109.98,
+       140.22
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "enc-user-rc4",
+   "file": "enc-user-rc4.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.7,
+    "renderPage1_5x": 5.2,
+    "stext": 0.7,
+    "glyphs": 0.7,
+    "fontAnalysis": 6,
+    "plan": 3.2,
+    "redact": 1.6,
+    "write": 0.2,
+    "save": 0.8,
+    "verify": 29.8
+   },
+   "encrypted": "user password (auth=2)",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "importo",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       70.48400115966797,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       70.48400115966797,
+       125.57421875,
+       102.2146224975586,
+       140.22265625
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "importo",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "015d 0175 0189 017d 018c 019a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 70.484 704.92 Tm\n/F5 12 Tf <015d01750189017d018c019a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.7208999999998014,
+      "glyphs": 0.6646999999998116,
+      "fontAnalysis": 6.016700000000128,
+      "plan": 3.2070999999996275,
+      "redact": 1.594600000000355,
+      "write": 0.16820000000006985
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 74675,
+   "sizeOut": 72700,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "importo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       70.48,
+       125.57,
+       109.98,
+       140.22
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "enc-user-aes128",
+   "file": "enc-user-aes128.pdf",
+   "page": 1,
+   "timings": {
+    "open": 0.3,
+    "renderPage1_5x": 7.2,
+    "stext": 0.7,
+    "glyphs": 1.4,
+    "fontAnalysis": 5.8,
+    "plan": 3.1,
+    "redact": 1.4,
+    "write": 0.2,
+    "save": 0.9,
+    "verify": 30.8
+   },
+   "encrypted": "user password (auth=2)",
+   "renderSize": "893x1263",
+   "edits": [
+    {
+     "find": "prezzo",
+     "replacement": "importo",
+     "page": 0,
+     "original": {
+      "fontName": "BAAAAA+Calibri",
+      "pdfFont": {
+       "key": "F5",
+       "path": [],
+       "subtype": "Type0/CIDFontType2",
+       "encoding": "Identity-H",
+       "embedded": true,
+       "toUnicode": true
+      },
+      "fontDictVerified": "6/6 glyph ids reproduced",
+      "size": 12,
+      "fontSize": 12,
+      "horizontalScale": 100,
+      "charSpacing": 0,
+      "color": [
+       0,
+       0,
+       0
+      ],
+      "colorspace": "RGB",
+      "mode": "fill",
+      "origin": [
+       70.48400115966797,
+       137
+      ],
+      "dir": [
+       1,
+       0
+      ],
+      "bbox": [
+       70.48400115966797,
+       125.57421875,
+       102.2146224975586,
+       140.22265625
+      ],
+      "gids": {
+       "p": 393,
+       "r": 396,
+       "e": 286,
+       "z": 460,
+       "o": 381
+      }
+     },
+     "segments": [
+      {
+       "text": "importo",
+       "source": "original",
+       "fontName": "BAAAAA+Calibri",
+       "resource": "F5",
+       "codes": "015d 0175 0189 017d 018c 019a 017d",
+       "how": "ToUnicode"
+      }
+     ],
+     "missing": [],
+     "toUnicodeAdded": 0,
+     "widthsAdded": 0,
+     "linksRestored": 0,
+     "style": {
+      "family": "sans",
+      "bold": false,
+      "italic": false
+     },
+     "ops": "q\nBT\n0 0 0 rg\n1 0 0 1 70.484 704.92 Tm\n/F5 12 Tf <015d01750189017d018c019a017d> Tj\nET\nQ\n",
+     "timings": {
+      "stext": 0.7184999999999491,
+      "glyphs": 1.3734999999996944,
+      "fontAnalysis": 5.769100000000435,
+      "plan": 3.0960000000000036,
+      "redact": 1.3760999999999513,
+      "write": 0.15139999999973952
+     }
+    }
+   ],
+   "subset": "fallback",
+   "saveOptions": "garbage=compact,compress=yes,decrypt=yes",
+   "sizeIn": 77977,
+   "sizeOut": 72700,
+   "verify": {
+    "reopenedWithoutPassword": true,
+    "edits": [
+     {
+      "find": "prezzo",
+      "replacement": "importo",
+      "oldWordGone": true,
+      "newTextExtracts": true,
+      "neighboursKept": true,
+      "baselineDelta": 0,
+      "sizeDelta": 0,
+      "colorSame": true,
+      "dirSame": true,
+      "fontsAsPlanned": "7/7",
+      "glyphIdsSameAsElsewhere": "7/7",
+      "newBBox": [
+       70.48,
+       125.57,
+       109.98,
+       140.22
+      ]
+     }
+    ],
+    "pixelsChangedOutsideEdits": {
+     "1": 0
+    },
+    "structureBefore": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    },
+    "structureAfter": {
+     "pages": 1,
+     "outlineItems": 3,
+     "acroFormFields": 0,
+     "widgets": [],
+     "links": []
+    }
+   },
+   "ok": true
+  }
+ ]
+}
