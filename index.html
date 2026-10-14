@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- Everything runs locally: the page may only load its own files and can never send data elsewhere -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PDF Editor</title>
 <style>
@@ -60,7 +62,7 @@
 
   /* Empty / drop state */
   #empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);text-align:center}
-  #empty .drop{border:2px dashed var(--line);border-radius:16px;padding:48px 60px;transition:.15s}
+  #empty .drop{border:2px dashed var(--line);border-radius:16px;padding:48px 60px;transition:.15s;cursor:pointer}
   #empty .drop.over{border-color:var(--accent);background:rgba(79,140,255,.08)}
   #empty h2{color:var(--txt);margin:6px 0}
   #status{position:fixed;bottom:14px;right:16px;background:var(--panel2);border:1px solid var(--line);padding:8px 14px;border-radius:8px;font-size:13px;opacity:0;transition:.2s;pointer-events:none}
@@ -84,6 +86,8 @@
   .sigitem{border:1px solid var(--line);border-radius:8px;padding:6px;display:flex;flex-direction:column;align-items:center;gap:5px;background:var(--panel2)}
   .sigitem img{width:130px;height:54px;object-fit:contain;background:#fff;border-radius:4px}
   .sigitem .b{display:flex;gap:5px}
+  .dlginput{width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:8px 10px;font-size:16px;margin-bottom:14px}
+  a.hint{text-decoration:none} a.hint:hover{color:var(--txt);text-decoration:underline}
 </style>
 </head>
 <body>
@@ -119,7 +123,7 @@
   <label title="Grid: rows × columns">▦ <input type="number" id="gridRows" value="3" min="1" max="50" style="width:44px"> × <input type="number" id="gridCols" value="3" min="1" max="50" style="width:44px"></label>
   <div class="spacer"></div>
   <span id="muBadge" class="hint" title="Real text-removal engine (MuPDF / WASM)">⏳ engine…</span>
-  <span class="hint">✕ or Del to remove</span>
+  <a class="hint" id="srcLink" href="https://github.com/Proivonz001/pdf-editor" target="_blank" rel="noopener" title="PDF Editor is free software under the GNU AGPL-3.0: get the source code">Source code (AGPL)</a>
   <button class="tb primary" id="btnExport" disabled>💾 Export PDF</button>
 </div>
 
@@ -129,8 +133,9 @@
     <div id="empty">
       <div class="drop" id="drop">
         <h2>Drop a PDF here</h2>
-        <div>or click “Open PDF” above</div>
+        <div>or click here to choose one</div>
         <div style="font-size:12px;margin-top:10px">Everything happens in your browser — no file is ever uploaded.</div>
+        <div style="font-size:12px;margin-top:4px">Free software under the GNU AGPL-3.0 · <a href="https://github.com/Proivonz001/pdf-editor" target="_blank" rel="noopener" style="color:var(--accent)">source code</a></div>
       </div>
     </div>
   </div>
@@ -159,9 +164,6 @@
 </div>
 
 <script src="lib/pdf.min.js"></script>
-<script src="lib/pdf-lib.min.js"></script>
-<script src="lib/fontkit.umd.js"></script>
-<script src="lib/tesseract/tesseract.min.js"></script>
 <script>
 "use strict";
 
@@ -169,6 +171,13 @@
 const RENDER_SCALE = 1.5;            // punti PDF -> pixel a schermo
 const DPR = Math.min(window.devicePixelRatio || 1, 2);
 pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js";
+// Il worker che legge i PDF (dati non fidati) parte da un blob: così eredita la Content-Security-Policy
+// della pagina e non può contattare altri siti. Un worker caricato da URL avrebbe una policy tutta sua.
+try{
+  const src=new URL("lib/pdf.worker.min.js", location.href).href;
+  pdfjsLib.GlobalWorkerOptions.workerPort=new Worker(URL.createObjectURL(
+    new Blob(["importScripts("+JSON.stringify(src)+");"], {type:"text/javascript"})));
+}catch(e){ console.warn("pdf.js worker via blob not available, using the plain worker:",e); }
 
 /* ===== Stato ===== */
 let sources = {};            // id -> { bytes: Uint8Array }
@@ -201,48 +210,118 @@ function appDialog(msg, opts){
     const box=document.createElement("div"); box.className="modalbox"; box.style.maxWidth="440px";
     const p=document.createElement("div"); p.textContent=msg; p.style.whiteSpace="pre-wrap"; p.style.marginBottom="14px";
     const row=document.createElement("div"); row.className="row end";
-    const done=v=>{ ov.remove(); document.removeEventListener("keydown",onKey,true); res(v); };
-    if(opts.confirm){ const no=document.createElement("button"); no.className="tb"; no.textContent=opts.cancelText||"Cancel"; no.onclick=()=>done(false); row.appendChild(no); }
+    let inp=null;
+    if(opts.input){
+      inp=document.createElement("input"); inp.type=opts.input; inp.className="dlginput";
+      inp.autocomplete="off"; inp.setAttribute("aria-label",msg);
+    }
+    const ok_=v=>inp ? (v ? inp.value : null) : v;
+    const done=v=>{ ov.remove(); document.removeEventListener("keydown",onKey,true); res(ok_(v)); };
+    if(opts.confirm||opts.input){ const no=document.createElement("button"); no.className="tb"; no.textContent=opts.cancelText||"Cancel"; no.onclick=()=>done(false); row.appendChild(no); }
     const ok=document.createElement("button"); ok.className="tb primary"; ok.textContent=opts.okText||"OK"; ok.onclick=()=>done(true); row.appendChild(ok);
-    box.append(p,row); ov.appendChild(box); document.body.appendChild(ov);
-    const onKey=e=>{ if(e.key==="Escape"){ e.stopPropagation(); done(false);} else if(e.key==="Enter"){ e.stopPropagation(); done(true);} };
+    box.append(p); if(inp) box.append(inp); box.append(row); ov.appendChild(box); document.body.appendChild(ov);
+    const onKey=e=>{
+      // con più finestre aperte risponde solo quella in cima
+      const open=[...document.querySelectorAll(".modal")].filter(m=>!m.hidden);
+      if(open[open.length-1]!==ov) return;
+      if(e.key==="Escape"){ e.stopPropagation(); done(false); }
+      else if(e.key==="Enter"){
+        e.stopPropagation(); e.preventDefault();
+        const f=document.activeElement;   // Invio su "Annulla" deve annullare, non confermare
+        done(f && f.tagName==="BUTTON" && box.contains(f) ? f===ok : true);
+      }
+    };
     document.addEventListener("keydown",onKey,true);
-    ok.focus();
+    (inp||ok).focus();
   });
 }
 function appAlert(msg){ return appDialog(msg,{}); }
-function appConfirm(msg){ return appDialog(msg,{confirm:true}); }
+function appConfirm(msg,okText,cancelText){ return appDialog(msg,{confirm:true,okText,cancelText}); }
+function appPrompt(msg,type){ return appDialog(msg,{input:type||"text"}); }
 
 /* ===== Apertura file ===== */
 $("#btnOpen").onclick = ()=> $("#fileOpen").click();
 $("#btnAppend").onclick = ()=> $("#fileAppend").click();
-$("#fileOpen").onchange = e => { if(e.target.files[0]) loadPdf(e.target.files[0], true); e.target.value=""; };
-$("#fileAppend").onchange = e => { if(e.target.files[0]) loadPdf(e.target.files[0], false); e.target.value=""; };
+function isPdfFile(f){ return !!f && (f.type==="application/pdf" || /\.pdf$/i.test(f.name||"")); }
+$("#fileOpen").onchange = e => { const f=e.target.files[0]; e.target.value=""; if(f) loadPdf(f, true); };
+$("#fileAppend").onchange = e => { const f=e.target.files[0]; e.target.value=""; if(f) loadPdf(f, false); };
 
 const drop = $("#drop");
-["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
-["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
-drop.addEventListener("drop", e=>{
-  const f = e.dataTransfer.files[0];
-  if(f && f.type==="application/pdf") loadPdf(f, true);
+drop.onclick = e=>{ if(!e.target.closest("a")) $("#fileOpen").click(); };
+// Il file si può trascinare ovunque: il browser non deve mai aprirlo al posto dell'app (perdendo il lavoro)
+// solo i file trascinati dal sistema: il trascinamento di testo dentro una casella resta quello del browser
+const draggingFiles=e=>!!e.dataTransfer && Array.from(e.dataTransfer.types||[]).includes("Files");
+["dragenter","dragover"].forEach(ev=>document.addEventListener(ev,e=>{ if(!draggingFiles(e)) return; e.preventDefault(); drop.classList.add("over"); }));
+document.addEventListener("dragleave",e=>{ if(!e.relatedTarget) drop.classList.remove("over"); });
+document.addEventListener("drop", e=>{
+  if(!draggingFiles(e)) return;
+  e.preventDefault(); drop.classList.remove("over");
+  const f = e.dataTransfer && e.dataTransfer.files[0];
+  if(!f) return;
+  if(isPdfFile(f)) loadPdf(f, true);
+  else appAlert("Only PDF files can be opened here.");
 });
 
+/* ===== Modifiche non ancora scaricate: avvisa prima di perderle ===== */
+let docDirty=false, changeVer=0;
+function markDirty(){ docDirty=true; changeVer++; }
+window.addEventListener("beforeunload", e=>{ if(docDirty){ e.preventDefault(); e.returnValue=""; } });
+
+let loadSeq=0;   // ogni apertura ha un numero: se ne parte una più recente, quella vecchia si ferma
 async function loadPdf(file, replace){
+  if(replace && pages.length && docDirty &&
+     !(await appConfirm("Open another PDF? Your changes to the current one have not been downloaded and will be lost.","Open","Cancel"))) return;
+  const token=++loadSeq;
   status("Loading the PDF…");
-  const buf = new Uint8Array(await file.arrayBuffer());
+  let buf, pdf, password=null, cancelled=false;
+  try{
+    buf = new Uint8Array(await file.arrayBuffer());
+    // copia per pdf.js (evita il detach del buffer); isEvalSupported:false chiude CVE-2024-4367
+    const task = pdfjsLib.getDocument({ data: buf.slice(0), isEvalSupported: false });
+    task.onPassword = async (update, reason) => {
+      const wrong = reason === pdfjsLib.PasswordResponses.INCORRECT_PASSWORD;
+      const pw = await appPrompt(wrong ? "Wrong password. Try again:" : "This PDF is protected. Enter its password to open it:", "password");
+      if(pw === null){ cancelled=true; task.destroy(); return; }
+      password = pw; update(pw);
+    };
+    pdf = await task.promise;
+  }catch(e){
+    if(token!==loadSeq) return;
+    if(cancelled){ status("Opening cancelled"); return; }
+    console.error(e);
+    await appAlert("This file could not be opened. It may be damaged or not a PDF.\n\nDetails: " + (e && e.message || e));
+    return;
+  }
+  // cifrato (anche solo con i permessi): all'export va decifrato con MuPDF, pdf-lib non sa leggerlo
+  let encrypted=false;
+  try{ encrypted=!!(await pdf.getMetadata()).info.EncryptFilterName; }catch(e){}
+  if(token!==loadSeq){ pdf.destroy(); return; }
   const sourceId = "s"+(srcSeq++);
-  sources[sourceId] = { bytes: buf };
-  // copia per pdf.js (evita il detach del buffer)
-  const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-  if(replace){ pages = []; viewer.innerHTML=""; }
-  else $("#empty") && $("#empty").remove();
+  if(replace){ deselect(); pages = []; viewer.innerHTML=""; sources = {}; docName = (file.name||"").replace(/\.pdf$/i,""); }
+  sources[sourceId] = { bytes: buf, password, encrypted };
+  const added=[];
   for(let i=1;i<=pdf.numPages;i++){
-    pages.push({ id:"p"+(pageSeq++), sourceId, pageIndex:i-1, rotation:0,
-                 annotations:[], drawCanvas:null, drawCtx:null, drawVer:0, _pdf:pdf, _num:i, el:null });
+    const pe={ id:"p"+(pageSeq++), sourceId, pageIndex:i-1, rotation:0,
+               annotations:[], drawCanvas:null, drawCtx:null, drawVer:0, _pdf:pdf, _num:i, el:null };
+    pages.push(pe); added.push(pe);
   }
   enableTools(true);
-  await renderAll();
-  resetHistory(); record();   // stato iniziale per annulla/ripristina
+  try{
+    if(replace){
+      await renderAll(token);
+      if(token!==loadSeq) return;
+      resetHistory(); record();   // stato iniziale per annulla/ripristina
+      docDirty=false;
+    } else {
+      // solo le pagine nuove: ridisegnare tutto cancellava i tratti di penna delle pagine già aperte
+      $("#empty") && $("#empty").remove();
+      for(const pe of added){ await renderPage(pe, token); if(token!==loadSeq) return; }
+      refreshThumbs(); record(); markDirty();
+    }
+  }catch(e){
+    console.error(e);
+    await appAlert("Some pages could not be displayed.\n\nDetails: " + (e && e.message || e));
+  }
   status(`PDF loaded (${pdf.numPages} pages)`);
 }
 
@@ -253,17 +332,21 @@ function enableTools(on){
   $("#btnSign").disabled=!on; $("#btnOCR").disabled=!on; $("#btnEditAll").disabled=!on; $("#btnCopyPage").disabled=!on;
   updateUndoButtons();
 }
-$("#btnEditAll").onclick=()=>editAllInPlace();
-$("#btnCopyPage").onclick=()=>convertAllText();
+$("#btnEditAll").onclick=()=>{ loadMu(); editAllInPlace(); };
+$("#btnCopyPage").onclick=()=>{ loadMu(); convertAllText(); };
 
 /* ===== Render di tutte le pagine ===== */
-async function renderAll(){
+async function renderAll(token){
   const empty = $("#empty"); if(empty) empty.remove();
   viewer.innerHTML=""; thumbsBox.innerHTML="";
-  for(const pe of pages){ await renderPage(pe); buildThumb(pe); }
+  for(const pe of pages){
+    await renderPage(pe, token);
+    if(token!==undefined && token!==loadSeq) return;   // nel frattempo è stato aperto un altro PDF
+    buildThumb(pe);
+  }
 }
 
-async function renderPage(pe){
+async function renderPage(pe, token){
   let page=null, viewport;
   if(pe.synthetic){ viewport={ width: pe.wpt*RENDER_SCALE, height: pe.hpt*RENDER_SCALE }; }
   else { page = await pe._pdf.getPage(pe._num); viewport = page.getViewport({ scale: RENDER_SCALE }); }
@@ -290,6 +373,7 @@ async function renderPage(pe){
   annlayer.className="annlayer";
 
   wrap.append(base, draw, annlayer);
+  if(token!==undefined && token!==loadSeq) return;
   viewer.appendChild(wrap);
   pe.el = wrap; pe.annEl = annlayer; pe.dispW=viewport.width; pe.dispH=viewport.height;
 
@@ -316,7 +400,7 @@ function buildThumb(pe){
   const [up,down,rot,del]=btns.querySelectorAll("button");
   up.onclick=e=>{e.stopPropagation();movePage(pe,-1);};
   down.onclick=e=>{e.stopPropagation();movePage(pe,1);};
-  rot.onclick=e=>{e.stopPropagation();pe.rotation=(pe.rotation+90)%360;refreshThumbs();status("Rotation will be applied on export");};
+  rot.onclick=e=>{e.stopPropagation();pe.rotation=(pe.rotation+90)%360;markDirty();refreshThumbs();status("Rotation will be applied on export");};
   del.onclick=e=>{e.stopPropagation();deletePage(pe);};
   t.appendChild(btns);
   t.onclick=()=>pe.el.scrollIntoView({behavior:"smooth",block:"start"});
@@ -328,13 +412,14 @@ function movePage(pe,dir){
   const i=pages.indexOf(pe), j=i+dir;
   if(j<0||j>=pages.length) return;
   pages.splice(i,1); pages.splice(j,0,pe);
-  reorderDom();
+  markDirty(); reorderDom();
 }
 function reorderDom(){ pages.forEach(pe=>viewer.appendChild(pe.el)); refreshThumbs(); }
 async function deletePage(pe){
   if(pages.length<=1){ status("You cannot delete the only page"); return; }
   if(!(await appConfirm("Delete this page?"))) return;
-  pages=pages.filter(p=>p!==pe); pe.el.remove(); refreshThumbs();
+  if(selected && selected._page===pe) deselect();
+  pages=pages.filter(p=>p!==pe); pe.el.remove(); markDirty(); refreshThumbs();
 }
 
 /* ===== Selezione strumento ===== */
@@ -344,6 +429,7 @@ document.querySelectorAll("[data-tool]").forEach(b=>{
     document.querySelectorAll("[data-tool]").forEach(x=>x.classList.remove("active"));
     b.classList.add("active");
     if(tool!=="select") deselect();
+    if(tool==="edittext"||tool==="whiteout") loadMu();   // prepara il motore di rimozione in anticipo
     pages.forEach(applyToolPointer);
   };
 });
@@ -378,6 +464,9 @@ function attachPageEvents(pe){
   pe.annEl.addEventListener("pointerdown",e=>{
     if(e.target.closest(".ann")) return; // gestito dall'annotazione
     const p=local(pe.annEl,e);
+    // senza questo il mousedown che segue sposta il focus sulla pagina e la casella appena creata
+    // non riceve la tastiera (bisognava cliccarci una seconda volta)
+    if(tool==="text"||tool==="edittext") e.preventDefault();
     if(tool==="text"){
       const a={type:"text",x:p.x,y:p.y,w:200,h:24,text:"",fontSize:+$("#size").value,color:$("#color").value,bold:defaultStyle.bold,italic:defaultStyle.italic};
       pe.annotations.push(a); const el=renderAnn(pe,a); selectAnn(el);
@@ -387,6 +476,7 @@ function attachPageEvents(pe){
       const a={type:"rect",x:p.x,y:p.y,w:1,h:1,
                color: white?"#ffffff":$("#color").value,
                opacity: white?1:0.4};
+      if(white) a.whiteout=true;   // all'export il contenuto sotto viene rimosso davvero (MuPDF)
       pe.annotations.push(a); const el=renderAnn(pe,a);
       creating={a,el,sx:p.x,sy:p.y}; pe.annEl.setPointerCapture(e.pointerId);
     } else if(tool==="grid"){
@@ -442,12 +532,37 @@ function placeImageAt(pe,p,dataUrl,format){
   };
   img.src=dataUrl;
 }
+// Ogni immagine passa da un canvas: il PDF accetta solo PNG e JPEG (WebP, GIF, BMP… facevano fallire
+// l'export), l'orientamento delle foto viene applicato e le foto enormi ridotte a 2000 px.
+const IMG_MAX=2000;
+function normalizeImage(dataUrl, type){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const s=Math.min(1, IMG_MAX/Math.max(img.naturalWidth,img.naturalHeight));
+      const w=Math.max(1,Math.round(img.naturalWidth*s)), h=Math.max(1,Math.round(img.naturalHeight*s));
+      const c=document.createElement("canvas"); c.width=w; c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h);
+      try{
+        if(/jpe?g/i.test(type)) res({ dataUrl:c.toDataURL("image/jpeg",0.92), format:"jpg" });
+        else res({ dataUrl:c.toDataURL("image/png"), format:"png" });   // conserva la trasparenza
+      }catch(e){ rej(e); }
+    };
+    img.onerror=()=>rej(new Error("unsupported image"));
+    img.src=dataUrl;
+  });
+}
 $("#fileImage").onchange=async e=>{
   const f=e.target.files[0]; e.target.value="";
-  if(!f||!pendingImagePage)return;
-  const dataUrl=await readFileDataURL(f);
-  placeImageAt(pendingImagePage, pendingImagePt, dataUrl, f.type.includes("png")?"png":"jpg");
-  pendingImagePage=null;
+  const pe=pendingImagePage, pt=pendingImagePt; pendingImagePage=null;
+  if(!f||!pe)return;
+  try{
+    const norm=await normalizeImage(await readFileDataURL(f), f.type||"");
+    placeImageAt(pe, pt, norm.dataUrl, norm.format);
+  }catch(err){
+    console.warn(err);
+    appAlert("This image could not be added. Use a JPG or PNG image.");
+  }
 };
 
 /* ===== Modifica del testo esistente (click-to-edit) ===== */
@@ -556,16 +671,19 @@ function makeItemEditable(pe, it, group){
   const bg=pickBg(pe, it);                    // colore sfondo robusto (no toppe grigie)
   const color=sampleTextColor(pe, it, bg);   // colore reale dell'inchiostro
   const mask=makeTextMask(pe, it, bg);       // copre SOLO i pixel della scritta
+  // regione stretta per la rimozione reale (MuPDF): sta sia sulla copertura sia sulla casella,
+  // così il testo originale viene tolto anche se la casella nuova viene eliminata
+  const redact={x:it.x-1, y:it.y-1, w:it.w+2, h:it.h*1.12+1};
   let cov;
   if(mask){
-    cov={type:"image", x:mask.x, y:mask.y, w:mask.w, h:mask.h, dataUrl:mask.dataUrl, format:"png", isCover:true, group};
+    cov={type:"image", x:mask.x, y:mask.y, w:mask.w, h:mask.h, dataUrl:mask.dataUrl, format:"png", isCover:true, group, redact};
   } else {
-    cov={type:"rect", x:it.x-2, y:it.y-2, w:it.w+4, h:it.h*1.3+2, color:bg, opacity:1, isCover:true, group};
+    cov={type:"rect", x:it.x-2, y:it.y-2, w:it.w+4, h:it.h*1.3+2, color:bg, opacity:1, isCover:true, group, redact};
   }
   pe.annotations.push(cov); renderAnn(pe, cov);
   const txt={type:"text", x:it.x, y:it.y, w:Math.max(40,it.w+12), h:it.h, text:it.str,
              fontSize:it.fontSize, color, bold:!!it.bold, italic:!!it.italic, fontRef:it.font, group,
-             redact:{x:it.x-1, y:it.y-1, w:it.w+2, h:it.h*1.12+1}};  // regione stretta per rimozione reale (MuPDF)
+             redact:{...redact}};
   pe.annotations.push(txt); return renderAnn(pe,txt);
 }
 function startEditExisting(pe,p){
@@ -694,7 +812,7 @@ function renderAnn(pe,a){
     ed.textContent=a.text;
     ed.style.fontSize=a.fontSize+"px"; ed.style.color=a.color; ed.style.lineHeight=1.2;
     ed.style.fontWeight=a.bold?"700":"400"; ed.style.fontStyle=a.italic?"italic":"normal";
-    ed.addEventListener("input",()=>{a.text=ed.innerText;});
+    ed.addEventListener("input",()=>{a.text=ed.innerText; markDirty();});
     ed.addEventListener("blur",()=>record());
     ed.addEventListener("pointerdown",e=>{ if(tool==="select"){ e.stopPropagation(); selectAnn(el);} });
   } else if(a.type==="image"){
@@ -799,7 +917,7 @@ function toggleStyle(which){
 $("#btnBold").onclick=()=>toggleStyle("bold");
 $("#btnItalic").onclick=()=>toggleStyle("italic");
 $("#color").addEventListener("input",()=>{
-  if(!selected) return; const a=selected._ann;
+  if(!selected) return; const a=selected._ann; markDirty();
   if(a.type==="text"){ a.color=$("#color").value; selected.querySelector(".edit").style.color=a.color; }
   else if(a.type==="grid"){ a.color=$("#color").value; rebuildGrid(selected); }
   else if(a.type==="shape"){ a.color=$("#color").value; rebuildShape(selected); }
@@ -807,7 +925,7 @@ $("#color").addEventListener("input",()=>{
 });
 $("#size").addEventListener("input",()=>{
   if(selected && selected._ann.type==="text"){
-    const v=Math.max(6,+$("#size").value); selected._ann.fontSize=v;
+    const v=Math.max(6,+$("#size").value); selected._ann.fontSize=v; markDirty();
     selected.querySelector(".edit").style.fontSize=v+"px";
   }
 });
@@ -829,8 +947,16 @@ function removeAnn(el){
   if(selected===el){ selected=null; syncStyleButtons(); }
   record();
 }
+// tasti digitati in un campo (dimensione, colore, password…) o in una finestra non toccano le annotazioni
+function typingInField(){
+  const el=document.activeElement;
+  if(!el) return false;
+  if(el.closest(".modal:not([hidden])")) return true;
+  return el.tagName==="TEXTAREA" || (el.tagName==="INPUT" && /^(text|password|number|search|email)$/.test(el.type));
+}
 document.addEventListener("keydown",e=>{
   if((e.key==="Delete"||e.key==="Backspace") && selected){
+    if(typingInField()) return;
     const a=selected._ann;
     const editing=document.activeElement && document.activeElement.classList
                   && document.activeElement.classList.contains("edit");
@@ -870,10 +996,22 @@ function enableResize(el,handle){
 }
 
 /* ===== Esportazione ===== */
-$("#btnExport").onclick=exportPdf;
-async function exportPdf(){
+$("#btnExport").onclick=()=>exportPdf();
+let docName="";   // nome del PDF aperto, per il file scaricato
+// caratteri che i font standard non sanno scrivere (WinAnsi): sostituti leggibili prima del "?"
+const CHAR_SUBST={"\u2212":"-","\u2010":"-","\u2011":"-","\u2032":"'","\u2033":"\"","\u2009":" ","\u202F":" ","\u2007":" "};
+async function exportPdf(opts){
+  opts=opts||{};
+  const btn=$("#btnExport");
   try{
+    btn.disabled=true;
     status("Generating the PDF…"); deselect();
+    // fotografia del documento: ciò che cambia mentre l'export lavora non lo rende incoerente
+    const verAtStart=changeVer, pagesSnap=pages.slice();
+    const annsOf=new Map(pagesSnap.map(pe=>[pe, pe.annotations.slice()]));
+    await ensurePdfLib();
+    const wantFonts=!opts.noEmbedded && pagesSnap.some(pe=>annsOf.get(pe).some(a=>a.type==="text"&&a.fontRef));
+    if(wantFonts) await ensureFontkit();
     const out=await PDFLib.PDFDocument.create();
     if(FK){ try{ out.registerFontkit(FK); }catch(e){} }
     const SF=PDFLib.StandardFonts;
@@ -884,30 +1022,65 @@ async function exportPdf(){
       bolditalic:  await out.embedFont(SF.HelveticaBoldOblique),
     };
     const pickFont=a=>fonts[((a.bold?"bold":"")+(a.italic?"italic":""))||"normal"];
+    const charsets=new Map();
+    const fitText=(s,font)=>{   // testo che il font standard sa scrivere: € ’ “ ” – … restano, il resto diventa "?"
+      let set=charsets.get(font); if(!set){ set=new Set(font.getCharacterSet()); charsets.set(font,set); }
+      let r="";
+      for(const ch of s){
+        const cp=ch.codePointAt(0);
+        if(ch==="\t"){ r+="    "; continue; }
+        if(cp<32) continue;
+        const sub=CHAR_SUBST[ch];
+        r+= set.has(cp) ? ch : (sub && set.has(sub.codePointAt(0)) ? sub : "?");
+      }
+      return r;
+    };
+    const stripControls=s=>s.replace(/\t/g,"    ").replace(/[\x00-\x1f]/g,"");
 
-    // --- pre-pass MuPDF: estrae i font incorporati E rimuove davvero il testo originale ---
+    // --- pre-pass MuPDF: rimuove davvero il contenuto originale, decifra, estrae i font incorporati ---
     const srcBytes={};
     for(const sid in sources) srcBytes[sid]=sources[sid].bytes;
+    const usedSids=[...new Set(pagesSnap.filter(pe=>!pe.synthetic).map(pe=>pe.sourceId))];
+    const regionsBySource={};   // sid -> Map(pageIndex -> {edits, erase})
+    for(const pe of pagesSnap){
+      if(pe.synthetic) continue;
+      const edits=annsOf.get(pe).filter(a=>(a.type==="text"||a.isCover)&&a.redact).map(a=>a.redact);
+      const erase=annsOf.get(pe).filter(a=>a.type==="rect"&&a.whiteout).map(a=>({x:a.x,y:a.y,w:a.w,h:a.h}));
+      if(edits.length||erase.length)
+        (regionsBySource[pe.sourceId]||(regionsBySource[pe.sourceId]=new Map())).set(pe.pageIndex,{edits,erase});
+    }
+    // sorgenti che DEVONO passare da MuPDF (rimozione o cifratura) e quelle utili solo per il riuso del font
+    const required=new Set([...Object.keys(regionsBySource), ...usedSids.filter(s=>sources[s].encrypted)]);
+    const fontSids=new Set();
+    if(wantFonts) for(const pe of pagesSnap) for(const a of annsOf.get(pe))
+      if(a.type==="text" && a.fontRef){ const s=a.fontSrc||pe.sourceId; if(s && sources[s]) fontSids.add(s); }
     const fontMapBySource={};
-    let removedReal=false;
-    if(muReady){
-      const redactBySource={};
-      for(const pe of pages){
-        const rects=pe.annotations.filter(a=>a.type==="text"&&a.redact).map(a=>a.redact);
-        if(rects.length){ (redactBySource[pe.sourceId]||(redactBySource[pe.sourceId]=new Map())).set(pe.pageIndex,rects); }
-      }
-      // sorgenti necessarie anche solo per il riuso del font (es. pagina ricreata dal testo reale)
-      const needFont=new Set();
-      for(const pe of pages) for(const a of pe.annotations)
-        if(a.type==="text" && a.fontRef){ const s=a.fontSrc||pe.sourceId; if(s && sources[s]) needFont.add(s); }
-      const allSids=new Set([...Object.keys(redactBySource), ...needFont]);
+    let removedReal=false, decrypted=false;
+    const failed=new Set();
+    const allSids=new Set([...required, ...fontSids]);
+    if(allSids.size){
+      if(!muReady) status("Loading the text-removal engine…");
+      await loadMu();
       for(const sid of allSids){
+        if(!muReady){ failed.add(sid); continue; }
         try{
-          const res=muProcessSource(srcBytes[sid], redactBySource[sid]||new Map());
+          const res=muProcessSource(srcBytes[sid], regionsBySource[sid]||new Map(), sources[sid].password);
           srcBytes[sid]=res.bytes; fontMapBySource[sid]=res.fonts;
-          if(redactBySource[sid]) removedReal=true;
-        }catch(e){ console.warn("MuPDF fallito per",sid,e); }
+          if(regionsBySource[sid]) removedReal=true;
+          if(sources[sid].encrypted) decrypted=true;
+        }catch(e){ console.warn("MuPDF failed for",sid,e); failed.add(sid); }
       }
+      status("Generating the PDF…");
+    }
+    if([...failed].some(s=>required.has(s)&&sources[s].encrypted)){
+      await appAlert(muReady
+        ? "This PDF is protected and could not be unlocked for saving, so it cannot be downloaded.\n\nTry opening it again and enter its password if asked."
+        : "This PDF is protected. Saving it needs the PDF engine, which could not be loaded.\n\nCheck your connection and try downloading again.");
+      status("Download cancelled"); return;
+    }
+    if([...failed].some(s=>regionsBySource[s]) &&
+       !(await appConfirm("The original text could not be removed from the file.\n\nYour edits and white-out boxes will only cover it: the old text will still be inside the PDF, and anyone can copy it or find it by searching.\n\nDownload anyway?","Download anyway","Cancel"))){
+      status("Download cancelled"); return;
     }
 
     // riuso del font reale incorporato (con verifica copertura + ripiego su Helvetica)
@@ -925,7 +1098,7 @@ async function exportPdf(){
       return null;
     };
     const embeddedFontFor=async(a,sid)=>{
-      if(!FK||!a.fontRef) return null;
+      if(opts.noEmbedded||!FK||!a.fontRef) return null;
       const useSid=a.fontSrc||sid;
       const bytes=findFontBytes(useSid,a.fontRef); if(!bytes) return null;
       try{ const probe=FK.create(bytes);
@@ -939,16 +1112,32 @@ async function exportPdf(){
       catch(e){ embCache[ck]='fail'; return null; }
     };
 
-    const docCache={};
-    for(const pe of pages){
-      let pg;
+    // tutte le pagine di una sorgente copiate in una sola volta: copiarle una per una duplicava
+    // font e immagini condivisi (file fino a 10 volte più grandi)
+    const copied={};   // sid -> Map(pageIndex -> PDFPage)
+    for(const sid of usedSids){
+      const src=await PDFLib.PDFDocument.load(srcBytes[sid]);
+      const idx=[...new Set(pagesSnap.filter(pe=>!pe.synthetic&&pe.sourceId===sid).map(pe=>pe.pageIndex))];
+      const cps=await out.copyPages(src, idx);
+      copied[sid]=new Map(idx.map((pi,k)=>[pi,cps[k]]));
+    }
+    for(const pe of pagesSnap){
+      let pg, pw, ph, cm=null;
       if(pe.synthetic){
-        pg=out.addPage([pe.wpt, pe.hpt]);
+        pg=out.addPage([pe.wpt, pe.hpt]); pw=pe.wpt; ph=pe.hpt;
       } else {
-        if(!docCache[pe.sourceId]) docCache[pe.sourceId]=await PDFLib.PDFDocument.load(srcBytes[pe.sourceId]);
-        const [cp]=await out.copyPages(docCache[pe.sourceId],[pe.pageIndex]); pg=cp; out.addPage(pg);
+        pg=copied[pe.sourceId].get(pe.pageIndex); out.addPage(pg);
+        // Si disegna nello spazio della pagina COME SI VEDE (dimensioni del riquadro visibile, già ruotata,
+        // y verso l'alto); la matrice cm la porta nelle coordinate PDF. Senza, su pagine con /Rotate o
+        // con il CropBox spostato le modifiche finivano nel posto sbagliato.
+        const vp=(await pe._pdf.getPage(pe._num)).getViewport({ scale: RENDER_SCALE });
+        pw=vp.width/RENDER_SCALE; ph=vp.height/RENDER_SCALE;
+        const P0=vp.convertToPdfPoint(0, vp.height), P1=vp.convertToPdfPoint(RENDER_SCALE, vp.height),
+              P2=vp.convertToPdfPoint(0, vp.height-RENDER_SCALE);
+        const m=[P1[0]-P0[0], P1[1]-P0[1], P2[0]-P0[0], P2[1]-P0[1], P0[0], P0[1]];
+        if(m.some((v,k)=>Math.abs(v-[1,0,0,1,0,0][k])>1e-6)) cm=m;
       }
-      const pw=pg.getWidth(), ph=pg.getHeight();
+      if(cm) pg.pushOperators(PDFLib.pushGraphicsState(), PDFLib.concatTransformationMatrix(...cm));
       const f=1/RENDER_SCALE; // px schermo -> punti PDF
 
       // 1) penna (raster) sotto le altre annotazioni
@@ -957,7 +1146,7 @@ async function exportPdf(){
         pg.drawImage(png,{x:0,y:0,width:pw,height:ph});
       }
       // 2) annotazioni vettoriali
-      for(const a of pe.annotations){
+      for(const a of annsOf.get(pe)){
         const x=a.x*f, w=a.w*f;
         if(a.type==="rect"){
           const h=a.h*f;
@@ -975,7 +1164,7 @@ async function exportPdf(){
           const lines=(a.text||"").split("\n");
           let ty=ph-a.y*f-fs;       // baseline prima riga
           for(const line of lines){
-            pg.drawText(emb?line:sanitize(line),{x, y:ty, size:fs, font, color:hexToRgb(a.color)});
+            pg.drawText(emb?stripControls(line):fitText(line,font),{x, y:ty, size:fs, font, color:hexToRgb(a.color)});
             ty-=fs*1.2;
           }
         } else if(a.type==="grid"){
@@ -998,29 +1187,38 @@ async function exportPdf(){
           }
         }
       }
+      if(cm) pg.pushOperators(PDFLib.popGraphicsState());
       // 3) rotazione
       if(pe.rotation){
         const base=pg.getRotation().angle||0;
         pg.setRotation(PDFLib.degrees((base+pe.rotation)%360));
       }
     }
-    const bytes=await out.save();
+    let bytes;
+    try{ bytes=await out.save(); }
+    catch(e){
+      // alcuni font incorporati (es. senza tabella "post") fanno fallire il salvataggio: si riprova con Helvetica
+      if(usedEmbedded && !opts.noEmbedded){ console.warn("Save failed with reused fonts, retrying without:",e); return await exportPdf({noEmbedded:true}); }
+      throw e;
+    }
     const blob=new Blob([bytes],{type:"application/pdf"});
     const url=URL.createObjectURL(blob);
-    const a=document.createElement("a"); a.href=url; a.download="documento-modificato.pdf"; a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),4000);
+    const a=document.createElement("a"); a.href=url; a.download=(docName||"document")+"-edited.pdf"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+    if(changeVer===verAtStart) docDirty=false;   // modifiche fatte durante l'export non sono nel file
     let msg="PDF exported ✔";
     if(removedReal && usedEmbedded) msg+=" (text removed + original font reused)";
     else if(removedReal) msg+=" (original text truly removed)";
-    else if(usedEmbedded) msg+=" (font originale riusato)";
+    else if(usedEmbedded) msg+=" (original font reused)";
     status(msg);
+    if(decrypted) appAlert("Downloaded. Note: the original PDF was protected; the downloaded copy has no password or restrictions.");
   }catch(err){ console.error(err); appAlert("Error while exporting:\n"+err.message); }
+  finally{ btn.disabled=!pages.length; }
 }
 function isCanvasBlank(c){ const d=c.getContext("2d").getImageData(0,0,c.width,c.height).data;
   for(let i=3;i<d.length;i+=4){ if(d[i]!==0) return false; } return true; }
 function dataUrlToBytes(u){ const b=atob(u.split(",")[1]); const arr=new Uint8Array(b.length);
   for(let i=0;i<b.length;i++)arr[i]=b.charCodeAt(i); return arr; }
-function sanitize(s){ return s.replace(/[^\x00-\xFF]/g,"?"); } // Helvetica = Latin-1
 
 /* ===== Annulla / Ripristina (undo/redo) ===== */
 let history=[], hpos=-1;
@@ -1039,6 +1237,7 @@ function record(){
   if(hpos>=0 && history[hpos].sig===snap.sig) return;   // nessun cambiamento reale
   history=history.slice(0,hpos+1);
   history.push(snap); hpos++;
+  if(hpos>0) markDirty();                                 // il primo stato è il PDF appena aperto
   if(history.length>40){ history.shift(); hpos--; }
   updateUndoButtons();
 }
@@ -1055,8 +1254,8 @@ function restore(snap){
   }
   updateUndoButtons();
 }
-function undo(){ if(hpos<=0) return; hpos--; restore(history[hpos]); status("Undone"); }
-function redo(){ if(hpos>=history.length-1) return; hpos++; restore(history[hpos]); status("Redone"); }
+function undo(){ if(hpos<=0) return; hpos--; restore(history[hpos]); markDirty(); status("Undone"); }
+function redo(){ if(hpos>=history.length-1) return; hpos++; restore(history[hpos]); markDirty(); status("Redone"); }
 function updateUndoButtons(){
   const u=$("#btnUndo"), r=$("#btnRedo");
   if(u) u.disabled = !(pages.length && hpos>0);
@@ -1069,7 +1268,7 @@ document.addEventListener("keydown",e=>{
   const k=e.key.toLowerCase();
   // se sto scrivendo nel testo, lascio l'annulla nativo del campo
   const editing=document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("edit");
-  if(editing) return;
+  if(editing || typingInField()) return;
   if(k==="z" && !e.shiftKey){ e.preventDefault(); undo(); }
   else if(k==="y" || (k==="z" && e.shiftKey)){ e.preventDefault(); redo(); }
 });
@@ -1096,7 +1295,7 @@ function renderSigList(){
     const item=document.createElement("div"); item.className="sigitem";
     const im=document.createElement("img"); im.src=d;
     const bar=document.createElement("div"); bar.className="b";
-    const use=document.createElement("button"); use.className="tb"; use.textContent="Usa"; use.onclick=()=>useSig(d);
+    const use=document.createElement("button"); use.className="tb"; use.textContent="Use"; use.onclick=()=>useSig(d);
     const del=document.createElement("button"); del.className="tb"; del.textContent="🗑"; del.title="Delete";
     del.onclick=()=>{ const arr=loadSigs(); arr.splice(i,1); storeSigs(arr); renderSigList(); };
     bar.append(use,del); item.append(im,bar); box.appendChild(item);
@@ -1247,10 +1446,11 @@ async function runOCR(){
   if(!src){ appAlert("Page not ready."); return; }
   // se la pagina ha testo reale (PDF digitale) usa il metodo preciso (nuova pagina), non l'OCR
   if(pe.textItems && pe.textItems.length){ await convertAllText(pe); return; }
-  if(typeof Tesseract==="undefined"){ appAlert("OCR engine not available (lib/tesseract)."); return; }
   $("#btnOCR").disabled=true;
   try{
     status("OCR: preparing the engine…");
+    try{ await ensureTesseract(); }
+    catch(e){ appAlert("OCR engine not available (lib/tesseract)."); return; }
     const worker=await Tesseract.createWorker(lang, 1, {
       workerPath:"lib/tesseract/worker.min.js", corePath:"lib/tesseract", langPath:"lib/tesseract/lang",
       logger:m=>{ if(m.status==="recognizing text") status("OCR: "+Math.round((m.progress||0)*100)+"%"); }
@@ -1299,24 +1499,27 @@ function setMuBadge(state){
   const b=$("#muBadge"); if(!b) return;
   if(state==="on"){ b.textContent="● Real removal: ON"; b.style.color="var(--ok)"; }
   else if(state==="off"){ b.textContent="○ Real removal: n/a"; b.style.color="var(--muted)"; }
-  else { b.textContent="⏳ carico motore…"; b.style.color="var(--muted)"; }
+  else if(state==="loading"){ b.textContent="⏳ Loading engine…"; b.style.color="var(--muted)"; }
+  else { b.textContent="○ Real removal: on demand"; b.style.color="var(--muted)"; }   // testo sempre presente: la barra non si sposta
 }
-async function loadMu(){
-  setMuBadge("loading");
-  const urls=[
-    "./lib/mupdf.js",                                       // locale (offline)
-    "https://cdn.jsdelivr.net/npm/mupdf@1.27.0/dist/mupdf.js", // ripiego CDN
-    "https://esm.sh/mupdf"
-  ];
-  for(const u of urls){
+// Caricato solo quando serve (prima modifica del testo, Cancella, export) e solo dai file locali:
+// niente CDN, così il codice che gira è sempre quello del repository.
+let muPromise=null, muAttempts=0;
+function loadMu(){
+  if(!muPromise) muPromise=(async()=>{
+    setMuBadge("loading");
     try{
-      const m=await import(u);
+      // dopo un errore (es. rete assente) si riprova con un URL diverso: il browser ricorda i moduli falliti
+      const m=await import("./lib/mupdf.js" + (muAttempts++ ? "?retry="+muAttempts : ""));
       MU=m.default && (m.default.Document||m.default.PDFDocument) ? m.default : m;
       try{ if(MU.ready && typeof MU.ready.then==="function") await MU.ready; }catch(e){}
-      if(MU && (MU.Document||MU.PDFDocument)){ muReady=true; setMuBadge("on"); console.log("MuPDF caricato da",u); return; }
-    }catch(e){ console.warn("MuPDF non caricato da",u,e); }
-  }
-  setMuBadge("off");
+      if(MU && (MU.Document||MU.PDFDocument)){ muReady=true; setMuBadge("on"); return true; }
+    }catch(e){ console.warn("MuPDF could not be loaded:",e); }
+    setMuBadge("off");
+    muPromise=null;   // il prossimo uso riprova
+    return false;
+  })();
+  return muPromise;
 }
 // estrae i file font incorporati dal PDF -> { nomeBaseFont: Uint8Array }
 function extractEmbeddedFonts(doc){
@@ -1343,33 +1546,61 @@ function extractEmbeddedFonts(doc){
   }
   return map;
 }
-// apre il PDF una sola volta: estrae i font e rimuove davvero il testo nelle regioni indicate
-function muProcessSource(bytes, pageMap){
+// apre il PDF una sola volta: estrae i font, rimuove davvero il contenuto nelle regioni indicate
+// e lo salva decifrato. pageMap: pageIndex -> { edits:[rect], erase:[rect] } in px schermo.
+// Se la rimozione fallisce lancia un errore: l'export non deve dire "rimosso" quando non lo è.
+function muProcessSource(bytes, pageMap, password){
   const Doc = MU.Document || MU.PDFDocument;
   const doc = Doc.openDocument(bytes, "application/pdf");
-  let fonts={};
-  try{ fonts=extractEmbeddedFonts(doc); }catch(e){ console.warn("estrazione font fallita:",e); }
   try{
-    for(const [pi, rects] of pageMap){
+    if(doc.needsPassword() && !doc.authenticatePassword(password||""))
+      throw new Error("the PDF password is missing or wrong");
+    let fonts={};
+    try{ fonts=extractEmbeddedFonts(doc); }catch(e){ console.warn("Font extraction failed:",e); }
+    const toPdf=r=>[ r.x/RENDER_SCALE, r.y/RENDER_SCALE, (r.x+r.w)/RENDER_SCALE, (r.y+r.h)/RENDER_SCALE ];
+    for(const [pi, reg] of pageMap){
       const page = doc.loadPage(pi);
-      for(const r of rects){
-        const a = page.createAnnotation("Redact");
-        a.setRect([ r.x/RENDER_SCALE, r.y/RENDER_SCALE, (r.x+r.w)/RENDER_SCALE, (r.y+r.h)/RENDER_SCALE ]);
+      // testo modificato: si toglie solo il testo; immagini e linee sotto restano intatte
+      if(reg.edits.length){
+        for(const r of reg.edits) page.createAnnotation("Redact").setRect(toPdf(r));
+        page.applyRedactions(false, 0, 0, 0);   // niente riquadri neri, IMAGE_NONE, LINE_ART_NONE, TEXT_REMOVE
       }
-      page.applyRedactions(false);   // false = non disegnare riquadri neri
+      // Cancella: si tolgono testo e disegni sotto il rettangolo bianco. Le immagini restano solo coperte:
+      // cancellarne i pixel (IMAGE_PIXELS) ricomprime le scansioni JPEG senza perdita e gonfia il file 4-11 volte
+      if(reg.erase.length){
+        for(const r of reg.erase) page.createAnnotation("Redact").setRect(toPdf(r));
+        page.applyRedactions(false, 0, 1, 0);   // IMAGE_NONE, LINE_ART_REMOVE_IF_COVERED, TEXT_REMOVE
+      }
     }
-  }catch(e){ console.warn("redazione fallita:",e); }
-  const buf = doc.saveToBuffer ? doc.saveToBuffer("compress") : doc.toBuffer();
-  const out = buf.asUint8Array().slice();   // copia: il buffer MuPDF viene liberato
-  try{ if(doc.destroy) doc.destroy(); }catch(e){}
-  return { bytes: out, fonts };
+    // decrypt: pdf-lib non sa leggere i PDF cifrati
+    const out = doc.saveToBuffer("garbage,compress,decrypt").asUint8Array().slice();   // copia: il buffer MuPDF viene liberato
+    return { bytes: out, fonts };
+  } finally {
+    try{ doc.destroy(); }catch(e){}
+  }
 }
 
-/* ===== fontkit: per leggere e re-incorporare i font (caricato in locale via UMD) ===== */
-let FK = (typeof window!=="undefined" && window.fontkit) ? window.fontkit : null;
-if(FK) console.log("fontkit pronto (locale)"); else console.warn("fontkit non disponibile");
-
-loadMu();
+/* ===== Librerie pesanti caricate solo quando servono (dai file locali) ===== */
+// pdf-lib e fontkit servono solo all'export, Tesseract solo all'OCR, MuPDF (10 MB) solo per
+// rimuovere davvero il testo: chi apre un PDF per guardarlo o annotarlo non li scarica.
+let FK=null;   // fontkit: per leggere e re-incorporare i font originali
+const scriptLoads={};
+function loadScript(src){
+  if(!scriptLoads[src]) scriptLoads[src]=new Promise((res,rej)=>{
+    const s=document.createElement("script"); s.src=src;
+    s.onload=()=>res();
+    s.onerror=()=>{ delete scriptLoads[src]; s.remove(); rej(new Error("Could not load "+src)); };
+    document.head.appendChild(s);
+  });
+  return scriptLoads[src];
+}
+async function ensurePdfLib(){ if(!window.PDFLib) await loadScript("lib/pdf-lib.min.js"); }
+async function ensureFontkit(){
+  if(!window.fontkit){ try{ await loadScript("lib/fontkit.umd.js"); }catch(e){ console.warn(e); } }
+  FK=window.fontkit||null;
+}
+async function ensureTesseract(){ if(typeof Tesseract==="undefined") await loadScript("lib/tesseract/tesseract.min.js"); }
+setMuBadge("idle");
 
 </script>
 </body>

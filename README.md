@@ -2,7 +2,8 @@
 
 A PDF editor that runs entirely in your browser. Edit text in place, highlight,
 erase, draw, add images and signatures, merge files, and OCR scanned pages.
-Nothing is uploaded anywhere: all the work happens on your machine.
+Nothing is uploaded anywhere: all the work happens on your machine. The page also
+declares a Content Security Policy that forbids it from sending data to any other site.
 
 Try it online: https://vibesite-one.vercel.app/tools/pdf-edit/index.html
 
@@ -34,7 +35,10 @@ Tesseract OCR data, so it works without an internet connection.
   The background keeps photos, tables and shapes with the text removed, and the
   text becomes editable objects. Handy for separating content; quality is slightly
   lower because the background is an image. For scans, use OCR instead.
-- **Highlight, Erase, Pen, Image**: the usual annotation tools.
+- **Highlight, Pen, Image**: the usual annotation tools.
+- **Erase**: covers an area with white. When you export, the text and drawings
+  underneath are really removed from the file, not just hidden. Pictures (including
+  scanned pages) underneath are covered but stay in the file.
 - **Shapes**: line (／), rectangle (▭), arrow (↗). Drag to draw them.
 - **Grid (▦)**: pick rows × columns, then drag on the page.
 - **Signature (✍️)**: draw it by hand, press "Save signature" (it stays on this
@@ -48,24 +52,35 @@ Tesseract OCR data, so it works without an internet connection.
     weight estimated from the pixels. Works offline.
 - **Undo / Redo**: ↶ ↷ buttons or Ctrl+Z / Ctrl+Y.
 - **Pages** (left column): reorder, rotate, delete.
-- **Merge PDF**, **Export PDF**.
+- **Merge PDF**, **Export PDF**. The downloaded file is named after the original
+  (`name-edited.pdf`). Password-protected PDFs ask for their password when opened;
+  the exported copy is saved without protection.
 
 ## The indicator in the top-right corner
 
+The text-removal engine (MuPDF, about 10 MB) is loaded only when it is needed: the
+first time you use Edit text, All text or Erase, or when you export.
+
+- `○ Real removal: on demand`: the engine has not been needed yet.
 - `● Real removal: ON`: the original text is really removed and, when possible, the
   PDF's own font is reused for the replacement.
-- `○ Real removal: n/a`: reduced mode, the old text is only covered.
+- `○ Real removal: n/a`: the engine could not be loaded. Before downloading, the app
+  warns you that the old text would only be covered.
 
 ## How it is built
 
-Plain JavaScript in a single HTML file, no framework. Three engines cooperate:
-[MuPDF](https://mupdf.com/) compiled to WebAssembly for rendering and real text
-removal, [pdf-lib](https://pdf-lib.js.org/) for writing the modified document, and
-[Tesseract.js](https://tesseract.projectnaptha.com/) for OCR. The bundled
-libraries keep their own licenses.
+Plain JavaScript in a single HTML file, no framework. Four engines cooperate:
+[pdf.js](https://mozilla.github.io/pdf.js/) for rendering the pages,
+[MuPDF](https://mupdf.com/) compiled to WebAssembly for real text removal and for
+opening protected files, [pdf-lib](https://pdf-lib.js.org/) for writing the modified
+document, and [Tesseract.js](https://tesseract.projectnaptha.com/) for OCR. Only
+pdf.js loads at startup; the others load the first time they are needed, always from
+the local `lib/` folder.
 
 Built with Claude Code.
 
 ## License
 
-AGPL-3.0, because the editor is built on MuPDF, which is AGPL. Bundled libraries keep their own licenses; see `LICENSE`.
+GNU AGPL-3.0 (full text in `LICENSE`), because the editor is built on MuPDF, which is
+AGPL. Copyright notice in `NOTICE`. The bundled libraries keep their own licenses;
+see `THIRD_PARTY_NOTICES.md`.
