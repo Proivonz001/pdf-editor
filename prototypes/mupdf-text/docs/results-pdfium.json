@@ -4,6 +4,14 @@
   {
    "id": "chrome-calibri",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.importoGentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -15,6 +23,14 @@
   {
    "id": "chrome-specials",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.“nuova” è l’€ già perché cittàGentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0.036,
    "encryptedAfter": false,
@@ -26,6 +42,14 @@
   {
    "id": "chrome-missing-glyphs",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.più Größe ñ Ω ✓Gentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0.0,
    "encryptedAfter": false,
@@ -37,6 +61,14 @@
   {
    "id": "chrome-georgia",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    " ; più dettagli nell’allegato.sabatoCodice: AB"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 468,
    "maxShiftOfLineRestPt": 0.0481,
    "encryptedAfter": false,
@@ -48,6 +80,14 @@
   {
    "id": "chrome-consolas",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "to.Codice: ABC-123 · Totale: €149,00Condizioni"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -59,6 +99,14 @@
   {
    "id": "chrome-bold",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "23 · Totale: 99,90 €CondizioniSaldo a 30 gior"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -70,6 +118,14 @@
   {
    "id": "chrome-red",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "iorni, salvo diverso accordo. Urgente: città, p"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -81,6 +137,18 @@
   {
    "id": "chrome-multi",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.costoGentile cl",
+    " ; più dettagli nell’allegato.lunedìCodice: AB",
+    "irmato: Ufficio Commerciale — ForlìNoteSecond"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span",
+    "Document/P/NonStruct/Span",
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 468,
    "maxShiftOfLineRestPt": 0.0481,
    "encryptedAfter": false,
@@ -147,6 +215,14 @@
   {
    "id": "chrome-whole-line",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "portante: città, perciò, così.Firmato: Direzione Commerciale — Forlì (FC), 15/10/2026NoteSecond"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -158,6 +234,14 @@
   {
    "id": "word-calibri",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.importo “è” l’€Gentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -169,6 +253,14 @@
   {
    "id": "word-cambria",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "te, la consegna avverrà entro lunedì; più dett"
+   ],
+   "taggedPath": [
+    "Document/P/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -224,6 +316,14 @@
   {
    "id": "chrome-rotate90-crop",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.importoGentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -235,6 +335,14 @@
   {
    "id": "enc-owner-aes256",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.importoGentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -246,6 +354,14 @@
   {
    "id": "enc-user-rc4",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.importoGentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -257,6 +373,14 @@
   {
    "id": "enc-user-aes128",
    "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "è valida perché già approvata.importoGentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/NonStruct/Span"
+   ],
+   "taggedOk": true,
    "pdfiumPixelsChangedOutside": 0,
    "maxShiftOfLineRestPt": 0,
    "encryptedAfter": false,
@@ -264,6 +388,186 @@
    "acroForm": "0->0",
    "fieldValuesKept": true,
    "ok": true
+  },
+  {
+   "id": "type1-pdftex",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0001,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type1-missing-glyphs",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type1-ligature",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type1c-simple",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type1c-missing-glyphs",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type3-matplotlib",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type3-fallback",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "type3-bold-chart",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cjk-ucs2-h",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cjk-ucs2-v",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cjk-rksj-fallback",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cjk-identity-v",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0001,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cjk-identity-v-fallback",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0001,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "cjk-identity-h-sibling",
+   "textOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0.0,
+   "encryptedAfter": false,
+   "outline": "0->0",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
+  },
+  {
+   "id": "word-tagged-whole-line",
+   "textOk": true,
+   "taggedUntagged": "0->0",
+   "taggedOrder": [
+    "Relazione tecnica 2026Il prezzo concordato è di 1.300 € – offerta valida.Gentile cl"
+   ],
+   "taggedPath": [
+    "Document/P/Span"
+   ],
+   "taggedOk": true,
+   "pdfiumPixelsChangedOutside": 0,
+   "maxShiftOfLineRestPt": 0,
+   "encryptedAfter": false,
+   "outline": "2->2",
+   "acroForm": "0->0",
+   "fieldValuesKept": true,
+   "ok": true
   }
- ]
+ ],
+ "largeDocument": {
+  "file": "large-220p.pdf",
+  "pages": 220,
+  "edits": 50,
+  "textVerified": 50,
+  "inTagReadingOrder": 50
+ }
 }

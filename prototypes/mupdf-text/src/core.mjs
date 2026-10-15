@@ -66,8 +66,19 @@ export function extractLines(page, options = "preserve-whitespace") {
 			cur = { bbox, wmode, dir, chars: [] };
 		},
 		onChar(c, origin, font, size, quad, color) {
+			let glyphOrigin = origin;
+			if (cur.wmode === 1) {
+				// MuPDF 1.27 starts a vertical character's quad at the glyph origin
+				// (pen - v) instead of the pen, so the quad sits v.y = 0.88 em (the
+				// DW2 default) too far down the column and covers half of the next
+				// glyph (pdfium's boxes agree with the ink, not with MuPDF). Move it
+				// back; the glyph origin is the corner where the raw quad started.
+				glyphOrigin = [quad[6], quad[7]];
+				const s = 0.88 * size;
+				quad = quad.map((v, i) => v - s * cur.dir[i % 2]);
+			}
 			cur.chars.push({
-				c, origin, quad, size, color, font,
+				c, origin, glyphOrigin, quad, size, color, font, wmode: cur.wmode,
 				fontName: font.getName(),
 				bold: font.isBold(), italic: font.isItalic(),
 				serif: font.isSerif(), mono: font.isMono(),
@@ -79,7 +90,36 @@ export function extractLines(page, options = "preserve-whitespace") {
 		},
 	});
 	st.destroy();
-	return lines;
+	return joinVerticalLines(lines);
+}
+
+// Where a character's glyph is drawn (the glyph matrix origin): the stext
+// origin for horizontal text; for vertical text (wmode 1) MuPDF puts the stext
+// origin one advance further down, see extractLines.
+const glyphStart = (ch) => ch.glyphOrigin;
+
+// MuPDF 1.27 gives every character of vertical text a line of its own. Join
+// consecutive ones that continue each other down the same column.
+function joinVerticalLines(lines) {
+	const out = [];
+	for (const l of lines) {
+		const prev = out[out.length - 1];
+		const a = prev && prev.chars[prev.chars.length - 1], b = l.chars[0];
+		if (a && b && l.wmode === 1 && prev.wmode === 1 && l.dir[0] === prev.dir[0] && l.dir[1] === prev.dir[1]) {
+			const [bx, by] = glyphStart(b);
+			const dx = bx - a.origin[0], dy = by - a.origin[1];
+			const along = dx * l.dir[0] + dy * l.dir[1], across = Math.abs(dx * l.dir[1] - dy * l.dir[0]);
+			if (across < 0.1 * a.size && along > -0.1 * a.size && along < 0.6 * a.size) {
+				prev.chars.push(...l.chars);
+				prev.text += l.text;
+				prev.bbox = [Math.min(prev.bbox[0], l.bbox[0]), Math.min(prev.bbox[1], l.bbox[1]),
+					Math.max(prev.bbox[2], l.bbox[2]), Math.max(prev.bbox[3], l.bbox[3])];
+				continue;
+			}
+		}
+		out.push(l);
+	}
+	return out;
 }
 
 export function pageText(lines) {
@@ -134,10 +174,11 @@ export function captureGlyphs(mupdf, page) {
 
 function matchGlyph(ch, glyphs) {
 	const cp = ch.c.codePointAt(0);
-	let best = null, bestD = 0.1;
+	const [ox, oy] = glyphStart(ch);
+	let best = null, bestD = ch.wmode === 1 ? 0.25 : 0.1; // vertical quads are rounded more
 	for (const g of glyphs) {
 		if (g.uni !== cp) continue;
-		const d = Math.hypot(g.m[4] - ch.origin[0], g.m[5] - ch.origin[1]);
+		const d = Math.hypot(g.m[4] - ox, g.m[5] - oy);
 		if (d < bestD || (d === bestD && g.mode === "fill")) { best = g; bestD = d; }
 	}
 	return best;
@@ -148,6 +189,14 @@ function matchGlyph(ch, glyphs) {
 // MuPDF keeps font names in a 32-byte buffer, so long BaseFonts get truncated.
 const nameMatches = (baseFont, fzName) =>
 	baseFont === fzName || (fzName.length >= 31 && baseFont.startsWith(fzName));
+// The names MuPDF may report for a font dict: /BaseFont, or for Type3 /Name
+// (MuPDF names a Type3 font without /Name "Unnamed-T3").
+function dictNames(ref) {
+	const base = ref.get("BaseFont").asName() || "";
+	if (ref.get("Subtype").asName() !== "Type3") return [base];
+	return [ref.get("Name").asName() || "Unnamed-T3", base].filter(Boolean);
+}
+const dictMatches = (ref, fzName) => dictNames(ref).some((n) => nameMatches(n, fzName));
 // Same face, ignoring the subset tag that subsetFonts() may add on save.
 const untag = (n) => n.replace(/^[A-Z]{6}\+/, "");
 const sameFace = (a, b) => untag(a) === untag(b) || (untag(b).length >= 24 && untag(a).startsWith(untag(b)));
@@ -216,7 +265,7 @@ function streamText(stm) {
 	const buf = stm.readStream();
 	const bytes = buf.asUint8Array();
 	let s = "";
-	for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+	for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
 	buf.destroy();
 	return s;
 }
@@ -245,7 +294,7 @@ function simpleEncoding(fontObj, subtype) {
 	if (base === "WinAnsiEncoding") table = WinAnsiEncoding;
 	else if (base === "MacRomanEncoding") table = MacRomanEncoding;
 	else if (base === "StandardEncoding") table = StandardEncoding;
-	else if (symbolic) table = new Array(256).fill(0); // built-in encoding: only ToUnicode can tell
+	else if (symbolic || subtype === "Type3") table = new Array(256).fill(0); // built-in/none: only ToUnicode or Differences tell
 	else table = subtype === "TrueType" ? WinAnsiEncoding : StandardEncoding;
 	table = table.slice();
 	if (diffs && diffs.isArray()) {
@@ -264,25 +313,34 @@ export class PdfFont {
 		this.ref = ref;
 		this.fzFont = fzFont;
 		this.subtype = ref.get("Subtype").asName();
-		this.baseFont = ref.get("BaseFont").asName();
+		this.baseFont = dictNames(ref)[0];
 		this.isType0 = this.subtype === "Type0";
 		this.supported = true;
 		this.identityGid = false;
+		this.vertical = false;
 		if (this.isType0) {
 			const enc = ref.get("Encoding");
 			this.encodingName = enc.isName() ? enc.asName() : "(embedded CMap)";
-			this.supported = this.encodingName === "Identity-H";
+			// Identity-H/V: code = CID. Unicode CMaps (UniGB-UCS2-H, UniJIS-UTF16-V,
+			// ...): code = the UTF-16 unit, whatever font the viewer substitutes.
+			// Other CMaps (Shift-JIS, GBK, ...) are not handled and fall back.
+			this.identity = /^Identity-[HV]$/.test(this.encodingName);
+			this.unicodeCMap = /^Uni(GB|CNS|JIS|KS)-(UCS2|UTF16)-[HV]$/.test(this.encodingName);
+			this.supported = this.identity || this.unicodeCMap;
+			this.vertical = /-V$/.test(this.encodingName);
 			const desc = ref.get("DescendantFonts", 0);
 			this.cidSubtype = desc.get("Subtype").asName();
+			this.ordering = desc.get("CIDSystemInfo", "Ordering").asString();
 			const c2g = desc.get("CIDToGIDMap");
 			this.identityGid = this.cidSubtype === "CIDFontType2" && (c2g.isNull() || (c2g.isName() && c2g.asName() === "Identity"));
 			this.bytes = 2;
 			this.embedded = ["FontFile", "FontFile2", "FontFile3"].some((k) => !desc.get("FontDescriptor", k).isNull());
 		} else {
+			// Simple fonts, Type3 included: a Type3 glyph is a content procedure
+			// the probe can draw like any other glyph.
 			this.bytes = 1;
 			this.encoding = simpleEncoding(ref, this.subtype);
 			this.embedded = ["FontFile", "FontFile2", "FontFile3"].some((k) => !ref.get("FontDescriptor", k).isNull());
-			if (this.subtype === "Type3") this.supported = false;
 		}
 		const tu = ref.get("ToUnicode");
 		this.toUnicode = tu.isStream() ? parseToUnicode(streamText(tu)) : new Map();
@@ -303,6 +361,8 @@ export class PdfFont {
 		const cp = ch.codePointAt(0);
 		if (!this.isType0) {
 			for (let code = 0; code < 256; code++) if (this.encoding[code] === cp) push(code, "Encoding");
+		} else if (this.unicodeCMap) {
+			if (cp <= 0xffff) push(cp, "Unicode CMap");
 		} else if (this.identityGid && this.fzFont) {
 			const gid = this.fzFont.encodeCharacter(cp);
 			if (gid > 0) push(gid, "font cmap (Identity CID=GID)");
@@ -329,6 +389,9 @@ export function probeCodes(mupdf, font, codes) {
 	const scratch = new mupdf.PDFDocument();
 	try {
 		const f = scratch.graftObject(font.ref);
+		// A vertical font is probed through its horizontal twin (same CMap with
+		// -H): same glyphs and widths, and the probe layout stays horizontal.
+		if (font.vertical) f.put("Encoding", scratch.newName(font.encodingName.replace(/-V$/, "-H")));
 		let ops = "BT\n/P " + SIZE + " Tf\n";
 		todo.forEach((code, i) => {
 			const x = (i % COLS) * CW + 9, y = H - (Math.floor(i / COLS) + 1) * CH + 12;
@@ -363,6 +426,10 @@ export function probeCodes(mupdf, font, codes) {
 		});
 		dev.destroy();
 		pix.destroy();
+		// The page and every glyph's Font wrapper hold the scratch document (and
+		// its copy of the font program) alive until JS GC: release them now.
+		for (const g of glyphs) g.font.destroy();
+		page.destroy();
 	} finally {
 		scratch.destroy();
 	}
@@ -384,9 +451,12 @@ function resolveInOriginal(mupdf, font, ch) {
 		// Codes the document already uses (ToUnicode) keep the document's widths.
 		// Any other code must get the glyph's real advance from the PDF widths;
 		// Type0 widths can be patched (/W), simple-font /Widths ranges cannot.
+		// A non-embedded font is drawn with whatever the viewer substitutes,
+		// scaled to the PDF widths, so only embedded programs are compared.
 		let needWidth = false;
 		const off = Math.abs(p.pdfAdvance - p.glyphAdvance);
-		if (c.how !== "ToUnicode" && p.glyphAdvance > 0 && off > 0.01 + 0.02 * p.glyphAdvance) {
+		if (c.how !== "ToUnicode" && (font.embedded || !font.isType0) && p.glyphAdvance > 0 && off > 0.01 + 0.02 * p.glyphAdvance) {
+			if (font.isType0 && !font.identity) { why = "no width for this code in /W"; continue; } // /W is by CID, not code
 			if (!font.isType0) { why = "no width for this code in /Widths"; continue; }
 			needWidth = true;
 		}
@@ -421,8 +491,11 @@ const BASE14 = {
 
 function styleOf(ch) {
 	const n = ch.fontName.replace(/^[A-Z]{6}\+/, "");
-	const mono = ch.mono || /mono|courier|consola|code/i.test(n);
-	const serif = !mono && (ch.serif || /times|georgia|cambria|garamond|serif|roman|book|minion|palatino/i.test(n));
+	const mono = ch.mono || /mono|courier|consola|code|typewriter/i.test(n);
+	// MuPDF only knows serif from sans for TrueType/OpenType (OS/2 class): bare
+	// CFF and Type1 programs always report serif, so a sans name wins.
+	const sans = /sans|gothic|grotesk|arial|helvetica|verdana|tahoma|calibri|segoe|frutiger|univers|futura|myriad/i.test(n);
+	const serif = !mono && !sans && (ch.serif || /times|georgia|cambria|garamond|serif|roman|book|minion|palatino/i.test(n));
 	const bold = ch.bold || /bold|black|heavy|semibold/i.test(n);
 	const italic = ch.italic || /italic|oblique/i.test(n);
 	return { family: mono ? "mono" : serif ? "serif" : "sans", bold, italic };
@@ -431,12 +504,72 @@ function styleOf(ch) {
 const fallbackCache = new WeakMap(); // PDFDocument -> Map(name -> {font, ref})
 
 // Built-in Base-14 (Nimbus) matching the original's style, then any extra
-// font the caller bundles (e.g. Noto Sans), then MuPDF's built-in CJK font.
-function fallbackChain(mupdf, style, extraFonts = []) {
+// font the caller bundles (e.g. Noto Sans), then MuPDF's built-in CJK font
+// for the original's CID ordering (or the script of the text).
+function fallbackChain(mupdf, style, extraFonts = [], cjk = "zh-Hans") {
 	const names = [BASE14[style.family][(style.bold ? 1 : 0) + (style.italic ? 2 : 0)]];
 	return [...names.map((n) => ({ name: n, make: () => new mupdf.Font(n) })),
 		...extraFonts.map((f) => ({ name: f.name, make: () => new mupdf.Font(f.name, f.bytes) })),
-		{ name: "CJK (zh-Hans)", make: () => new mupdf.Font("zh-Hans") }];
+		{ name: `CJK (${cjk})`, make: () => new mupdf.Font(cjk) }];
+}
+
+const CJK_BY_ORDERING = { GB1: "zh-Hans", CNS1: "zh-Hant", Japan1: "ja", Korea1: "ko" };
+function cjkLanguage(font, text) {
+	if (font && CJK_BY_ORDERING[font.ordering]) return CJK_BY_ORDERING[font.ordering];
+	if (/[\u3040-\u30ff]/.test(text)) return "ja"; // kana
+	if (/[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/.test(text)) return "ko"; // hangul
+	return "zh-Hans";
+}
+
+// The same Type0 font addressed vertically: a copy of the dict with
+// /Identity-V (default vertical metrics: advance 1 em down, glyph centred).
+function verticalTwin(doc, ref) {
+	const d = doc.newDictionary();
+	for (const [k, v] of dictEntries(ref)) {
+		if (v.isArray() && !v.isIndirect()) {
+			const a = doc.newArray();
+			v.forEach((x) => a.push(x));
+			d.put(k, a);
+		} else d.put(k, v);
+	}
+	d.put("Encoding", doc.newName("Identity-V"));
+	return doc.addObject(d);
+}
+
+// Vertical metrics of a CID: v = (vx, vy) from /W2, else (w0/2, DW2[0]); w0
+// from /W or /DW. cid < 0 (code -> CID unknown) gives the defaults.
+function verticalMetrics(font, cid) {
+	let w0 = 1000, vy = 880;
+	if (font && font.isType0) {
+		const desc = font.ref.get("DescendantFonts", 0);
+		if (desc.get("DW").isNumber()) w0 = desc.get("DW").asNumber();
+		if (desc.get("DW2").isArray()) vy = desc.get("DW2").get(0).asNumber();
+		if (cid >= 0) {
+			const w = cidLookup(desc.get("W"), cid, 1);
+			if (w) w0 = w[0];
+			const v = cidLookup(desc.get("W2"), cid, 3);
+			if (v) return { vx: v[1], vy: v[2] };
+		}
+	}
+	return { vx: w0 / 2, vy };
+}
+
+// /W and /W2: "c [n values per CID ...]" lists or "c1 c2 values" ranges.
+function cidLookup(arr, cid, n) {
+	if (!arr.isArray()) return null;
+	const num = (o) => o.asNumber();
+	for (let i = 0; i + 1 < arr.length;) {
+		const c1 = num(arr.get(i)), next = arr.get(i + 1);
+		if (next.isArray()) {
+			const k = (cid - c1) * n;
+			if (cid >= c1 && k + n <= next.length) return Array.from({ length: n }, (_, j) => num(next.get(k + j)));
+			i += 2;
+		} else {
+			if (cid >= c1 && cid <= num(next)) return Array.from({ length: n }, (_, j) => num(arr.get(i + 2 + j)));
+			i += 2 + n;
+		}
+	}
+	return null;
 }
 
 function fallbackFor(mupdf, doc, chain, cp) {
@@ -476,12 +609,15 @@ export function subsetFallbackFonts(mupdf, doc) {
 			scratch.insertPage(-1, scratch.addPage([0, 0, 100, 100], 0, { Font: { F: ref } }, `BT /F 10 Tf <${hex}> Tj ET`));
 			scratch.subsetFonts();
 			const small = doc.graftObject(ref);
-			const oldNum = fb.ref.asIndirect();
+			const smallV = fb.refV ? verticalTwin(doc, small) : null;
+			const swap = new Map([[fb.ref.asIndirect(), small]]);
+			if (fb.refV) swap.set(fb.refV.asIndirect(), smallV);
 			for (let i = 0; i < doc.countPages(); i++) {
 				const fonts = doc.findPage(i).get("Resources", "Font");
-				for (const [k, v] of dictEntries(fonts)) if (v.isIndirect() && v.asIndirect() === oldNum) fonts.put(k, small);
+				for (const [k, v] of dictEntries(fonts)) if (v.isIndirect() && swap.has(v.asIndirect())) fonts.put(k, swap.get(v.asIndirect()));
 			}
 			fb.ref = small;
+			fb.refV = smallV;
 			n++;
 		} finally {
 			scratch.destroy();
@@ -545,6 +681,196 @@ function extendToUnicode(doc, font, entries) {
 	return entries.length;
 }
 
+// ------------------------------------------------------------ tagged PDF
+
+// The page's content streams as one Latin-1 string.
+function contentText(pageObj) {
+	const c = pageObj.get("Contents");
+	const parts = [];
+	if (c.isArray()) c.forEach((s) => parts.push(streamText(s)));
+	else if (c.isStream()) parts.push(streamText(c));
+	return parts.join("\n");
+}
+
+// Byte classes: 1 = whitespace, 2 = delimiter.
+const CLASS = new Uint8Array(256);
+for (const c of [0, 9, 10, 12, 13, 32]) CLASS[c] = 1;
+for (const c of [40, 41, 60, 62, 91, 93, 123, 125, 47, 37]) CLASS[c] = 2;
+const HEX = new Int8Array(256).fill(-1);
+for (let c = 0; c < 256; c++) {
+	const v = parseInt(String.fromCharCode(c), 16);
+	if (!Number.isNaN(v)) HEX[c] = v;
+}
+
+// Minimal content-stream lexer, just enough to follow marked content: per
+// MCID, the bytes its text operators show; text shown outside any MCID or
+// /Artifact is counted as untagged. Named property lists (/P /MC0 BDC) are
+// looked up in `props` (the page's /Properties).
+export function markedContent(s, props = null) {
+	const byMcid = new Map(), order = [];
+	let untagged = 0, artifact = 0, maxMcid = -1, i = 0;
+	const stack = [], marks = [];
+	const n = s.length;
+	const show = (bytes) => {
+		let mcid = null, art = false;
+		for (let k = marks.length - 1; k >= 0; k--) {
+			if (mcid === null && marks[k].mcid !== null) mcid = marks[k].mcid;
+			if (marks[k].tag === "Artifact") art = true;
+		}
+		if (mcid !== null) {
+			if (!byMcid.has(mcid)) { byMcid.set(mcid, ""); order.push(mcid); }
+			byMcid.set(mcid, byMcid.get(mcid) + bytes);
+		} else if (art) artifact++;
+		else untagged++;
+	};
+	const literal = () => { // at "(": returns the string's bytes
+		let out = "", depth = 1;
+		for (i++; i < n; i++) {
+			const ch = s[i];
+			if (ch === "\\") {
+				const e = s[++i];
+				const esc = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f" }[e];
+				if (esc) out += esc;
+				else if (e >= "0" && e <= "7") {
+					let o = e;
+					while (o.length < 3 && s[i + 1] >= "0" && s[i + 1] <= "7") o += s[++i];
+					out += String.fromCharCode(parseInt(o, 8) & 255);
+				} else if (e === "\r") { if (s[i + 1] === "\n") i++; } else if (e !== "\n") out += e;
+			} else if (ch === "(") { depth++; out += ch; } else if (ch === ")") { if (--depth === 0) { i++; return out; } out += ch; } else out += ch;
+		}
+		return out;
+	};
+	while (i < n) {
+		const c = s.charCodeAt(i);
+		if (CLASS[c] === 1) { i++; continue; }
+		if (c === 37) { while (i < n && s[i] !== "\n" && s[i] !== "\r") i++; continue; } // %comment
+		if (c === 40) { stack.push({ str: literal() }); continue; }
+		if (c === 60 && s[i + 1] === "<") { stack.push("<<"); i += 2; continue; }
+		if (c === 62 && s[i + 1] === ">") {
+			const d = {};
+			let k = stack.lastIndexOf("<<");
+			const items = stack.splice(k);
+			for (k = 1; k + 1 < items.length; k += 2) if (items[k] && items[k].name) d[items[k].name] = items[k + 1];
+			stack.push({ dict: d });
+			i += 2;
+			continue;
+		}
+		if (c === 60) { // <hex>
+			const j = s.indexOf(">", i);
+			let out = "", hi = -1;
+			for (let k = i + 1; k < j; k++) {
+				const v = HEX[s.charCodeAt(k)];
+				if (v < 0) continue;
+				if (hi < 0) hi = v;
+				else { out += String.fromCharCode(hi * 16 + v); hi = -1; }
+			}
+			if (hi >= 0) out += String.fromCharCode(hi * 16);
+			stack.push({ str: out });
+			i = j + 1;
+			continue;
+		}
+		if (c === 91) { stack.push("["); i++; continue; }
+		if (c === 93) { const k = stack.lastIndexOf("["); stack.push({ arr: stack.splice(k).slice(1) }); i++; continue; }
+		if (c === 123 || c === 125) { i++; continue; }
+		let j = i + 1;
+		while (j < n && !CLASS[s.charCodeAt(j)]) j++;
+		const tok = s.slice(i, j);
+		i = j;
+		if (c === 47) { stack.push({ name: tok.slice(1) }); continue; }
+		if ((c >= 48 && c <= 57) || c === 43 || c === 45 || c === 46) { stack.push({ num: +tok }); continue; } // no operator starts so
+		if (tok === "true" || tok === "false" || tok === "null") { stack.push({}); continue; }
+		// operators
+		if (tok === "BDC" || tok === "BMC") {
+			const tag = tok === "BDC" ? stack[stack.length - 2] : stack[stack.length - 1];
+			let p = tok === "BDC" ? stack[stack.length - 1] : null;
+			if (p && p.name && props) p = { dict: props(p.name) || {} };
+			const m = p && p.dict && p.dict.MCID && p.dict.MCID.num;
+			const mcid = Number.isInteger(m) ? m : null;
+			if (mcid !== null) maxMcid = Math.max(maxMcid, mcid);
+			marks.push({ tag: tag && tag.name, mcid });
+		} else if (tok === "EMC") marks.pop();
+		else if (tok === "Tj" || tok === "'" || tok === "\"") {
+			const t = stack[stack.length - 1];
+			if (t && t.str !== undefined) show(t.str);
+		} else if (tok === "TJ") {
+			const a = stack[stack.length - 1];
+			if (a && a.arr) show(a.arr.map((x) => x.str || "").join(""));
+		} else if (tok === "ID") { // inline image data: skip to EI
+			const m = /\sEI(?=[\s]|$)/g;
+			m.lastIndex = i + 1;
+			const r = m.exec(s);
+			i = r ? r.index + 3 : n;
+		}
+		stack.length = 0;
+	}
+	return { byMcid, order, untagged, artifact, maxMcid };
+}
+
+function propsLookup(pageObj) {
+	const p = pageObj.getInheritable("Resources").get("Properties");
+	if (!p.isDictionary()) return null;
+	return (name) => {
+		const d = p.get(name);
+		return d.isDictionary() && d.get("MCID").isNumber() ? { MCID: { num: d.get("MCID").asNumber() } } : {};
+	};
+}
+
+// Number tree lookup (/Nums leaves, /Kids with /Limits).
+function numberTreeGet(node, key) {
+	if (!node.isDictionary()) return null;
+	const nums = node.get("Nums");
+	if (nums.isArray()) for (let i = 0; i + 1 < nums.length; i += 2) if (nums.get(i).asNumber() === key) return nums.get(i + 1);
+	const kids = node.get("Kids");
+	if (kids.isArray()) {
+		for (let i = 0; i < kids.length; i++) {
+			const kid = kids.get(i), lim = kid.get("Limits");
+			if (lim.isArray() && (key < lim.get(0).asNumber() || key > lim.get(1).asNumber())) continue;
+			const r = numberTreeGet(kid, key);
+			if (r) return r;
+		}
+	}
+	return null;
+}
+
+// For a tagged page: the ParentTree array that maps this page's MCIDs to
+// their structure elements. null when the document or page is not tagged.
+export function structParents(doc, pageObj) {
+	const tree = doc.getTrailer().get("Root", "StructTreeRoot");
+	const sp = pageObj.get("StructParents");
+	if (!tree.isDictionary() || !sp.isNumber()) return null;
+	const arr = numberTreeGet(tree.get("ParentTree"), sp.asNumber());
+	return arr && arr.isArray() ? arr : null;
+}
+
+function arrayInsert(arr, at, value) {
+	if (at >= arr.length) { arr.push(value); return; }
+	arr.push(arr.get(arr.length - 1));
+	for (let i = arr.length - 2; i > at; i--) arr.put(i, arr.get(i - 1));
+	arr.put(at, value);
+}
+
+// Tags the replacement: a new /Span structure element, child of the element
+// that owned the old word, placed right after the old word's MCID in that
+// element's /K, and registered in the ParentTree under a new MCID. Returns
+// the MCID the new text must be marked with.
+function tagReplacement(doc, pageRef, parents, ownerMcid, newMcid) {
+	const owner = parents.get(ownerMcid);
+	if (!owner.isDictionary()) return null;
+	const span = doc.addObject({ Type: "StructElem", S: "Span", P: owner, Pg: pageRef, K: newMcid });
+	const isOld = (x) => (x.isNumber() && x.asNumber() === ownerMcid) ||
+		(x.isDictionary() && x.get("Type").asName() === "MCR" && x.get("MCID").asNumber() === ownerMcid);
+	const k = owner.get("K");
+	if (k.isArray()) {
+		let at = k.length - 1;
+		for (let i = 0; i < k.length; i++) if (isOld(k.get(i))) at = i;
+		arrayInsert(k, at + 1, span);
+	} else owner.put("K", k.isNull() ? [span] : [k, span]);
+	while (parents.length < newMcid) parents.push(null);
+	if (parents.length === newMcid) parents.push(span);
+	else parents.put(newMcid, span);
+	return { newMcid, ownerType: owner.get("S").asName(), ownerMcid };
+}
+
 const fmt = (v) => String(+v.toFixed(4));
 
 function colorOp(paint, stextColor) {
@@ -585,51 +911,62 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	t.glyphs = now() - t0;
 	const first = hit.chars[0], g0 = orig[0];
 	if (!g0) throw new Error("could not match the stext char to a drawn glyph");
+	const vertical = g0.wmode === 1;
+	// Vertical text: after redaction MuPDF keeps the rest of the column in
+	// place with a TJ offset. The spec applies that offset vertically (MuPDF
+	// does), pdfium/Chrome applies it horizontally and the rest of the column
+	// jumps sideways. So the rest of the column is redacted and rewritten too
+	// (same characters, same fonts): nothing is left that needs an offset.
+	const rest = vertical && opts.rewriteRest !== false ? hit.line.chars.slice(hit.start + hit.chars.length) : [];
+	const written = replacement + rest.map((c) => c.c).join("");
 
 	// ---- find the font dict the original glyphs came from, and prove it:
 	// drawing the original word's codes with it must yield the same glyph ids.
 	t0 = now();
 	const pageObj = page.getObject();
 	const all = collectFonts(pageObj.getInheritable("Resources"), [], new Set(), []);
-	const cands = all.filter((f) => nameMatches(f.ref.get("BaseFont").asName() || "", g0.fontName));
-	let font = null, fontEntry = null, verifiedGids = 0;
+	const cands = all.filter((f) => dictMatches(f.ref, g0.fontName));
+	let font = null, fontEntry = null, verifiedGids = 0, firstCode = -1;
 	const seenObj = new Set();
 	for (const entry of cands) {
 		const num = entry.ref.isIndirect() ? entry.ref.asIndirect() : -1;
 		if (num >= 0 && seenObj.has(num)) continue;
 		seenObj.add(num);
 		const f = new PdfFont(entry.ref, g0.font);
-		let match = 0;
+		if (f.vertical !== vertical) continue; // same program, other writing mode
+		let match = 0, code0 = -1;
 		hit.chars.forEach((ch, i) => {
 			const r = resolveInOriginal(mupdf, f, ch.c);
-			if (r.ok && orig[i] && (r.gid === orig[i].gid || !f.embedded)) match++;
+			if (r.ok && orig[i] && (r.gid === orig[i].gid || !f.embedded)) { match++; if (i === 0) code0 = r.code; }
 		});
-		if (!font || match > verifiedGids) { font = f; fontEntry = entry; verifiedGids = match; }
+		if (!font || match > verifiedGids) { font = f; fontEntry = entry; verifiedGids = match; firstCode = code0; }
 		if (match === hit.chars.length) break;
 	}
 	t.fontAnalysis = now() - t0;
 
 	// Producers sometimes split one face into several dicts (Word writes a
 	// WinAnsi TrueType and an Identity-H Type0 subset of the same font): those
-	// are still the original font, so they are tried before any fallback.
+	// are still the original font, so they are tried before any fallback, as
+	// long as they write in the same direction (Identity-H vs Identity-V).
 	const originals = [];
 	if (font) {
 		originals.push(font);
 		const seen = new Set([font.ref.isIndirect() ? font.ref.asIndirect() : -1]);
 		for (const e of all) {
-			const bf = e.ref.get("BaseFont").asName() || "";
+			const bf = dictNames(e.ref)[0];
 			const num = e.ref.isIndirect() ? e.ref.asIndirect() : -1;
 			if (seen.has(num) || untag(bf) !== untag(font.baseFont)) continue;
 			seen.add(num);
 			const fz = glyphs.find((g) => nameMatches(bf, g.fontName));
-			originals.push(new PdfFont(e.ref, fz ? fz.font : null));
+			const f = new PdfFont(e.ref, fz ? fz.font : null);
+			if (f.vertical === vertical) originals.push(f);
 		}
 	}
 
 	// ---- plan: one segment per run of characters drawn by the same font
 	t0 = now();
 	const style = styleOf(first);
-	const chain = fallbackChain(mupdf, style, opts.extraFonts);
+	const chain = fallbackChain(mupdf, style, opts.extraFonts, cjkLanguage(font, written));
 	const plan = [];
 	const missing = [];
 	const toUnicodeAdds = new Map(); // PdfFont -> [[code, char]]
@@ -646,18 +983,18 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 		const out = [];
 		const same = (c) => { const a = styleOf(c); return a.bold === style.bold && a.italic === style.italic; };
 		for (const name of new Set(hit.line.chars.filter((c) => c.c === ch && same(c)).map((c) => c.fontName))) {
-			const e = all.find((e) => nameMatches(e.ref.get("BaseFont").asName() || "", name));
+			const e = all.find((e) => dictMatches(e.ref, name));
 			if (!e) continue;
 			const num = e.ref.isIndirect() ? e.ref.asIndirect() : -1;
 			if (!byNum.has(num)) {
 				const fz = glyphs.find((g) => g.fontName === name);
 				byNum.set(num, Object.assign(new PdfFont(e.ref, fz ? fz.font : null), { sameLine: true }));
 			}
-			if (byNum.get(num).sameLine) out.push(byNum.get(num));
+			if (byNum.get(num).sameLine && byNum.get(num).vertical === vertical) out.push(byNum.get(num));
 		}
 		return out;
 	};
-	for (const ch of replacement) {
+	for (const ch of written) {
 		let target = null, why = font ? "" : "original font dict not found";
 		for (const f of [...originals, ...lineFontsFor(ch)]) {
 			const r = resolveInOriginal(mupdf, f, ch);
@@ -687,15 +1024,38 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	// Redaction is a privacy tool: it also deletes link annotations touching the
 	// area. An editor must keep them, so snapshot the links and restore any lost.
 	t0 = now();
+	// Tagged page: note which MCID each run of shown bytes belongs to, so the
+	// marked-content sequence that loses the word can be found after redaction.
+	let tTag = now();
+	const parents = structParents(doc, pageObj);
+	const props = parents && propsLookup(pageObj);
+	const mcBefore = parents && markedContent(contentText(pageObj), props);
+	tTag = now() - tTag;
 	const linkKey = (l) => JSON.stringify([l.getBounds().map((v) => +v.toFixed(2)), l.getURI()]);
 	const linksBefore = page.getLinks().map((l) => ({ key: linkKey(l), bounds: l.getBounds(), uri: l.getURI() }));
 	const annot = page.createAnnotation("Redact");
-	annot.setQuadPoints(hit.chars.map((ch) => shrinkQuad(ch.quad)));
+	annot.setQuadPoints(hit.chars.concat(rest).map((ch) => shrinkQuad(ch.quad)));
 	page.applyRedactions(false, 0, 0, 0); // no black box, keep images & line art
 	const linksAfter = new Set(page.getLinks().map(linkKey));
 	let linksRestored = 0;
 	for (const l of linksBefore) if (!linksAfter.has(l.key)) { page.createLink(l.bounds, l.uri); linksRestored++; }
+
+	// ---- tag the replacement where the old word was (tagged PDFs)
+	// Redaction keeps every BDC/EMC and the structure tree, but text appended
+	// to the page would be untagged: screen readers and tag-based extraction
+	// (Acrobat reading order, PDF/UA checks) would never see it. So it gets a
+	// /Span of its own, child of the element that held the old word.
+	let tag = null;
+	const tTag2 = now();
+	if (parents) {
+		const mcAfter = markedContent(contentText(page.getObject()), props);
+		const changed = mcBefore.order.filter((id) => (mcAfter.byMcid.get(id) || "") !== mcBefore.byMcid.get(id));
+		const newMcid = Math.max(parents.length, mcBefore.maxMcid + 1, mcAfter.maxMcid + 1);
+		if (changed.length) tag = tagReplacement(doc, doc.findPage(pageIndex), parents, changed[0], newMcid);
+		tag = tag || { untagged: changed.length ? "owner is not a structure element" : "old word was not in marked content" };
+	}
 	t.redact = now() - t0;
+	t.taggingPartOfRedact = tTag + now() - tTag2;
 
 	// ---- write the replacement at the same baseline (user-space glyph matrix)
 	t0 = now();
@@ -704,11 +1064,19 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	const m = mupdf.Matrix.concat(g0.m, mupdf.Matrix.invert(page.getTransform()));
 	const sx = Math.hypot(m[0], m[1]), size = Math.hypot(m[2], m[3]), th = sx / size;
 	const tm = [m[0] / sx, m[1] / sx, m[2] / size, m[3] / size, m[4], m[5]];
+	if (vertical) {
+		// A vertical glyph is drawn at pen - v (v = (w0/2, 880) per mille of
+		// the size by default); Tm must hold the pen, so add v back. For
+		// non-Identity CMaps the CID is unknown and the defaults are used.
+		const { vx, vy } = verticalMetrics(font, font && font.identity ? firstCode : -1);
+		tm[4] += (vx / 1000) * m[0] / th + (vy / 1000) * m[2];
+		tm[5] += (vx / 1000) * m[1] / th + (vy / 1000) * m[3];
+	}
 	// Letter spacing (Tc) is not in the matrix: estimate it from how far apart
 	// the original glyphs sit versus their own advances. Tc is the same for
 	// every pair while kerning is not, so only a uniform offset counts.
 	const est = [];
-	for (let i = 0; i + 1 < orig.length; i++) {
+	for (let i = 0; i + 1 < orig.length && !vertical; i++) {
 		const a = orig[i], b = orig[i + 1];
 		if (!a || !b || a.font !== b.font || isSpace(hit.chars[i].c)) continue;
 		const d = ((b.m[4] - a.m[4]) * g0.m[0] + (b.m[5] - a.m[5]) * g0.m[1]) / Math.hypot(g0.m[0], g0.m[1]);
@@ -718,7 +1086,7 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	const uniform = est.length >= 2 && est[est.length - 1] - est[0] < 0.01 * size;
 	const tc = uniform ? est[est.length >> 1] : 0;
 	const pObj = page.getObject();
-	let ops = "q\nBT\n" + colorOp(g0, first.color) + "\n";
+	let ops = (tag && tag.newMcid !== undefined ? `/Span <</MCID ${tag.newMcid}>> BDC\n` : "") + "q\nBT\n" + colorOp(g0, first.color) + "\n";
 	if (Math.abs(th - 1) > 0.002) ops += `${fmt(th * 100)} Tz\n`;
 	if (Math.abs(tc) > 0.02 * size) ops += `${fmt(tc)} Tc\n`;
 	if (g0.mode === "invisible") ops += "3 Tr\n";
@@ -734,7 +1102,9 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	for (const [f, list] of toUnicodeAdds) toUnicodeAdded += extendToUnicode(doc, f, list);
 	for (const [f, list] of widthAdds) widthsAdded += extendWidths(doc, f, list);
 	for (const seg of plan) {
-		const ref = seg.pdfFont ? seg.pdfFont.ref : seg.fb.ref;
+		// In vertical text a fallback goes through the font's Identity-V twin.
+		if (seg.fb && vertical && !seg.fb.refV) seg.fb.refV = verticalTwin(doc, seg.fb.ref);
+		const ref = seg.pdfFont ? seg.pdfFont.ref : vertical ? seg.fb.refV : seg.fb.ref;
 		const bytes = seg.pdfFont ? seg.pdfFont.bytes : 2;
 		seg.resName = fontKey(doc, pObj, ref);
 		if (seg.fb) for (const c of seg.codes) seg.fb.used.add(c);
@@ -742,9 +1112,10 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 		seg.hex = seg.codes.map((c) => hexCode(c, bytes));
 		ops += `/${seg.resName} ${fmt(size)} Tf <${seg.hex.join("")}> Tj\n`;
 	}
-	ops += "ET\nQ\n";
+	ops += "ET\nQ\n" + (tag && tag.newMcid !== undefined ? "EMC\n" : "");
 	appendContent(doc, pObj, ops);
 	t.write = now() - t0;
+	page.destroy();
 
 	return {
 		find, replacement, page: pageIndex,
@@ -753,7 +1124,7 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 			fontDictVerified: `${verifiedGids}/${hit.chars.length} glyph ids reproduced`,
 			size: +first.size.toFixed(3), fontSize: +size.toFixed(3), horizontalScale: +(th * 100).toFixed(2), charSpacing: +tc.toFixed(3),
 			color: first.color, colorspace: g0.csType, mode: g0.mode,
-			origin: first.origin, dir: hit.line.dir, bbox: quadBounds(hit.chars.map((c) => c.quad)),
+			origin: first.origin, dir: hit.line.dir, wmode: vertical ? 1 : 0, bbox: quadBounds(hit.chars.map((c) => c.quad)),
 			gids: Object.fromEntries(hit.chars.map((ch, i) => [ch.c, orig[i] && orig[i].gid])),
 		},
 		segments: plan.map((s) => ({
@@ -761,6 +1132,8 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 			...(s.why ? { why: s.why } : {}), ...(s.how ? { how: s.how } : {}),
 		})),
 		missing, toUnicodeAdded, widthsAdded, linksRestored, style, ops, timings: t,
+		...(rest.length ? { rewrittenRest: rest.map((c) => c.c).join("") } : {}),
+		...(tag ? { tag } : {}),
 	};
 }
 
@@ -784,6 +1157,58 @@ export function docStructure(doc) {
 		widgets,
 		links,
 	};
+}
+
+export function countStructElems(doc) {
+	const tree = doc.getTrailer().get("Root", "StructTreeRoot");
+	if (!tree.isDictionary()) return 0;
+	const seen = new Set();
+	let n = 0;
+	const walk = (k) => {
+		if (k.isArray()) { k.forEach(walk); return; }
+		if (!k.isDictionary()) return;
+		if (k.isIndirect()) { if (seen.has(k.asIndirect())) return; seen.add(k.asIndirect()); }
+		const type = k.get("Type").asName();
+		if (type === "MCR" || type === "OBJR") return;
+		n++;
+		walk(k.get("K"));
+	};
+	walk(tree.get("K"));
+	return n;
+}
+
+// Tagged pages: text shown outside any MCID/Artifact (should not grow), and
+// each tagged replacement must be a /Span under the old word's element.
+function checkTags(before, after, edits) {
+	if (!before.getTrailer().get("Root", "StructTreeRoot").isDictionary()) return null;
+	const pages = [...new Set(edits.map((e) => e.page))];
+	const untagged = (doc, p) => {
+		const o = doc.findPage(p);
+		return structParents(doc, o) ? markedContent(contentText(o), propsLookup(o)).untagged : null;
+	};
+	const res = { structElems: `${countStructElems(before)}->${countStructElems(after)}`, untaggedShows: {}, edits: [] };
+	for (const p of pages) res.untaggedShows[p + 1] = `${untagged(before, p)}->${untagged(after, p)}`;
+	let tagged = 0;
+	for (const e of edits) {
+		if (!e.tag || e.tag.newMcid === undefined) { res.edits.push(e.tag ? e.tag.untagged : "page not tagged"); continue; }
+		tagged++;
+		const o = after.findPage(e.page);
+		const parents = structParents(after, o);
+		const span = parents && parents.get(e.tag.newMcid), owner = parents && parents.get(e.tag.ownerMcid);
+		const shown = markedContent(contentText(o), propsLookup(o)).byMcid.get(e.tag.newMcid) || "";
+		let inK = false;
+		if (owner && owner.isDictionary()) {
+			const k = owner.get("K");
+			(k.isArray() ? k : [k]).forEach((x) => { if (x.isIndirect && x.isIndirect() && x.asIndirect() === span.asIndirect()) inK = true; });
+		}
+		const ok = !!span && span.isDictionary() && span.get("S").asName() === "Span" && inK &&
+			span.get("P").asIndirect() === owner.asIndirect() && shown.length > 0;
+		res.edits.push(ok ? `Span MCID ${e.tag.newMcid} in ${e.tag.ownerType} (after MCID ${e.tag.ownerMcid})` : "BROKEN");
+	}
+	const [b, a] = res.structElems.split("->").map(Number);
+	res.ok = a === b + tagged && !res.edits.includes("BROKEN") &&
+		Object.values(res.untaggedShows).every((s) => { const [x, y] = s.split("->"); return x === y; });
+	return res;
 }
 
 // Re-open the saved bytes and check every edit really happened where expected.
@@ -855,6 +1280,8 @@ export function verifyEdits(mupdf, origBytes, outBytes, password, edits) {
 		result.pixelsChangedOutsideEdits[pageIndex + 1] = pixelDiffOutside(mupdf, before.loadPage(pageIndex), after.loadPage(pageIndex), areas, 2);
 	result.structureBefore = docStructure(before);
 	result.structureAfter = docStructure(after);
+	const tags = checkTags(before, after, edits);
+	if (tags) result.tags = tags;
 	before.destroy();
 	after.destroy();
 	return result;

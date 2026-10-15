@@ -1,6 +1,7 @@
 // Module Web Worker: all MuPDF work happens here, the page only draws bitmaps.
 import { openPdf, pixmapToRGBA, renderPixmap, replaceText, savePdf, verifyEdits, now } from "./core.mjs";
 import { runSuite } from "./suite.mjs";
+import { runLargeBench } from "./bench.mjs";
 
 const t0 = now();
 const mupdf = await import("../../../lib/mupdf.js");
@@ -63,6 +64,13 @@ self.onmessage = async ({ data: msg }) => {
 			after.destroy();
 			self.postMessage({ type: "edit-done", edit, verify, saveMs, out, crops },
 				[out.buffer, ...crops.map((c) => c.bitmap)]);
+		} else if (msg.type === "bench") {
+			const bytes = await fixture(msg.file || "large-220p.pdf");
+			const res = await runLargeBench(mupdf, bytes, {
+				edits: msg.edits || 50,
+				onStep: (step) => self.postMessage({ type: "bench-step", step }),
+			});
+			self.postMessage({ type: "bench-done", initMs, runs: res.runs, heap: res.heap });
 		}
 	} catch (err) {
 		self.postMessage({ type: "error", message: String(err && err.stack || err) });

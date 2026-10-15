@@ -85,5 +85,6 @@ export function summarize(r) {
 	const structOk = sb.pages === sa.pages && sb.outlineItems === sa.outlineItems &&
 		sb.acroFormFields === sa.acroFormFields && JSON.stringify(sb.widgets) === JSON.stringify(sa.widgets) &&
 		JSON.stringify(sb.links) === JSON.stringify(sa.links);
-	return editsOk && pixelsOk && structOk && v.reopenedWithoutPassword;
+	const tagsOk = !v.tags || v.tags.ok; // tagged PDFs: replacement tagged, tree intact
+	return editsOk && pixelsOk && structOk && tagsOk && v.reopenedWithoutPassword;
 }

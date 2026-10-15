@@ -5,21 +5,21 @@
   "hasNewWord": true,
   "oldGone": true,
   "wrongPassword": 0,
-  "ms": 3.8
+  "ms": 6.8
  },
  "decrypt": {
   "needsPassword": false,
   "auth": null,
   "hasNewWord": true,
   "oldGone": true,
-  "ms": 1.2
+  "ms": 2.1
  },
  "reEncryptAes256": {
   "needsPassword": true,
   "auth": 2,
   "hasNewWord": true,
   "oldGone": true,
-  "ms": 13.4
+  "ms": 30.5
  },
  "incremental": {
   "needsPassword": false,
@@ -28,7 +28,7 @@
   "oldGone": true,
   "originalBytesArePrefix": true,
   "sizeIn": 73485,
-  "sizeOut": 79316,
-  "ms": 0.4
+  "sizeOut": 79721,
+  "ms": 0.5
  }
 }
