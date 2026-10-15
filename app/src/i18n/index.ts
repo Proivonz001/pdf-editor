@@ -64,3 +64,13 @@ export function t<K extends MessageKey>(key: K, ...args: Args<K>): string {
   if (!params) return text;
   return text.replace(/\{(\w+)\}/g, (match, name: string) => (name in params ? String(params[name]) : match));
 }
+
+/** A font size for people: one decimal at most, with the decimal comma in Italian ("10,5"). */
+export function formatFontSize(size: number): string {
+  return (Math.round(size * 10) / 10).toLocaleString(locale.value);
+}
+
+/** "1 page" / "12 pages". */
+export function pageCount(count: number): string {
+  return count === 1 ? t("pages.countOne") : t("pages.count", { count });
+}

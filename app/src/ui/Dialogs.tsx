@@ -1,5 +1,7 @@
 // The dialogs the app can show (one at a time, from the `dialog` signal): confirm, alert,
 // password for protected PDFs, and "ready to share" when the share sheet needs another tap.
+// Cancel is always the quiet secondary button; a confirm that throws edits away is red, and
+// it is Cancel that gets the focus, so Enter never loses work by accident.
 import { useState } from "preact/hooks";
 import { t } from "../i18n";
 import { dialog, showDialog, type DialogState } from "../state";
@@ -11,6 +13,15 @@ type Of<K extends DialogState["kind"]> = Extract<DialogState, { kind: K }>;
 
 const close = () => showDialog(null);
 
+function DialogText({ title, body }: { title: string; body: string }) {
+  return (
+    <div class="dialog-text">
+      <h2 id="dlg-title" class="dialog-title">{title}</h2>
+      <p id="dlg-body" class="dialog-body">{body}</p>
+    </div>
+  );
+}
+
 function ConfirmDialog({ state }: { state: Of<"confirm"> }) {
   const answer = (ok: boolean) => {
     dialog.value = null;
@@ -18,10 +29,11 @@ function ConfirmDialog({ state }: { state: Of<"confirm"> }) {
   };
   return (
     <Dialog labelledBy="dlg-title" describedBy="dlg-body" onCancel={() => answer(false)}>
-      <h2 id="dlg-title" class="dialog-title">{state.title}</h2>
-      <p id="dlg-body" class="dialog-body">{state.body}</p>
+      <DialogText title={state.title} body={state.body} />
       <div class="dialog-actions">
-        <button type="button" class="btn" data-autofocus onClick={() => answer(false)}>{t("common.cancel")}</button>
+        <button type="button" class="btn btn-secondary" data-autofocus onClick={() => answer(false)}>
+          {t("common.cancel")}
+        </button>
         <button type="button" class="btn btn-danger" onClick={() => answer(true)}>{state.confirmLabel}</button>
       </div>
     </Dialog>
@@ -31,8 +43,7 @@ function ConfirmDialog({ state }: { state: Of<"confirm"> }) {
 function AlertDialog({ state }: { state: Of<"alert"> }) {
   return (
     <Dialog labelledBy="dlg-title" describedBy="dlg-body" onCancel={close}>
-      <h2 id="dlg-title" class="dialog-title">{state.title}</h2>
-      <p id="dlg-body" class="dialog-body">{state.body}</p>
+      <DialogText title={state.title} body={state.body} />
       <div class="dialog-actions">
         <button type="button" class="btn btn-primary" data-autofocus onClick={close}>{t("common.ok")}</button>
       </div>
@@ -50,25 +61,26 @@ function PasswordDialog({ state }: { state: Of<"password"> }) {
   };
   return (
     <Dialog labelledBy="dlg-title" describedBy="dlg-body" onCancel={close}>
-      <form onSubmit={submit} noValidate>
-        <h2 id="dlg-title" class="dialog-title">{t("password.title")}</h2>
-        <p id="dlg-body" class="dialog-body">{t("password.body", { name: state.file.name })}</p>
-        <label class="field-label" for="pdf-password">{t("password.label")}</label>
-        <input
-          id="pdf-password"
-          class="field"
-          type="password"
-          autocomplete="off"
-          spellcheck={false}
-          data-autofocus
-          value={password}
-          aria-invalid={state.wrong}
-          aria-describedby={state.wrong ? "pdf-password-error" : undefined}
-          onInput={(e) => setPassword(e.currentTarget.value)}
-        />
-        {state.wrong && <p id="pdf-password-error" class="field-error">{t("password.wrong")}</p>}
+      <form class="dialog-form" onSubmit={submit} noValidate>
+        <DialogText title={t("password.title")} body={t("password.body", { name: state.file.name })} />
+        <div class="field-group">
+          <label class="field-label" for="pdf-password">{t("password.label")}</label>
+          <input
+            id="pdf-password"
+            class="field"
+            type="password"
+            autocomplete="off"
+            spellcheck={false}
+            data-autofocus
+            value={password}
+            aria-invalid={state.wrong}
+            aria-describedby={state.wrong ? "pdf-password-error" : undefined}
+            onInput={(e) => setPassword(e.currentTarget.value)}
+          />
+          {state.wrong && <p id="pdf-password-error" class="field-error">{t("password.wrong")}</p>}
+        </div>
         <div class="dialog-actions">
-          <button type="button" class="btn" onClick={close}>{t("common.cancel")}</button>
+          <button type="button" class="btn btn-secondary" onClick={close}>{t("common.cancel")}</button>
           <button type="submit" class="btn btn-primary" disabled={!password}>{t("password.open")}</button>
         </div>
       </form>
@@ -79,10 +91,9 @@ function PasswordDialog({ state }: { state: Of<"password"> }) {
 function ShareDialog({ state }: { state: Of<"share"> }) {
   return (
     <Dialog labelledBy="dlg-title" describedBy="dlg-body" onCancel={close}>
-      <h2 id="dlg-title" class="dialog-title">{t("share.readyTitle")}</h2>
-      <p id="dlg-body" class="dialog-body">{t("share.readyBody", { name: state.file.name })}</p>
+      <DialogText title={t("share.readyTitle")} body={t("share.readyBody", { name: state.file.name })} />
       <div class="dialog-actions">
-        <button type="button" class="btn" onClick={close}>{t("common.cancel")}</button>
+        <button type="button" class="btn btn-secondary" onClick={close}>{t("common.cancel")}</button>
         <button
           type="button"
           class="btn btn-primary"

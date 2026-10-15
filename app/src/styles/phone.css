@@ -1,0 +1,517 @@
+/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the bottom sheets (ui/Sheet.tsx) and
+   the rows of the "More" sheet (ui/PhoneSheets.tsx). The thumbnails inside the pages sheet are
+   styled by pages.css; this file only gives them their room. Colours only from tokens.css.
+
+   The tab bar and the sheets take pans only, no pinch or double-tap zoom: zooming the page from
+   there would leave the bars out of view once a sheet closes, and the viewer keeps pinches for
+   the PDF, so no gesture would be left to zoom the page back out. */
+
+/* --- Tab bar ------------------------------------------------------------------------------- */
+
+.tabbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  height: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px));
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  touch-action: pan-x pan-y; /* see the header */
+}
+
+.tab {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 16px;
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.15s var(--ease);
+}
+
+.tab-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 30px;
+  border-radius: var(--radius-pill);
+  transition: background-color 0.15s var(--ease);
+}
+
+/* The selected pill: a layer under the icon that widens from the centre when a mode turns on. */
+.tab-pill::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--active-bg);
+  opacity: 0;
+  transform: scaleX(0.6);
+  transition: opacity 0.15s var(--ease), transform 0.2s var(--ease);
+}
+
+.tab-pill > .icon {
+  position: relative; /* above the selected layer */
+  width: 22px;
+  height: 22px;
+}
+
+/* On: the tint is too faint to tell "on" from "off" by itself, so an ink ring round the pill and
+   a bolder label carry the state too. */
+.tab[aria-pressed="true"] {
+  color: var(--active-fg);
+}
+
+.tab[aria-pressed="true"] .tab-pill::before {
+  opacity: 1;
+  transform: none;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.tab[aria-pressed="true"] .tab-label {
+  font-weight: 700;
+}
+
+@media (hover: hover) {
+  .tab:hover:not(:disabled) .tab-pill {
+    background: var(--hover);
+  }
+}
+
+.tab:active:not(:disabled) .tab-pill {
+  background: var(--pressed);
+}
+
+/* The focus ring goes round the pill, the visible shape of the tab. */
+.tab:focus-visible {
+  outline: none;
+}
+
+.tab:focus-visible .tab-pill {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.tab:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tab-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The update dot sits on the icon's top-right corner, not on the pill's. */
+.tab .badge {
+  top: 2px;
+  right: auto;
+  left: calc(50% + 6px);
+}
+
+/* --- Bottom sheet ---------------------------------------------------------------------------
+   A modal <dialog> anchored to the bottom edge: full width up to 560 px, centred. The inner
+   panel caps the height and lets the content scroll under a fixed header. A closed <dialog>
+   keeps the browser's display: none (nothing here sets display on .sheet). */
+
+.sheet {
+  --btn: var(--tap); /* 44 px buttons, even with a mouse, as in the phone top bar */
+  position: fixed;
+  inset: auto 0 0;
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  max-height: none;
+  margin: 0 auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y; /* see the header */
+  transition: transform 0.18s var(--ease); /* snapping back after a short drag */
+}
+
+.sheet[open] {
+  animation: sheet-up 0.18s var(--ease);
+}
+
+.sheet::backdrop {
+  background: var(--backdrop);
+  animation: sheet-fade-in 0.18s var(--ease);
+  touch-action: pan-x pan-y;
+}
+
+.sheet.is-leaving {
+  pointer-events: none;
+  animation: sheet-down 0.15s var(--ease) forwards;
+}
+
+.sheet.is-leaving::backdrop {
+  animation: sheet-fade-out 0.15s var(--ease) forwards;
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+/* No "from": it leaves from wherever a drag left it. */
+@keyframes sheet-down {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sheet-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.sheet-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+  max-height: 85dvh;
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+/* Handle and header: dragging them down closes the sheet (Sheet.tsx). */
+.sheet-grip {
+  flex-shrink: 0;
+  touch-action: none;
+  user-select: none;
+}
+
+.sheet-handle {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+}
+
+.sheet-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 8px 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+}
+
+.sheet-title {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.sheet-detail {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.btn.sheet-close {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+@media (hover: hover) {
+  .btn.sheet-close:hover:not(:disabled) {
+    color: var(--text);
+  }
+}
+
+.sheet-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Pages: the thumbnails are their own scroller (and observer root), so the content box only
+   passes the height on: as tall as the pages need, up to about 70 % of the screen. */
+.sheet-pages .sheet-content {
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  max-height: 70dvh;
+}
+
+.sheet-pages .sheet-content > * {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* --- More sheet -----------------------------------------------------------------------------
+   Rows line up on two columns: the icons 20 px from the sheet's edge (content 8 + row 12),
+   the labels after them (icon 20 + gap 14). The title in the header starts at 20 px too. */
+
+.sheet-more .sheet-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 8px;
+}
+
+.more-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.more-section + .more-section,
+.more-footer {
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.more-row {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.12s var(--ease);
+}
+
+.more-row > .icon {
+  color: var(--muted);
+}
+
+@media (hover: hover) {
+  .more-row:hover {
+    background: var(--hover);
+  }
+}
+
+.more-row:active {
+  background: var(--pressed);
+}
+
+/* The ring inside the row: outside, it would run into the rows next to it. */
+.more-row:focus-visible {
+  outline-offset: -2px;
+}
+
+.more-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+/* "Update available": the highlighter, as on the desktop's update button. */
+.more-row.is-accent {
+  background: var(--highlighter);
+  color: var(--on-highlighter);
+  font-weight: 600;
+}
+
+.more-row.is-accent > .icon {
+  color: inherit;
+}
+
+/* The dark theme's light focus blue barely shows on yellow: ink does, in both themes. */
+.more-row.is-accent:focus-visible {
+  outline-color: var(--on-highlighter);
+}
+
+@media (hover: hover) {
+  .more-row.is-accent:hover {
+    background: var(--highlighter-hover);
+  }
+}
+
+.more-row.is-accent:active {
+  background: var(--highlighter-hover);
+}
+
+/* Zoom: the label in the rows' icon and text columns, the controls on the right, their edge
+   under the sheet's close button. With very large text the controls drop under the label
+   together. The section rule above gives it the same 6 px above as the gap below. */
+.more-zoom {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding-right: 0;
+  padding-left: 12px;
+}
+
+.more-zoom-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--fs-base);
+  line-height: 1.3;
+}
+
+.more-zoom-label > .icon {
+  color: var(--muted);
+}
+
+.more-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* The ring is a shadow, not a border: the stepper stays as tall as the buttons, and as the Fit
+   button beside it. */
+.more-stepper {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.more-zoom-value {
+  min-width: 52px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* At a limit: still focusable (aria-disabled), but it looks off and does nothing. */
+.more-stepper .btn[aria-disabled="true"] {
+  background: transparent;
+  opacity: 0.4;
+  cursor: default;
+}
+
+.more-zoom .more-fit:not([aria-pressed="true"]) {
+  border-color: var(--line);
+  background: var(--surface-2);
+}
+
+@media (hover: hover) {
+  .more-zoom .more-fit:not([aria-pressed="true"]):hover {
+    background: linear-gradient(var(--hover), var(--hover)) var(--surface-2);
+  }
+}
+
+.more-zoom .more-fit:not([aria-pressed="true"]):active {
+  background: linear-gradient(var(--pressed), var(--pressed)) var(--surface-2);
+}
+
+/* Footer: the privacy note and the source link, quiet. The 16 px icons sit in the rows' 20 px
+   icon column, the text in their label column. */
+.more-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-right: 12px;
+  padding-left: 12px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+
+.more-note {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 32px;
+  margin: 0;
+}
+
+.more-note > .icon {
+  width: 16px;
+  height: 16px;
+  margin: 0 2px;
+}
+
+.more-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .more-link:hover {
+    color: var(--text);
+  }
+}
+
+@media (pointer: coarse) {
+  .more-link {
+    min-height: var(--tap);
+  }
+}
+
+/* --- Accessibility fallbacks ---------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  /* base.css shortens animations on elements; the backdrop is a pseudo-element it does not reach. */
+  .sheet::backdrop {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  /* Background tints are dropped in forced colours: mark the selected tab with an outline. */
+  .tab[aria-pressed="true"] .tab-pill {
+    outline: 2px solid currentColor;
+  }
+
+  .more-stepper {
+    border: 1px solid currentColor;
+  }
+}

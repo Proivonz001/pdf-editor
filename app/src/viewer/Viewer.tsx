@@ -1,15 +1,19 @@
 // The document viewer: a scroller with the pages stacked vertically, laid out from their sizes
-// in points × zoom. Only pages near the viewport are rendered (see PageView).
+// in points × zoom. Only pages near the viewport are rendered (see PageView). Above it, in edit
+// mode, the edit banner (what to do, and "Done"); over it, the page indicator and the busy bar.
 //
 // Zoom keeps a point in place: every zoom change records an anchor (a point on a page, in
 // points) and the viewport position it must stay at; after the new layout is committed the
 // scroll position is set so the anchor lands there again.
+import type { RefObject } from "preact";
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
-import { busy, currentPage, devicePixelRatio, editingStopped, editMode, engine, fitMode, zoom } from "../state";
-import { isCoarse } from "../ui/media";
+import { busy, currentPage, editingLine, editingStopped, editMode, engine, fitMode, zoom } from "../state";
+import { setEditMode } from "../ui/actions";
+import { IconCheck, IconInfo } from "../ui/icons";
+import { isCoarse, prefersReducedMotion } from "../ui/media";
 import { installZoomGestures, type Anchor } from "./gestures";
-import { clampZoom, computeLayout, fitWidthZoom, pageIndexAt, type Layout } from "./layout";
+import { clampZoom, computeLayout, fitWidthZoom, pageIndexAt, spacing, type Layout } from "./layout";
 import type { OpenDoc } from "./model";
 import { PageView } from "./PageView";
 import { RenderQueue } from "./renderQueue";
@@ -18,7 +22,44 @@ import { PageVisibility } from "./visibility";
 
 type View = [number, number];
 
+type BannerKind = "edit" | "stopped";
+
+/**
+ * The bar above the pages: in edit mode, how to edit and a "Done" button; once editing has
+ * stopped for this file (see actions.ts), why, in the danger colours and with no button.
+ */
+function EditBanner({ kind, elRef }: { kind: BannerKind; elRef: RefObject<HTMLDivElement> }) {
+  if (kind === "stopped") {
+    return (
+      <div ref={elRef} class="edit-banner is-stopped">
+        <IconInfo />
+        <p class="edit-banner-text" role="note">{t("broken.note")}</p>
+      </div>
+    );
+  }
+  return (
+    <div ref={elRef} class="edit-banner">
+      <span class="edit-banner-mark" aria-hidden="true" />
+      <p class="edit-banner-text" role="note">{t(isCoarse.value ? "edit.hintTouch" : "edit.hint")}</p>
+      <button
+        type="button"
+        class="btn btn-secondary edit-banner-done"
+        title={t("edit.doneTip", { key: t("key.esc") })}
+        onClick={() => void setEditMode(false)}
+      >
+        <IconCheck />
+        <span>{t("edit.done")}</span>
+      </button>
+    </div>
+  );
+}
+
+/**
+ * "2 / 9" at the bottom centre. Not while a line editor is open: the pill could cover the field
+ * or its context bar. It reads editingLine itself, so opening a line re-renders only the pill.
+ */
 function PageIndicator({ count }: { count: number }) {
+  if (editingLine.value) return null;
   const page = Math.min(currentPage.value, count - 1) + 1;
   return (
     <div class="page-indicator">
@@ -39,6 +80,22 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
   const layoutRef = useRef<Layout>(layout);
   layoutRef.current = layout;
   const pending = useRef<{ anchor: Anchor; view: View } | null>(null);
+  /**
+   * The page picked with goToPage (a thumbnail): it counts as the current page while the viewer
+   * scrolls there and as long as it stays there, even when another page is at the centre of
+   * the viewport (low zoom, or the last pages, which cannot scroll to the top).
+   */
+  const picked = useRef<{ index: number; top: number; until: number } | null>(null);
+  const banner: BannerKind | null = editingStopped.value ? "stopped" : editMode.value ? "edit" : null;
+  const bannerRef = useRef<HTMLDivElement>(null);
+  /** Height of the edit banner on screen (0 when there is none); null before the first layout. */
+  const bannerHeight = useRef<number | null>(null);
+  /**
+   * The scroll position as of the last scroll event. When the banner goes, the scroller grows and
+   * the browser has already pulled scrollTop into the smaller range by the time the effect below
+   * runs; this is the position from before that.
+   */
+  const lastScrollTop = useRef(0);
 
   // Set up once per document: observers, render queue, gestures, zoom commands, resize, scroll.
   useLayoutEffect(() => {
@@ -64,6 +121,16 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
       applyZoom(target, anchor, view);
     };
     const updateCurrentPage = () => {
+      const p = picked.current;
+      if (p) {
+        const there = Math.abs(el.scrollTop - p.top) < 2;
+        if (there) p.until = 0; // arrived: from now on, any other position ends it
+        if (there || performance.now() < p.until) {
+          currentPage.value = p.index;
+          return;
+        }
+        picked.current = null;
+      }
       currentPage.value = pageIndexAt(layoutRef.current, el.scrollTop + el.clientHeight / 2);
     };
 
@@ -84,6 +151,18 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
         fitMode.value = true;
         applyZoom(fitWidthZoom(doc.pages, el.clientWidth), anchorAt(v), v);
       },
+      goToPage: (index) => {
+        const L = layoutRef.current;
+        if (index < 0 || index >= L.tops.length) return;
+        const top = Math.max(0, Math.min(L.tops[index] - spacing(L.viewportWidth).gap, el.scrollHeight - el.clientHeight));
+        // Smooth only for short hops: a long smooth scroll would ask for every page on the way.
+        const near = Math.abs(index - currentPage.peek()) <= 3;
+        const smooth = near && !prefersReducedMotion.peek();
+        // A smooth scroll that the user interrupts never arrives: then the pick expires.
+        picked.current = { index, top, until: performance.now() + (smooth ? 1500 : 300) };
+        currentPage.value = index;
+        el.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+      },
     });
     const removeGestures = installZoomGestures({ scroller: el, anchorAt, zoomAround });
 
@@ -101,18 +180,16 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
 
     let frame = 0;
     const onScroll = () => {
+      lastScrollTop.current = el.scrollTop;
       if (!frame) frame = requestAnimationFrame(() => { frame = 0; updateCurrentPage(); });
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    const onWindowResize = () => { devicePixelRatio.value = window.devicePixelRatio || 1; };
-    window.addEventListener("resize", onWindowResize);
 
     return () => {
       setZoomController(null);
       removeGestures();
       resize.disconnect();
       el.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onWindowResize);
       if (frame) cancelAnimationFrame(frame);
       vis.disconnect();
       queue.dispose();
@@ -128,16 +205,29 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
       pending.current = null;
       scrollToAnchor(el, layout, p.anchor, p.view);
     }
+    picked.current = null; // the page positions changed
     currentPage.value = pageIndexAt(layout, el.scrollTop + el.clientHeight / 2);
   }, [layout]);
 
+  // The edit banner pushes the scroller down when it comes and lets it up when it goes: scroll
+  // by the same amount, so the document stays still on screen (not on the first layout).
+  useLayoutEffect(() => {
+    const before = bannerHeight.current;
+    const after = bannerRef.current?.offsetHeight ?? 0;
+    bannerHeight.current = after;
+    const el = scrollerRef.current;
+    if (!el || before === null || after === before) return;
+    const from = lastScrollTop.current;
+    el.scrollTop = from + after - before;
+    // A page picked from the thumbnails that the viewer had reached stays the current page: the
+    // document did not move on screen, so the pick moves with the scroll.
+    const p = picked.current;
+    if (p && Math.abs(from - p.top) < 2) p.top = el.scrollTop;
+  }, [banner]);
+
   return (
     <div class="viewer">
-      {editingStopped.value ? (
-        <p class="edit-hint" role="note">{t("broken.note")}</p>
-      ) : editMode.value && (
-        <p class="edit-hint" role="note">{isCoarse.value ? t("edit.hintTouch") : t("edit.hint")}</p>
-      )}
+      {banner && <EditBanner kind={banner} elRef={bannerRef} />}
       <div class="viewer-body">
         <div ref={scrollerRef} class="scroller" tabIndex={0} role="region" aria-label={t("viewer.label")}>
           {services && (

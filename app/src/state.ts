@@ -65,9 +65,18 @@ const applied = signal<readonly number[]>([]);
 let redoStack: number[] = [];
 let nextEditId = 1;
 const savedKey = signal("");
+/** The pages each edit changed, by edit id (for editedPages). */
+const editPages = new Map<number, readonly number[]>();
 
 /** There are edits that have not been downloaded (or shared) yet. */
 export const dirty = computed(() => applied.value.join(",") !== savedKey.value);
+
+/** Indices of the pages that hold at least one applied edit (marked in the thumbnails). */
+export const editedPages = computed(() => {
+  const pages = new Set<number>();
+  for (const id of applied.value) for (const p of editPages.get(id) ?? []) pages.add(p);
+  return pages as ReadonlySet<number>;
+});
 
 export function resetHistory() {
   batch(() => {
@@ -76,6 +85,7 @@ export function resetHistory() {
     savedKey.value = "";
   });
   redoStack = [];
+  editPages.clear();
 }
 
 /**
@@ -90,7 +100,10 @@ export function recordHistory(state: HistoryState, step: "edit" | "undo" | "redo
   batch(() => {
     const ids = [...applied.value];
     if (step === "edit") {
-      ids.push(nextEditId++);
+      const id = nextEditId++;
+      ids.push(id);
+      editPages.set(id, state.changedPages);
+      for (const dropped of redoStack) editPages.delete(dropped);
       redoStack = [];
     } else if (step === "undo") {
       const id = ids.pop();
@@ -141,9 +154,28 @@ export function invalidatePages(indices: readonly number[]) {
 export const zoom = signal(1);
 /** Zoom follows the width of the window (the default, on open and on resize). */
 export const fitMode = signal(true);
-/** Index of the page at the centre of the viewport. */
+/**
+ * Index of the current page: the page at the centre of the viewport, or the page picked from the
+ * thumbnails while the viewer scrolls to it and stays there (see Viewer, `picked`).
+ */
 export const currentPage = signal(0);
+
+/**
+ * Device pixels per CSS pixel. It changes with the browser's page zoom and when the window moves
+ * to a screen with another density (which fires no resize event): watched from the start, with
+ * or without a document open, so pages and thumbnails always render sharp.
+ */
 export const devicePixelRatio = signal(typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  const update = () => { devicePixelRatio.value = window.devicePixelRatio || 1; };
+  window.addEventListener("resize", update); // browsers without dppx resolution queries
+  // Matches only the current ratio, so "change" fires when it changes; then watch the new one.
+  const watch = () => {
+    window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+      .addEventListener("change", () => { update(); watch(); }, { once: true });
+  };
+  watch();
+}
 
 export const editMode = signal(false);
 export interface EditingLine {
@@ -152,6 +184,10 @@ export interface EditingLine {
 }
 /** The line whose inline editor is open. */
 export const editingLine = signal<EditingLine | null>(null);
+
+export type SheetKind = "pages" | "more";
+/** The bottom sheet open on phones (page thumbnails, or the "More" actions). */
+export const sheet = signal<SheetKind | null>(null);
 /**
  * The engine could not restore the document after a failed edit ("broken"): editing, undo and
  * redo stay off until another file is opened. Downloading still works.
@@ -176,7 +212,7 @@ export function registerEditor(handle: LineEditorHandle): () => void {
   };
 }
 
-/** Write what the open line editor holds, so a download, open or update includes it. */
+/** Write what the open line editor holds, so a download, share, open, close, update or leaving edit mode includes it. */
 export async function flushEditor() {
   await openEditor?.commit();
 }

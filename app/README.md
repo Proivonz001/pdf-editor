@@ -5,8 +5,9 @@ computer or a phone. It can be installed as an app, works offline, and the file 
 the device: there is no server, all the work happens in the browser.
 
 It lives in `app/` while the current editor at the repository root (`index.html` + `lib/`)
-keeps working, and replaces it once it does everything the old one did. It is in phase 1
-(foundations): engine, viewer, minimal interface, installable app and deploy.
+keeps working, and replaces it once it does everything the old one did. It is in phase 2:
+engine, viewer, the full "Carta + giallo" interface with desktop and phone layouts, installable
+app and deploy.
 
 "PDF Editor" is a **working name** until the product is named. It appears in
 `vite.config.ts` (manifest), `index.html` (title), `../wrangler.jsonc` (`name`, which is also
@@ -28,7 +29,7 @@ From this folder (`app/`):
 | `npm run dev` | Development server with hot reload at http://localhost:5173 (no service worker). |
 | `npm run build` | Production build into `dist/`: hashed JS and CSS, the 10 MB MuPDF engine, service worker, manifest, icons, `_headers`. |
 | `npm run preview` | Serve `dist/` at http://localhost:4173, service worker included: the way to test install and offline. |
-| `npm test` | Vitest in Node: the engine on the PDFs in `tests/fixtures/`, and the CSP check. |
+| `npm test` | Vitest in Node: the engine on the PDFs in `tests/fixtures/`, the interface logic with a fake engine (`ui.test.ts`), page sizes and thumbnail scales, and the CSP check. |
 | `npm run typecheck` | `tsc --noEmit` over `src/`, `tests/` and `vite.config.ts`. |
 | `npm run icons` | Redraw the icons in `public/icons/` (Python 3 with Pillow, `scripts/make_icons.py`). |
 

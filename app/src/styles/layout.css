@@ -1,0 +1,60 @@
+/* The app grid (see app.tsx). The root carries data-layout="phone" below 640 px and
+   data-layout="desktop" from 640 px, plus .has-doc while a document is open.
+
+   Phone:    top bar / main / tab bar (the tab bar only with a document)
+   Desktop:  top bar across, then tool rail | thumbnails | main | details
+             (the rail, thumbnails and details only with a document; a missing panel takes no
+             room because its column is sized "auto")
+
+   minmax(0, …) everywhere: a long unbreakable file name must shrink to an ellipsis, never
+   widen the app beyond the screen (on phones that made the browser zoom the page out). */
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "top"
+    "main"
+    "tabs";
+  height: 100vh;
+  height: 100dvh;
+  background: var(--ws);
+}
+
+.app[data-layout="desktop"].has-doc {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "top top top top"
+    "rail pages main details";
+}
+
+.topbar {
+  grid-area: top;
+}
+
+.rail {
+  grid-area: rail;
+}
+
+.pages-panel {
+  grid-area: pages;
+}
+
+.main {
+  grid-area: main;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.details-panel {
+  grid-area: details;
+}
+
+.tabbar {
+  grid-area: tabs;
+}

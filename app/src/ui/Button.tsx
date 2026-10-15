@@ -1,5 +1,6 @@
 // Toolbar button: a real <button> with an icon, an accessible name and a tooltip. The visible
-// label is optional (hidden on narrower screens by CSS); the accessible name is always set.
+// label is shown only when showLabel is set (the caller decides per width, see TopBar); the
+// accessible name is always set.
 import type { ComponentChildren } from "preact";
 
 export interface ToolButtonProps {
@@ -13,7 +14,7 @@ export interface ToolButtonProps {
   pressed?: boolean;
   /** Show the label next to the icon (wide screens). */
   showLabel?: boolean;
-  variant?: "primary" | "accent";
+  variant?: "primary" | "secondary" | "accent";
   /** Small dot on the icon (e.g. an update is waiting behind the menu). */
   badge?: boolean;
   class?: string;

@@ -1,0 +1,414 @@
+/* Things that float above the app: the drop-down menu (ui/Menu.tsx), dialogs and their fields
+   (ui/Dialog.tsx, ui/Dialogs.tsx), toasts (ui/Toasts.tsx) and the drop overlay
+   (ui/DropOverlay.tsx). They are the only pieces with shadows, besides the PDF pages.
+   Colours only from tokens.css. Hover tints only where there is real hover: on touch screens
+   they would stick after a tap. */
+
+/* --- Menu ---------------------------------------------------------------------------------- */
+
+.menu-wrap {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - var(--bar-h) - 16px); /* short windows: it scrolls, never clips */
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+  animation: menu-in 0.14s var(--ease);
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+.menu-item .icon {
+  color: var(--muted);
+}
+
+.menu-item:focus-visible {
+  background: var(--hover);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .menu-item:hover:not(:disabled) {
+    background: var(--hover);
+  }
+}
+
+.menu-item:active:not(:disabled) {
+  background: var(--pressed);
+}
+
+.menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.menu-label {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 0;
+}
+
+.menu-detail {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.menu-divider {
+  flex: none;
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--line);
+}
+
+@media (pointer: coarse) {
+  .menu-item {
+    min-height: 48px;
+    font-size: var(--fs-base);
+  }
+}
+
+/* --- Dialogs ------------------------------------------------------------------------------- */
+
+.dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-pop);
+}
+
+/* No pinch-zoom of the page from a dialog: once it closes, the viewer handles pinches itself and
+   the user could be left zoomed in, with the bars out of view. Panning still scrolls it. */
+.dialog,
+.dialog::backdrop {
+  touch-action: pan-x pan-y;
+}
+
+/* Only while open: a closed <dialog> must stay display: none. */
+.dialog[open],
+.dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dialog[open] {
+  animation: dialog-in 0.18s var(--ease);
+}
+
+.dialog::backdrop {
+  background: var(--backdrop);
+  animation: overlay-fade 0.18s var(--ease);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@keyframes overlay-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+.dialog-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.dialog-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-actions .btn {
+  min-width: 88px;
+}
+
+@media (min-width: 640px) {
+  .dialog {
+    padding: 24px;
+  }
+}
+
+/* --- Fields -------------------------------------------------------------------------------- */
+
+.field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-label {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.field {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--field-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16 px: iOS does not zoom into the field */
+  transition: border-color 0.12s;
+}
+
+@media (hover: hover) {
+  .field:hover:not(:focus) {
+    border-color: var(--muted);
+  }
+}
+
+/* The ring sits on the border (a 2 px edge), not 2 px outside it like on buttons. */
+.field:focus,
+.field:focus-visible {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.field[aria-invalid="true"] {
+  border-color: var(--danger-text);
+}
+
+.field[aria-invalid="true"]:focus {
+  outline-color: var(--danger-text);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--fs-sm);
+}
+
+@media (pointer: coarse) {
+  .field {
+    height: 44px;
+  }
+}
+
+/* --- Toasts -------------------------------------------------------------------------------- */
+
+/* Bottom centre. With a document: above the page indicator on desktop, above the tab bar on
+   phones. */
+.toast-stack {
+  position: fixed;
+  right: 0;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  left: 0;
+  z-index: 60;
+  width: min(480px, calc(100% - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+.app.has-doc .toast-stack {
+  bottom: calc(60px + env(safe-area-inset-bottom));
+}
+
+.app[data-layout="phone"] .toast-stack {
+  bottom: calc(16px + env(safe-area-inset-bottom));
+}
+
+.app[data-layout="phone"].has-doc .toast-stack {
+  bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 12px);
+}
+
+/* Two live regions (polite, then assertive), usually one of them empty: the space between them
+   only when both hold toasts, so the lowest toast always sits at the same height. */
+.toast-region {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast-region:not(:empty) + .toast-region:not(:empty) {
+  padding-top: 8px;
+}
+
+.toast {
+  --toast-bar: var(--toast-info);
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 4px 4px 18px;
+  border: 1px solid color-mix(in srgb, var(--toast-text) 8%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  /* The 4 px bar on the left follows the rounded corners. */
+  box-shadow: inset 4px 0 0 var(--toast-bar), var(--shadow-pop);
+  animation: toast-in 0.18s var(--ease);
+}
+
+.toast-warn {
+  --toast-bar: var(--toast-warn);
+}
+
+.toast-error {
+  --toast-bar: var(--toast-error);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+/* One line of text lines up with the middle of the close button (36 px, 44 on touch). */
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: calc((var(--btn) - 1.4em) / 2) 0;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.toast .toast-close.btn {
+  flex: none;
+  color: inherit;
+}
+
+@media (hover: hover) {
+  .toast .toast-close.btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--toast-text) 12%, transparent);
+  }
+}
+
+.toast .toast-close.btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--toast-text) 18%, transparent);
+}
+
+/* The page's focus blue is too dark on the toast in the light theme. */
+.toast :focus-visible {
+  outline-color: var(--toast-info);
+  outline-offset: -2px;
+}
+
+/* --- Drop overlay -------------------------------------------------------------------------- */
+
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--ws) 88%, transparent);
+  pointer-events: none;
+  animation: overlay-fade 0.12s var(--ease);
+}
+
+.drop-overlay::before {
+  content: "";
+  position: absolute;
+  inset: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+}
+
+.drop-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 100%;
+  padding: 24px 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  text-align: center;
+  animation: drop-in 0.18s var(--ease);
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.drop-text {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}

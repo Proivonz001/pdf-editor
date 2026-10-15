@@ -1,0 +1,527 @@
+/* Document viewer: the workspace and its pages, the edit banner, the page indicator, the busy
+   bar, and edit mode (text lines, the line editor and its context bar).
+   Colours only from tokens.css. PDF pages are white in both themes, so what is drawn on a page
+   (lines, editor, their focus rings) must read on white in dark mode too: there --focus is
+   tuned for dark surfaces, so on-page rings use --accent, which is the same colour in the light
+   theme and still reads on white in the dark one; the line marks use the --page-mark tokens,
+   which are the same in both themes. */
+
+/* --- Viewer -------------------------------------------------------------------------------- */
+
+.viewer {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.viewer-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--ws);
+}
+
+.scroller {
+  position: absolute;
+  inset: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* One finger scrolls natively; two-finger pinch is handled by the viewer (never page zoom). */
+  touch-action: pan-x pan-y;
+  scrollbar-gutter: stable;
+}
+
+/* The browser has zoomed the whole page (e.g. after a pinch on a sheet; see gestures.ts): let it
+   zoom the page back out and pan it from here, so the bars it pushed out of view come back. */
+.scroller.is-page-zoomed {
+  touch-action: manipulation;
+  overscroll-behavior: auto;
+}
+
+/* Desktop layout: the tool rail holds the left edge of the screen, and its safe area. What the
+   focus (or the line editor) scrolls into view stays above the page indicator: its 14 px offset,
+   30 px height and shadow. Keep in step with .page-indicator. */
+.app[data-layout="desktop"] .scroller {
+  left: 0;
+  scroll-padding-bottom: calc(52px + env(safe-area-inset-bottom));
+}
+
+.scroller:focus-visible {
+  outline-offset: -3px;
+}
+
+.pages {
+  position: relative;
+  box-sizing: content-box;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Room after the last page (with the layout's own 24 px), so its last lines can be scrolled up
+   above the page indicator too. */
+.app[data-layout="desktop"] .pages {
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+
+/* No overflow clipping here: the context bar of a line may stand out of its page. */
+.page {
+  position: absolute;
+  border-radius: 2px;
+  background: #fff; /* PDF pages are white in both themes */
+  box-shadow: var(--page-shadow);
+}
+
+.page-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.16s var(--ease);
+}
+
+.page.is-ready .page-canvas {
+  opacity: 1;
+}
+
+/* --- Edit banner ---------------------------------------------------------------------------
+   In edit mode, a pale highlighter bar above the pages: a small highlighter mark, the hint and
+   "Done". When editing has stopped for the file, the same bar in the danger colours. */
+
+.edit-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 max(12px, env(safe-area-inset-right)) 0 16px;
+  /* Tinted paper: the dark theme's tint is translucent, so it is laid over the bar colour. */
+  background: linear-gradient(var(--hint-bg), var(--hint-bg)) var(--surface);
+  border-bottom: 1px solid var(--hint-line);
+  color: var(--hint-text);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  animation: edit-banner-in 0.16s var(--ease);
+}
+
+.edit-banner.is-stopped {
+  padding-right: max(16px, env(safe-area-inset-right));
+  background: linear-gradient(var(--danger-soft), var(--danger-soft)) var(--surface);
+  border-bottom-color: color-mix(in srgb, var(--danger) 30%, transparent);
+  color: var(--danger-text);
+}
+
+.edit-banner.is-stopped .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* A short highlighter stroke, drawn like a text line under the pen. */
+.edit-banner-mark {
+  flex: none;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--highlighter);
+  box-shadow: inset 0 -2px 0 var(--hl-line);
+  transform: skewX(-14deg);
+}
+
+.edit-banner-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 7px 0;
+  overflow-wrap: anywhere;
+}
+
+/* Compact "Done": white on the tinted bar, with a border warmed by the banner's ink. */
+.edit-banner-done {
+  flex: none;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  gap: 5px;
+  border-color: color-mix(in srgb, var(--hint-text) 28%, transparent);
+  font-size: var(--fs-sm);
+}
+
+.edit-banner-done .icon {
+  width: 16px;
+  height: 16px;
+}
+
+@keyframes edit-banner-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* --- Page indicator ------------------------------------------------------------------------
+   Opaque: the desktop scroller's scroll-padding-bottom keeps focused lines clear of it, and it
+   is not rendered while a line editor is open (Viewer.tsx). */
+
+.page-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  z-index: 5;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Phones show the page in the top bar. */
+.app[data-layout="phone"] .page-indicator {
+  display: none;
+}
+
+/* --- Busy bar ------------------------------------------------------------------------------ */
+
+.busy-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  overflow: hidden;
+  z-index: 6;
+  background: var(--active-bg);
+}
+
+.busy-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30%;
+  background: var(--accent);
+  animation: busy 1s ease-in-out infinite;
+}
+
+@keyframes busy {
+  from {
+    left: -30%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+/* --- Edit mode: text lines -----------------------------------------------------------------
+   Each line is a button over its box, 2 px wider and 1 px taller on each side. At rest a faint
+   highlighter tint and a thin underline (the tint alone hardly shows on white; the underline
+   reads at 3:1); under the pointer or the keyboard a highlighter stroke. Both are inset shadows
+   standing for a bottom border, so the box does not move. Hover only where there is a real
+   pointer: on touch screens it would stick to the last line tapped. */
+
+.lines {
+  position: absolute;
+  inset: 0;
+}
+
+.line {
+  position: absolute;
+  box-sizing: content-box;
+  margin: -1px 0 0 -2px;
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--hl-soft);
+  box-shadow: inset 0 -1px 0 var(--page-mark);
+  cursor: text;
+  font: inherit;
+  transition: background-color 0.12s var(--ease), box-shadow 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+
+.line:focus-visible {
+  background: var(--hl);
+  box-shadow: inset 0 -2px 0 var(--hl-line);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .line:hover {
+    background: var(--hl);
+    box-shadow: inset 0 -2px 0 var(--hl-line);
+  }
+}
+
+/* A line the engine cannot rewrite: no tint, a dashed box (same size: the border replaces
+   1 px of padding). Specific enough to beat the hover and focus rules; the focus outline
+   stays, and the pointer darkens the dashes (a click explains why it is locked). */
+.line.is-locked,
+.line.is-locked:hover,
+.line.is-locked:focus-visible {
+  padding: 0 1px;
+  border: 1px dashed var(--page-mark-locked);
+  background: transparent;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .line.is-locked:hover {
+    border-color: var(--page-mark-locked-strong);
+  }
+}
+
+.main[aria-busy="true"] .line:not(.is-locked) {
+  cursor: progress;
+}
+
+/* --- Edit mode: the line editor ------------------------------------------------------------
+   On the white page: ink-blue outline and a 5 px highlighter ring (RING in LineLayer.tsx). */
+
+.line-editor {
+  position: absolute;
+  z-index: 3;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
+  background: #fff; /* on the page, white in both themes */
+  color-scheme: light;
+  line-height: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  box-shadow: 0 0 0 5px var(--hl);
+  caret-color: var(--accent);
+  field-sizing: content;
+}
+
+.line-editor:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+.line-editor.is-pending {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+/* --- Edit mode: the context bar ------------------------------------------------------------
+   Floats over the page, above the line being edited (below it when there is no room). The
+   slot spans the page and lets clicks through; the indent before the bar starts at the
+   editor's left edge and shrinks, so the bar never runs past the right edge of the page. With
+   the font chip, the bar is also at most as wide as the page (the chip gives way first). */
+
+.context-slot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  display: flex;
+  pointer-events: none;
+}
+
+.context-indent {
+  flex: 0 1 auto; /* basis: the editor's left edge, set inline */
+  min-width: 0;
+}
+
+.context-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+  animation: context-bar-in 0.14s var(--ease);
+}
+
+.context-bar.has-font {
+  max-width: 100%;
+}
+
+@keyframes context-bar-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+.context-slot.is-below .context-bar {
+  animation-name: context-bar-in-below;
+}
+
+@keyframes context-bar-in-below {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+
+.context-font {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 6px 0 7px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-font .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.context-font-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-sep {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: var(--line);
+}
+
+/* flex: none, because .btn's min-width would otherwise let a clamped bar squeeze the labels. */
+.context-btn {
+  flex: none;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  gap: 5px;
+  font-size: var(--fs-sm);
+}
+
+.context-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.context-writing {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  color: var(--muted);
+}
+
+/* Phones: one short line of font info at most, so Cancel and Apply always fit. */
+.app[data-layout="phone"] .context-font {
+  max-width: 120px;
+}
+
+/* --- Touch screens -------------------------------------------------------------------------
+   The compact buttons keep their look; an invisible ::after makes each one 44 px tall. */
+
+@media (pointer: coarse) {
+  .edit-banner {
+    min-height: 44px;
+  }
+
+  .edit-banner-done,
+  .context-btn,
+  .context-writing {
+    height: 36px;
+  }
+
+  .context-btn {
+    padding: 0 12px 0 10px;
+  }
+
+  .edit-banner-done::after,
+  .context-btn::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+
+  .context-bar {
+    height: 44px;
+  }
+}
+
+/* --- Phones -------------------------------------------------------------------------------- */
+
+.app[data-layout="phone"] .edit-banner {
+  gap: 8px;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(4px, env(safe-area-inset-right)); /* "Done" lines up with the top bar */
+}
+
+.app[data-layout="phone"] .edit-banner.is-stopped {
+  padding-right: max(12px, env(safe-area-inset-right));
+}
+
+/* The narrowest phones: the hint keeps to two lines. */
+@media (max-width: 359.98px) {
+  .edit-banner-mark {
+    display: none;
+  }
+
+  .app[data-layout="phone"] .edit-banner {
+    font-size: var(--fs-xs);
+  }
+}
+
+/* --- Forced colours (Windows contrast themes) ----------------------------------------------
+   The page stays a white canvas in every contrast theme (canvas pixels are not forced), so the
+   marks drawn on it keep their own colours, tuned for white, instead of system colours (which
+   are white in the dark contrast themes). The tint is too faint to count on there, so an
+   editable line gets a whole solid box (the border replaces 1 px of padding); a locked line
+   keeps its dashes. The editor and its context bar are controls like the rest of the UI: they
+   take the system colours again. */
+
+@media (forced-colors: active) {
+  .lines {
+    forced-color-adjust: none;
+  }
+
+  .line {
+    padding: 0 1px;
+    border: 1px solid var(--page-mark);
+  }
+
+  .line-editor,
+  .context-slot {
+    forced-color-adjust: auto;
+  }
+}
+
+/* ------------------------------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep a visible (static) busy state. */
+  .busy-bar::after {
+    left: 0;
+    width: 100%;
+    opacity: 0.6;
+  }
+}

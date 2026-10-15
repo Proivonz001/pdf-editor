@@ -1,6 +1,8 @@
-// A small drop-down menu (the "More" button on phones): menu button pattern with arrow-key
-// navigation, Escape to close (focus back on the button) and click-outside to close.
-import type { ComponentChildren } from "preact";
+// A small drop-down menu (the "More" button of the desktop top bar): menu button pattern with
+// arrow-key navigation (Home/End too; ArrowDown/ArrowUp on the button open it), Escape to
+// close (focus back on the button), Tab and click-outside to close. It opens under its button,
+// aligned to the button's right edge (styles/overlays.css).
+import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { ToolButton } from "./Button";
 
@@ -14,12 +16,16 @@ export interface MenuItem {
   lang?: string;
   /** Extra text at the end of the row (e.g. the zoom value). */
   detail?: string;
+  /** Draw a thin line above this item, to set it apart (e.g. Close document). */
+  divider?: boolean;
 }
 
 export function MenuButton(props: { label: string; icon: ComponentChildren; items: MenuItem[]; badge?: boolean }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const menu = useRef<HTMLDivElement>(null);
+  /** Opened with ArrowUp on the button: start from the last item. */
+  const fromEnd = useRef(false);
   const id = useId();
 
   const items = () => [...(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not([disabled])") ?? [])];
@@ -30,7 +36,9 @@ export function MenuButton(props: { label: string; icon: ComponentChildren; item
 
   useEffect(() => {
     if (!open) return;
-    items()[0]?.focus();
+    const list = items();
+    (fromEnd.current ? list[list.length - 1] : list[0])?.focus();
+    fromEnd.current = false;
     const onPointerDown = (e: PointerEvent) => {
       if (!wrap.current?.contains(e.target as Node)) close(false);
     };
@@ -61,8 +69,17 @@ export function MenuButton(props: { label: string; icon: ComponentChildren; item
     }
   };
 
+  // On the closed button, ArrowDown / ArrowUp open the menu (on its first / last item).
+  const onTriggerKeyDown = (e: KeyboardEvent) => {
+    if (open || (e.key !== "ArrowDown" && e.key !== "ArrowUp")) return;
+    if (!(e.target instanceof Element) || !e.target.closest(".menu-trigger")) return;
+    e.preventDefault();
+    fromEnd.current = e.key === "ArrowUp";
+    setOpen(true);
+  };
+
   return (
-    <div class="menu-wrap" ref={wrap}>
+    <div class="menu-wrap" ref={wrap} onKeyDown={onTriggerKeyDown}>
       <ToolButton
         class="menu-trigger"
         icon={props.icon}
@@ -76,23 +93,25 @@ export function MenuButton(props: { label: string; icon: ComponentChildren; item
       {open && (
         <div class="menu" role="menu" id={id} aria-label={props.label} ref={menu} onKeyDown={onKeyDown}>
           {props.items.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="menuitem"
-              class="menu-item"
-              tabIndex={-1}
-              disabled={item.disabled}
-              lang={item.lang}
-              onClick={() => {
-                close(true);
-                item.onSelect();
-              }}
-            >
-              {item.icon}
-              <span class="menu-label">{item.label}</span>
-              {item.detail && <span class="menu-detail">{item.detail}</span>}
-            </button>
+            <Fragment key={item.key}>
+              {item.divider && <div class="menu-divider" role="separator" />}
+              <button
+                type="button"
+                role="menuitem"
+                class="menu-item"
+                tabIndex={-1}
+                disabled={item.disabled}
+                lang={item.lang}
+                onClick={() => {
+                  close(true);
+                  item.onSelect();
+                }}
+              >
+                {item.icon}
+                <span class="menu-label">{item.label}</span>
+                {item.detail && <span class="menu-detail">{item.detail}</span>}
+              </button>
+            </Fragment>
           ))}
         </div>
       )}

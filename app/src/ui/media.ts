@@ -1,5 +1,6 @@
-// Device facts the UI adapts to: narrow screen, touch (coarse pointer), Mac shortcuts, and
-// whether the system share sheet accepts PDF files.
+// Device facts the UI adapts to: the phone layout, room for the top bar's zoom controls and for
+// the side panels, touch (coarse pointer), reduced motion, Mac shortcuts, and whether the system
+// share sheet accepts PDF files.
 import { signal } from "@preact/signals";
 
 function mediaSignal(query: string) {
@@ -9,8 +10,16 @@ function mediaSignal(query: string) {
   return s;
 }
 
-/** Phone-sized layout (< 640 px): icon buttons, secondary actions in a menu. */
+/** Phone layout (< 640 px): compact top bar, tab bar at the bottom, sheets instead of panels. */
 export const isNarrow = mediaSignal("(max-width: 639.98px)");
+/** Room for the thumbnails panel by default (>= 1024 px). */
+export const isRoomy = mediaSignal("(min-width: 1024px)");
+/** Room for the details panel (>= 1200 px). */
+export const isWide = mediaSignal("(min-width: 1200px)");
+/** Room in the desktop top bar for the zoom controls (>= 768 px); below, they are in the More menu. */
+export const hasZoomRoom = mediaSignal("(min-width: 768px)");
+/** The user asked for less motion: no sheet slide, no smooth scrolling. */
+export const prefersReducedMotion = mediaSignal("(prefers-reduced-motion: reduce)");
 /** Touch screen as the main pointer. */
 export const isCoarse = mediaSignal("(pointer: coarse)");
 

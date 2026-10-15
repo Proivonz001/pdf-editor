@@ -1,10 +1,11 @@
-// Modal dialog on the native <dialog> element (showModal makes the rest of the page inert),
-// with role="dialog" aria-modal, focus moved inside on open, Tab kept inside, Escape = cancel,
-// and focus given back to where it was on close.
+// Modal dialog on the native <dialog> element, with role="dialog" aria-modal. The modal mechanics
+// shared with the phone sheets come from ui/modal.ts: showModal() makes the rest of the page
+// inert, focus moves inside on open ([data-autofocus] first), Tab stays inside, and focus goes
+// back to where it was on close. Escape = cancel. Styled by styles/overlays.css (.dialog); its
+// content lays itself out with .dialog-text, .field-group and .dialog-actions.
 import type { ComponentChildren } from "preact";
-import { useLayoutEffect, useRef } from "preact/hooks";
-
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), a[href], select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+import { useRef } from "preact/hooks";
+import { trapTab, useModal } from "./modal";
 
 export interface DialogProps {
   labelledBy: string;
@@ -16,40 +17,9 @@ export interface DialogProps {
 
 export function Dialog({ labelledBy, describedBy, onCancel, children }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
-  const closing = useRef(false);
+  const closing = useModal(ref);
   const cancel = useRef(onCancel);
   cancel.current = onCancel;
-
-  useLayoutEffect(() => {
-    const el = ref.current!;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    try {
-      el.showModal();
-    } catch {
-      el.setAttribute("open", "");
-    }
-    const first = el.querySelector<HTMLElement>("[data-autofocus]") ?? el.querySelector<HTMLElement>(FOCUSABLE);
-    first?.focus();
-    return () => {
-      closing.current = true; // our own close(): its "close" event is not a cancel
-      if (el.open) el.close();
-      if (previous?.isConnected) previous.focus();
-    };
-  }, []);
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key !== "Tab") return;
-    const items = [...(ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])];
-    if (!items.length) return;
-    const first = items[0], last = items[items.length - 1];
-    if (e.shiftKey && document.activeElement === first) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
 
   return (
     <dialog
@@ -59,13 +29,13 @@ export function Dialog({ labelledBy, describedBy, onCancel, children }: DialogPr
       aria-modal="true"
       aria-labelledby={labelledBy}
       aria-describedby={describedBy}
-      onKeyDown={onKeyDown}
+      onKeyDown={(e) => trapTab(e, ref.current)}
       onCancel={(e) => {
         e.preventDefault(); // the state decides when it closes
         cancel.current();
       }}
       onClose={() => {
-        if (!closing.current) cancel.current();
+        if (!closing.current) cancel.current(); // our own close() on unmount is not a cancel
       }}
     >
       {children}

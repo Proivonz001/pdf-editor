@@ -1,8 +1,8 @@
-// What the buttons, shortcuts and the line editor do: open, edit, undo/redo, download, share,
-// update. Engine changes run one at a time (a promise chain), so an Undo clicked while an edit
-// is being written applies after it, never in between. Download, share, open and update first
-// write what is still typed in the line editor (flushEditor), so it is neither left out of the
-// file nor lost without a warning.
+// What the buttons, shortcuts and the line editor do: open, close, edit mode, edit, undo/redo,
+// download, share, update. Engine changes run one at a time (a promise chain), so an Undo clicked
+// while an edit is being written applies after it, never in between. Download, share, open,
+// close, update and leaving edit mode first write what is still typed in the line editor
+// (flushEditor), so it is neither left out of the file nor lost without a warning.
 import { batch } from "@preact/signals";
 import { EngineError } from "../engine/client";
 import type { LineInfo } from "../engine/protocol";
@@ -10,10 +10,11 @@ import { t } from "../i18n";
 import { applyUpdate } from "../platform/pwa";
 import {
   busy, confirmDialog, currentPage, doc, editingLine, editingStopped, editMode, engine, engineStatus, fitMode,
-  flushEditor, hasUnsavedWork, history, markSaved, opening, recordHistory, resetHistory, saveKey, showDialog,
+  flushEditor, hasUnsavedWork, history, markSaved, opening, recordHistory, resetHistory, saveKey, sheet, showDialog,
   showToast, type BusyKind,
 } from "../state";
 import { createPages, type PageModel } from "../viewer/model";
+import { rescueFocus, viewerScroller } from "./focus";
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -109,6 +110,7 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
   batch(() => {
     editingLine.value = null;
     editingStopped.value = false;
+    sheet.value = null;
     doc.value = null;
     opening.value = file.name;
   });
@@ -148,8 +150,67 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
   }
 }
 
+let homeFocus = false;
+
+/**
+ * For the home page, once when it mounts: true right after closeDocument(), when the focus should
+ * move to it (the Close or Back button that had it is gone). Not on the first load.
+ */
+export function takeHomeFocus(): boolean {
+  const take = homeFocus;
+  homeFocus = false;
+  return take;
+}
+
+/**
+ * Close the document and go back to the home screen. Asks first when there are edits not
+ * downloaded. An open still being read is abandoned too.
+ */
+export async function closeDocument() {
+  await flushEditor();
+  if (hasUnsavedWork()) {
+    const ok = await confirmDialog({
+      title: t("unsaved.title"),
+      body: t("unsaved.closeBody"),
+      confirmLabel: t("unsaved.closeConfirm"),
+    });
+    if (!ok) return;
+  }
+  const hadDoc = doc.peek() !== null;
+  ++openSeq; // an open still in progress lands nowhere
+  homeFocus = true; // the control that closed it is about to go: the home page takes the focus
+  batch(() => {
+    editingLine.value = null;
+    editingStopped.value = false;
+    editMode.value = false;
+    sheet.value = null;
+    doc.value = null;
+    opening.value = null;
+  });
+  resetHistory();
+  // Free the engine's copy (and its undo checkpoints). Nothing to report if it fails: the next
+  // open replaces the document anyway.
+  if (hadDoc) engine().close().catch((e: unknown) => console.warn("Closing the document failed", e));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Edit, undo, redo
+
+/**
+ * Turn edit mode on or off. Turning it off first writes what the line editor holds (a tap on a
+ * tab does not always take the focus away from the field, so blur cannot be relied on).
+ */
+export async function setEditMode(on: boolean) {
+  const before = document.activeElement;
+  if (!on) await flushEditor();
+  batch(() => {
+    editingLine.value = null;
+    editMode.value = on && doc.peek() !== null && !editingStopped.peek();
+  });
+  // The control that did it may go with the change (Done in the edit banner, Edit text in the
+  // details panel, a line box when Esc leaves edit mode): keep the focus on the document.
+  if (before && before !== document.body) rescueFocus(viewerScroller);
+}
 
 /**
  * Replace a whole line (rule 1: whole lines only). `rev` is the page revision the line was

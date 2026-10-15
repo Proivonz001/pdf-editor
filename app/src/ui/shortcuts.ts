@@ -1,9 +1,10 @@
 // Keyboard shortcuts: Ctrl/Cmd + Z (undo), Ctrl+Shift+Z / Ctrl+Y (redo), Ctrl + + / − / 0
-// (zoom in, out, fit width), Ctrl+O (open), Ctrl+S (download). Undo/redo are left to the field
-// while typing in one; nothing is handled while a dialog is open.
-import { dialog, doc } from "../state";
+// (zoom in, out, fit width), Ctrl+O (open), Ctrl+S (download), and Escape to leave edit mode
+// (the line editor handles its own Escape first). Undo/redo are left to the field while typing
+// in one; nothing is handled while a dialog or a sheet is open.
+import { dialog, doc, editingLine, editMode, sheet } from "../state";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
-import { download, redo, undo } from "./actions";
+import { download, redo, setEditMode, undo } from "./actions";
 import { openFilePicker } from "./filePicker";
 
 function isTypingTarget(target: EventTarget | null) {
@@ -13,8 +14,15 @@ function isTypingTarget(target: EventTarget | null) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (e.key === "Escape" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    if (editMode.peek() && !editingLine.peek() && !dialog.peek() && !sheet.peek() && !isTypingTarget(e.target)) {
+      e.preventDefault();
+      void setEditMode(false);
+    }
+    return;
+  }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  if (dialog.peek()) return;
+  if (dialog.peek() || sheet.peek()) return;
   const key = e.key.toLowerCase();
   const hasDoc = doc.peek() !== null;
 
