@@ -1,0 +1,298 @@
+{
+ "runtime": "node v22.14.0",
+ "file": "large-220p.pdf",
+ "runs": [
+  {
+   "cycle": 1,
+   "openMs": 5.1,
+   "pages": 220,
+   "renderPage1Ms": 31.2,
+   "editMs": {
+    "n": 50,
+    "median": 20,
+    "p95": 36.7,
+    "max": 66.3,
+    "total": 1085
+   },
+   "editMsFirst5": [
+    66.3,
+    41.6,
+    36.7,
+    24.1,
+    22.6
+   ],
+   "editStepMedianMs": {
+    "stext": 2.9,
+    "glyphs": 2.5,
+    "fontAnalysis": 5.2,
+    "plan": 2.8,
+    "redact": 6,
+    "taggingPartOfRedact": 2.3,
+    "write": 0.1
+   },
+   "taggedEdits": 50,
+   "saveMs": 102.9,
+   "sizeIn": 2912228,
+   "sizeOut": 2771529,
+   "verifiedEdits": "50/50",
+   "verifyMs": 363,
+   "thumbnailsAllPagesMs": 431,
+   "edits": [
+    "p1 prezzo->importo O:importo [tagged]",
+    "p5 consegna->spedizione O:spedizione [tagged]",
+    "p10 Capitolo->Sezione O:Sezione [tagged]",
+    "p14 prezzo->importo O:importo [tagged]",
+    "p19 consegna->spedizione O:spedizione [tagged]",
+    "p23 Capitolo->Sezione O:Sezione [tagged]",
+    "p28 prezzo->importo O:importo [tagged]",
+    "p32 consegna->spedizione O:spedizione [tagged]",
+    "p37 Capitolo->Sezione O:Sezione [tagged]",
+    "p41 prezzo->importo O:importo [tagged]",
+    "p46 consegna->spedizione O:spedizione [tagged]",
+    "p50 Capitolo->Sezione O:Sezione [tagged]",
+    "p55 prezzo->importo O:importo [tagged]",
+    "p59 consegna->spedizione O:spedizione [tagged]",
+    "p64 Capitolo->Sezione O:Sezione [tagged]",
+    "p68 prezzo->importo O:importo [tagged]",
+    "p73 consegna->spedizione O:spedizione [tagged]",
+    "p77 Capitolo->Sezione O:Sezione [tagged]",
+    "p81 prezzo->importo O:importo [tagged]",
+    "p86 consegna->spedizione O:spedizione [tagged]",
+    "p90 Capitolo->Sezione O:Sezione [tagged]",
+    "p95 prezzo->importo O:importo [tagged]",
+    "p99 consegna->spedizione O:spedizione [tagged]",
+    "p104 Capitolo->Sezione O:Sezione [tagged]",
+    "p108 prezzo->importo O:importo [tagged]",
+    "p113 consegna->spedizione O:spedizione [tagged]",
+    "p117 Capitolo->Sezione O:Sezione [tagged]",
+    "p122 prezzo->importo O:importo [tagged]",
+    "p126 consegna->spedizione O:spedizione [tagged]",
+    "p131 Capitolo->Sezione O:Sezione [tagged]",
+    "p135 prezzo->importo O:importo [tagged]",
+    "p140 consegna->spedizione O:spedizione [tagged]",
+    "p144 Capitolo->Sezione O:Sezione [tagged]",
+    "p148 prezzo->importo O:importo [tagged]",
+    "p153 consegna->spedizione O:spedizione [tagged]",
+    "p157 Capitolo->Sezione O:Sezione [tagged]",
+    "p162 prezzo->importo O:importo [tagged]",
+    "p166 consegna->spedizione O:spedizione [tagged]",
+    "p171 Capitolo->Sezione O:Sezione [tagged]",
+    "p175 prezzo->importo O:importo [tagged]",
+    "p180 consegna->spedizione O:spedizione [tagged]",
+    "p184 Capitolo->Sezione O:Sezione [tagged]",
+    "p189 prezzo->importo O:importo [tagged]",
+    "p193 consegna->spedizione O:spedizione [tagged]",
+    "p198 Capitolo->Sezione O:Sezione [tagged]",
+    "p202 prezzo->importo O:importo [tagged]",
+    "p207 consegna->spedizione O:spedizione [tagged]",
+    "p211 Capitolo->Sezione O:Sezione [tagged]",
+    "p216 prezzo->importo O:importo [tagged]",
+    "p220 consegna->spedizione O:spedizione [tagged]"
+   ]
+  },
+  {
+   "cycle": 2,
+   "openMs": 1.4,
+   "pages": 220,
+   "renderPage1Ms": 6.6,
+   "editMs": {
+    "n": 50,
+    "median": 20.2,
+    "p95": 29.9,
+    "max": 69.4,
+    "total": 1080
+   },
+   "editMsFirst5": [
+    34.3,
+    29.9,
+    19.1,
+    18.8,
+    22.9
+   ],
+   "editStepMedianMs": {
+    "stext": 3.3,
+    "glyphs": 2.4,
+    "fontAnalysis": 5.1,
+    "plan": 2.8,
+    "redact": 5.7,
+    "taggingPartOfRedact": 2.3,
+    "write": 0.1
+   },
+   "taggedEdits": 50,
+   "saveMs": 94.9,
+   "sizeIn": 2912228,
+   "sizeOut": 2771529,
+   "verifiedEdits": "50/50",
+   "verifyMs": 432,
+   "thumbnailsAllPagesMs": 431,
+   "edits": [
+    "p1 prezzo->importo O:importo [tagged]",
+    "p5 consegna->spedizione O:spedizione [tagged]",
+    "p10 Capitolo->Sezione O:Sezione [tagged]",
+    "p14 prezzo->importo O:importo [tagged]",
+    "p19 consegna->spedizione O:spedizione [tagged]",
+    "p23 Capitolo->Sezione O:Sezione [tagged]",
+    "p28 prezzo->importo O:importo [tagged]",
+    "p32 consegna->spedizione O:spedizione [tagged]",
+    "p37 Capitolo->Sezione O:Sezione [tagged]",
+    "p41 prezzo->importo O:importo [tagged]",
+    "p46 consegna->spedizione O:spedizione [tagged]",
+    "p50 Capitolo->Sezione O:Sezione [tagged]",
+    "p55 prezzo->importo O:importo [tagged]",
+    "p59 consegna->spedizione O:spedizione [tagged]",
+    "p64 Capitolo->Sezione O:Sezione [tagged]",
+    "p68 prezzo->importo O:importo [tagged]",
+    "p73 consegna->spedizione O:spedizione [tagged]",
+    "p77 Capitolo->Sezione O:Sezione [tagged]",
+    "p81 prezzo->importo O:importo [tagged]",
+    "p86 consegna->spedizione O:spedizione [tagged]",
+    "p90 Capitolo->Sezione O:Sezione [tagged]",
+    "p95 prezzo->importo O:importo [tagged]",
+    "p99 consegna->spedizione O:spedizione [tagged]",
+    "p104 Capitolo->Sezione O:Sezione [tagged]",
+    "p108 prezzo->importo O:importo [tagged]",
+    "p113 consegna->spedizione O:spedizione [tagged]",
+    "p117 Capitolo->Sezione O:Sezione [tagged]",
+    "p122 prezzo->importo O:importo [tagged]",
+    "p126 consegna->spedizione O:spedizione [tagged]",
+    "p131 Capitolo->Sezione O:Sezione [tagged]",
+    "p135 prezzo->importo O:importo [tagged]",
+    "p140 consegna->spedizione O:spedizione [tagged]",
+    "p144 Capitolo->Sezione O:Sezione [tagged]",
+    "p148 prezzo->importo O:importo [tagged]",
+    "p153 consegna->spedizione O:spedizione [tagged]",
+    "p157 Capitolo->Sezione O:Sezione [tagged]",
+    "p162 prezzo->importo O:importo [tagged]",
+    "p166 consegna->spedizione O:spedizione [tagged]",
+    "p171 Capitolo->Sezione O:Sezione [tagged]",
+    "p175 prezzo->importo O:importo [tagged]",
+    "p180 consegna->spedizione O:spedizione [tagged]",
+    "p184 Capitolo->Sezione O:Sezione [tagged]",
+    "p189 prezzo->importo O:importo [tagged]",
+    "p193 consegna->spedizione O:spedizione [tagged]",
+    "p198 Capitolo->Sezione O:Sezione [tagged]",
+    "p202 prezzo->importo O:importo [tagged]",
+    "p207 consegna->spedizione O:spedizione [tagged]",
+    "p211 Capitolo->Sezione O:Sezione [tagged]",
+    "p216 prezzo->importo O:importo [tagged]",
+    "p220 consegna->spedizione O:spedizione [tagged]"
+   ]
+  }
+ ],
+ "heap": [
+  {
+   "step": "start",
+   "wasmHeapMB": 21.9,
+   "rssMB": 70.8,
+   "jsHeapMB": 5.8
+  },
+  {
+   "step": "cycle 1: opened, page 1 rendered",
+   "wasmHeapMB": 21.9,
+   "rssMB": 95.7,
+   "jsHeapMB": 6.2
+  },
+  {
+   "step": "cycle 1: 10 edits",
+   "wasmHeapMB": 21.9,
+   "rssMB": 102.6,
+   "jsHeapMB": 15.1
+  },
+  {
+   "step": "cycle 1: 20 edits",
+   "wasmHeapMB": 21.9,
+   "rssMB": 121.6,
+   "jsHeapMB": 30.5
+  },
+  {
+   "step": "cycle 1: 30 edits",
+   "wasmHeapMB": 21.9,
+   "rssMB": 126.6,
+   "jsHeapMB": 32.6
+  },
+  {
+   "step": "cycle 1: 40 edits",
+   "wasmHeapMB": 21.9,
+   "rssMB": 129,
+   "jsHeapMB": 33.8
+  },
+  {
+   "step": "cycle 1: 50 edits",
+   "wasmHeapMB": 21.9,
+   "rssMB": 132.3,
+   "jsHeapMB": 35.1
+  },
+  {
+   "step": "cycle 1: saved",
+   "wasmHeapMB": 26.4,
+   "rssMB": 145.8,
+   "jsHeapMB": 35.2
+  },
+  {
+   "step": "cycle 1: document destroyed",
+   "wasmHeapMB": 26.4,
+   "rssMB": 146.5,
+   "jsHeapMB": 35.2
+  },
+  {
+   "step": "cycle 1: verified, thumbnails rendered",
+   "wasmHeapMB": 26.4,
+   "rssMB": 202,
+   "jsHeapMB": 85.5
+  },
+  {
+   "step": "cycle 2: opened, page 1 rendered",
+   "wasmHeapMB": 26.4,
+   "rssMB": 206.9,
+   "jsHeapMB": 85.5
+  },
+  {
+   "step": "cycle 2: 10 edits",
+   "wasmHeapMB": 26.4,
+   "rssMB": 213,
+   "jsHeapMB": 92.8
+  },
+  {
+   "step": "cycle 2: 20 edits",
+   "wasmHeapMB": 26.4,
+   "rssMB": 211.5,
+   "jsHeapMB": 41.6
+  },
+  {
+   "step": "cycle 2: 30 edits",
+   "wasmHeapMB": 26.4,
+   "rssMB": 212.9,
+   "jsHeapMB": 56.7
+  },
+  {
+   "step": "cycle 2: 40 edits",
+   "wasmHeapMB": 26.4,
+   "rssMB": 215.7,
+   "jsHeapMB": 74.1
+  },
+  {
+   "step": "cycle 2: 50 edits",
+   "wasmHeapMB": 26.4,
+   "rssMB": 215.5,
+   "jsHeapMB": 73.5
+  },
+  {
+   "step": "cycle 2: saved",
+   "wasmHeapMB": 26.4,
+   "rssMB": 220.5,
+   "jsHeapMB": 73.6
+  },
+  {
+   "step": "cycle 2: document destroyed",
+   "wasmHeapMB": 26.4,
+   "rssMB": 222.6,
+   "jsHeapMB": 73.6
+  },
+  {
+   "step": "cycle 2: verified, thumbnails rendered",
+   "wasmHeapMB": 26.4,
+   "rssMB": 268,
+   "jsHeapMB": 67.8
+  }
+ ]
+}

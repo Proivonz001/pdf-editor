@@ -1,0 +1,2 @@
+# Fixtures are byte-exact: no line-ending conversion (reportlab output has no NUL bytes, git would call it text)
+*.pdf binary

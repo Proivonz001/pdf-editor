@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MuPDF large-document benchmark</title>
+<style>
+  :root { --bg: #fbfaf7; --fg: #1d1c1a; --muted: #6b675f; --line: #e2ded5; --mark: #ffe94d; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1a18; --fg: #ece9e2; --muted: #a29d93; --line: #3a3833; } }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--muted); margin: 0 0 16px; max-width: 70ch; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); background: var(--mark); color: #1d1c1a; border-radius: 4px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  table { border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  pre { white-space: pre-wrap; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Large-document benchmark</h1>
+<p>Runs <code>src/bench.mjs</code> in the same module Web Worker as the test page: open
+<code>fixtures/large-220p.pdf</code> (build it with <code>fixtures/src/make_large.py</code>), 50 replacements spread
+over the pages, save, re-open and check, render every page as a thumbnail, twice.</p>
+<button id="run" disabled>Run benchmark</button> <span id="status">loading MuPDF…</span>
+<table id="heap"><thead><tr><th>step</th><th>wasm heap MB</th></tr></thead><tbody></tbody></table>
+<pre id="runs"></pre>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const worker = new Worker(new URL("./src/worker.mjs", import.meta.url), { type: "module" });
+let t0 = 0;
+worker.onmessage = ({ data: m }) => {
+  if (m.type === "ready") { $("status").textContent = `MuPDF ready (${m.initMs.toFixed(0)} ms init)`; $("run").disabled = false; }
+  else if (m.type === "bench-step") $("heap").tBodies[0].insertAdjacentHTML("beforeend", `<tr><td>${m.step.step}</td><td class="num">${m.step.wasmHeapMB}</td></tr>`);
+  else if (m.type === "bench-done") {
+    window.__bench = { initMs: m.initMs, runs: m.runs, heap: m.heap, totalMs: performance.now() - t0 };
+    $("runs").textContent = JSON.stringify(m.runs.map(({ edits, ...r }) => r), null, 1) + "\n\n" + m.runs[0].edits.join("\n");
+    $("status").textContent = `done in ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+    $("run").disabled = false;
+  } else if (m.type === "error") { $("status").textContent = "error: " + m.message.split("\n")[0]; $("runs").textContent = m.message; $("run").disabled = false; }
+};
+$("run").onclick = () => {
+  $("run").disabled = true; $("heap").tBodies[0].textContent = ""; $("runs").textContent = "";
+  $("status").textContent = "running…"; t0 = performance.now();
+  worker.postMessage({ type: "bench", edits: 50 });
+};
+</script>
+</body>
+</html>
