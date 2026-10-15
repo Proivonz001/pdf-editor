@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dev-dist/
+*.tsbuildinfo
+.wrangler/
+__pycache__/

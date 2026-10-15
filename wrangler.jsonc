@@ -1,0 +1,15 @@
+// Cloudflare Workers, static assets only: there is no Worker script, Cloudflare serves the
+// built app (app/dist) directly. Build first (cd app && npm run build), then `npx wrangler
+// deploy` from this folder. Response headers (CSP, caching) come from app/public/_headers,
+// which the build copies into app/dist. Setup steps for the dashboard: app/README.md.
+{
+  // Working name until the product is named. Changing it later creates a new Worker
+  // (and a new *.workers.dev address); the old one has to be deleted by hand.
+  "name": "pdf-editor",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./app/dist",
+    // The app is a single page: any unknown path gets index.html instead of a 404.
+    "not_found_handling": "single-page-application"
+  }
+}

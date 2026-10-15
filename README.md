@@ -79,6 +79,13 @@ the local `lib/` folder.
 
 Built with Claude Code.
 
+## New version in progress (app/)
+
+A rewrite is under way in the `app/` folder: MuPDF as the only engine, editing the real text
+in the PDF's own fonts, usable on phones, installable and offline. It does not change the
+editor described above, which stays the one to use until the new version can replace it.
+How to run, test and deploy it: [app/README.md](app/README.md).
+
 ## License
 
 GNU AGPL-3.0 (full text in `LICENSE`), because the editor is built on MuPDF, which is

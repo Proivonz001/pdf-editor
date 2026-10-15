@@ -1,0 +1,4 @@
+# Binary test files and assets: never convert line endings
+*.pdf binary
+*.wasm binary
+*.png binary

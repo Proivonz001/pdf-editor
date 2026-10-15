@@ -1,0 +1,29 @@
+# Response headers for Cloudflare (Workers static assets; Pages reads the same file).
+# It is not served as a file. Other static hosts ignore it: there the <meta> CSP in
+# index.html still applies (everything below except frame-ancestors, which needs a header).
+#
+# The Content-Security-Policy must equal CSP in vite.config.ts + "; frame-ancestors 'none'":
+# tests/csp.test.ts fails if the two drift apart. Max 100 rules, 2000 characters per line.
+
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' data: blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+
+# Vite's output: every file name carries a content hash, so a URL never changes content.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Entry points: always revalidated, so a new version is found as soon as it is deployed.
+# "/" is listed too because the host serves index.html there.
+/
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
+/sw.js
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Cache-Control: no-cache
+/registerSW.js
+  Cache-Control: no-cache

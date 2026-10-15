@@ -1,0 +1,58 @@
+# Checks the new app (app/) on every pull request and on main: types, tests, production build.
+# Deployment is not done here: Cloudflare builds and deploys from the repository by itself
+# (see app/README.md).
+name: App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/app.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/app.yml"
+
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request cancels the run still going.
+concurrency:
+  group: app-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # npm 10 (bundled with Node 22) fails on this lockfile with "Cannot read properties of
+      # null (reading 'edgesOut')", an npm bug with vitest's optional peer dependencies.
+      - name: Use npm 11
+        run: npm install --global npm@11.6.2
+
+      - name: Install
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
