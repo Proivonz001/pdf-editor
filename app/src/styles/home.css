@@ -1,0 +1,583 @@
+/* Home page (no document open) and the "opening…" card: ui/EmptyState.tsx.
+   Colours only from tokens.css.
+   The sample page in the illustration is white in both themes, like a real PDF page, so its
+   "ink" is --on-highlighter: the one dark ink that stays dark in the dark theme too.
+
+   Breakpoints (viewport): below 520 the main button is full width; 640 desktop padding; 760
+   features and steps in a row; 960 hero in two columns (text left, illustration right). */
+
+/* --- Page ---------------------------------------------------------------------------------- */
+
+.home {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden; /* the tilted sheet behind the illustration must never widen the page */
+  overflow-y: auto;
+  padding: 28px max(16px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom))
+    max(16px, env(safe-area-inset-left));
+}
+
+.home-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+}
+
+@media (min-width: 640px) {
+  .home {
+    padding: 48px max(clamp(32px, 4vw, 48px), env(safe-area-inset-right))
+      max(32px, env(safe-area-inset-bottom)) max(clamp(32px, 4vw, 48px), env(safe-area-inset-left));
+  }
+
+  .home-inner {
+    gap: 64px;
+  }
+}
+
+/* --- Hero ---------------------------------------------------------------------------------- */
+
+.home-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 40px;
+}
+
+.home-hero-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.home-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-title {
+  margin: 0;
+  font-size: var(--fs-display);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+/* The heading takes the focus only so that screen readers announce the home page after a
+   document is closed; it is not a control, so it gets no focus ring. */
+.home-title:focus {
+  outline: none;
+}
+
+/* A highlighter stroke over the lower part of the words, on every line they wrap onto. */
+.hl-mark {
+  padding: 0 0.08em;
+  margin: 0 -0.04em;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, transparent 55%, var(--highlighter) 55%);
+  color: inherit;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  white-space: nowrap; /* "real text" stays together on one line */
+}
+
+@media (prefers-color-scheme: dark) {
+  /* Light text would lose its lower half to a full-yellow stroke, and a weaker stroke turns
+     olive on the dark background: here the whole words sit on a highlighter block, in the dark
+     ink that reads on yellow. An inline-block is as tall as the line (1.1em), not as the font's
+     taller content box, so the block never covers the line above when the title wraps. */
+  .hl-mark {
+    display: inline-block;
+    padding: 0 0.12em;
+    margin: 0;
+    border-radius: 0.1em;
+    background: var(--highlighter);
+    color: var(--on-highlighter);
+  }
+}
+
+.home-subtitle {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-lg);
+  line-height: 1.5;
+}
+
+.home-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.home-cta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 18px;
+}
+
+.home-drop-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.home-privacy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.home-privacy .icon {
+  color: var(--active-fg);
+}
+
+.home-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 52ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.home-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  max-width: 52ch;
+  padding: 12px 12px 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger-text) 28%, transparent);
+  border-radius: var(--radius-lg);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: var(--fs-md);
+}
+
+.home-error p {
+  flex: 1 1 220px;
+  margin: 0;
+}
+
+/* Phones: the main button takes the whole width (an easy target for a thumb). */
+@media (max-width: 519.98px) {
+  .home-actions {
+    align-items: stretch;
+  }
+
+  .home-open {
+    flex: 1 1 100%;
+  }
+}
+
+@media (min-width: 960px) {
+  .home-hero {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: 48px;
+  }
+}
+
+/* --- Illustration: a page with a line being edited ------------------------------------------ */
+
+/* The figure is the stacking context of the drawing: the tilted sheet (z-index -1) paints
+   inside it, under the page, and never under the home background. */
+.home-figure {
+  isolation: isolate;
+  display: flex;
+  justify-content: flex-start; /* stacked: in line with the text above */
+  padding: 10px 0 14px; /* room for the tilted sheet and the shadows */
+}
+
+/* No z-index here: with one, the tilted sheet and its shadow would paint over this page. */
+.home-sample {
+  position: relative;
+  width: min(100%, 360px);
+  padding: 24px 9%;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  border-radius: 2px;
+  background: #fff; /* a PDF page: white in both themes */
+  box-shadow: var(--page-shadow);
+  color: var(--on-highlighter);
+  font-family: var(--font-sans);
+  user-select: none;
+}
+
+/* A second sheet under the first, slightly turned: paper on a desk. */
+.home-sample::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+  transform: rotate(2.5deg);
+}
+
+.sample-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.sample-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sample-bar {
+  display: block;
+  height: 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--on-highlighter) 13%, transparent);
+}
+
+.sample-bar.is-title {
+  height: 10px;
+  background: color-mix(in srgb, var(--on-highlighter) 52%, transparent);
+}
+
+.sample-edit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* Mock of the floating context bar (the real one is in viewer/LineLayer.tsx). */
+.sample-ctx {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  font-family: var(--font-ui);
+}
+
+.sample-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px 0 6px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sample-pill.is-apply {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.sample-pill .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.sample-line {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 0 -5px;
+  padding: 3px 5px 4px;
+  border-radius: 2px;
+  background: var(--hl);
+  box-shadow: inset 0 -2px 0 var(--hl-line);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.sample-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sample-caret {
+  flex: none;
+  width: 2px;
+  height: 1.2em;
+  margin-left: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: sample-caret 1.1s steps(1, end) infinite;
+}
+
+@keyframes sample-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sample-caret {
+    animation: none;
+  }
+}
+
+.sample-table {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sample-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sample-row.is-total {
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--on-highlighter) 16%, transparent);
+}
+
+/* Stacked hero (below 960 px): a shorter crop of the page, so the features come sooner. */
+@media (max-width: 959.98px) {
+  .sample-address,
+  .sample-table,
+  .sample-body .sample-bar:nth-child(n + 4) {
+    display: none;
+  }
+}
+
+/* Side by side: the whole page, in about 3:4, centred in its column. */
+@media (min-width: 960px) {
+  .home-figure {
+    justify-content: center;
+    padding: 10px 12px 14px;
+  }
+
+  .home-sample {
+    aspect-ratio: 3 / 4;
+    padding: 34px 10%;
+  }
+
+  .sample-table {
+    margin-top: auto; /* the totals sit at the foot of the page */
+  }
+}
+
+/* --- Features ------------------------------------------------------------------------------ */
+
+.home-features {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-feature {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.home-feature-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  background: var(--active-bg);
+  color: var(--active-fg);
+}
+
+.home-feature-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.home-feature-title {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.home-feature-body {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* --- How it works -------------------------------------------------------------------------- */
+
+.home-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-section-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.home-steps-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.home-step {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 20px;
+}
+
+.home-step + .home-step {
+  border-top: 1px solid var(--line);
+}
+
+.home-step-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--highlighter);
+  color: var(--on-highlighter);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.home-step-text {
+  min-width: 0;
+  font-size: var(--fs-base);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+@media (min-width: 760px) {
+  .home-features {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .home-feature {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 20px;
+  }
+
+  .home-steps-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .home-step {
+    padding: 20px;
+  }
+
+  .home-step + .home-step {
+    border-top: 0;
+    border-inline-start: 1px solid var(--line);
+  }
+}
+
+/* --- Footer -------------------------------------------------------------------------------- */
+
+.home-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* Quiet like the rest of the footer; the underline says it is a link. */
+.home-footer a {
+  color: inherit;
+}
+
+@media (hover: hover) {
+  .home-footer a:hover {
+    color: var(--text);
+  }
+}
+
+@media (pointer: coarse) {
+  .home-footer a {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+}
+
+/* --- Opening a file ------------------------------------------------------------------------ */
+
+.opening {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left));
+}
+
+.opening-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 480px;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.opening-card .spinner {
+  width: 20px;
+  height: 20px;
+}
+
+.opening-text {
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-base);
+  overflow-wrap: anywhere;
+}

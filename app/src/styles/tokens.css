@@ -1,0 +1,173 @@
+/* "Carta + giallo": the design tokens. Every colour in the app comes from here.
+   Paper-white surfaces on a cool grey workspace, ink blue for actions and selection, and a
+   highlighter yellow for the brand and for the text lines in edit mode.
+   Light by default, dark from the system setting. PDF pages stay white in both themes. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --ws: #eceef2; /* workspace behind the pages; home background */
+  --surface: #ffffff; /* bars, panels, cards, dialogs */
+  --surface-2: #f5f6f9; /* quiet fills: chips, panel headers, fields at rest */
+  --line: #dde1e8; /* borders and dividers */
+  --line-strong: #c6ccd7; /* borders that must stay visible on --surface-2 */
+
+  /* Text */
+  --text: #161b26;
+  --muted: #626b7d;
+
+  /* Ink blue: actions, selection, focus */
+  --accent: #2747d8;
+  --accent-hover: #1f3bb8;
+  --on-accent: #ffffff;
+  --active-bg: #e6ebfd; /* selected tool, current page */
+  --active-fg: #2140c4;
+  --active-border: #c3cef8;
+  --focus: #2747d8;
+
+  /* Highlighter yellow: the brand mark, edited pages, text lines in edit mode */
+  --highlighter: #ffd400;
+  --highlighter-hover: #ffdf3d;
+  --on-highlighter: #161b26;
+  --hl: rgba(255, 212, 0, 0.42); /* a line under the pen (hover, focus) */
+  --hl-soft: rgba(255, 212, 0, 0.12); /* an editable line at rest */
+  --hl-line: rgba(176, 140, 0, 0.75); /* underline of a highlighted line */
+  --hl-rim: #8a6d00; /* opaque rim that keeps a yellow mark visible on light grounds (>= 4.5:1) */
+  /* Marks drawn on the PDF page, which is white in both themes: never redefined for dark */
+  --page-mark: #b08c00; /* resting underline of an editable line (3.2:1 on white) */
+  --page-mark-locked: #8a93a3; /* dashes of a line that cannot be edited (3.1:1 on white) */
+  --page-mark-locked-strong: #5b6270; /* the same dashes under the pointer */
+  --hint-bg: #fff6c2;
+  --hint-text: #4a3d00;
+  --hint-line: #f0dc7a;
+
+  /* Status */
+  --danger: #c8322a;
+  --danger-hover: #a8271f;
+  --on-danger: #ffffff;
+  --danger-soft: #fdeceb;
+  --danger-text: #b02a23;
+
+  /* Hover and press tints, on any surface */
+  --hover: rgba(22, 27, 38, 0.06);
+  --pressed: rgba(22, 27, 38, 0.11);
+
+  /* Depth */
+  --page-shadow: 0 1px 2px rgba(22, 27, 38, 0.12), 0 4px 14px rgba(22, 27, 38, 0.08);
+  --shadow-float: 0 4px 14px rgba(22, 27, 38, 0.14), 0 1px 3px rgba(22, 27, 38, 0.1);
+  --shadow-pop: 0 12px 32px rgba(22, 27, 38, 0.16), 0 2px 6px rgba(22, 27, 38, 0.08);
+  --backdrop: rgba(16, 18, 23, 0.42);
+
+  /* Toasts are dark in both themes; their accent bars are chosen to read on that dark */
+  --toast-bg: #1d222d;
+  --toast-text: #f2f4f8;
+  --toast-info: #8fa2ff;
+  --toast-warn: #ffd400;
+  --toast-error: #ff8f87;
+  --field-bg: #ffffff;
+
+  /* Logo (see ui/Logo.tsx) */
+  --logo-ink: #2747d8;
+  --logo-paper: #ffffff;
+  --logo-fold: #dfe5fb;
+  --logo-rule: #a9b5ef;
+
+  /* Type: the system UI font (the CSP allows no font host; nothing to download) */
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  /* Generic families for the inline line editor (after the PDF font's own name) */
+  --font-sans: "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
+  --font-serif: "Times New Roman", Times, "Liberation Serif", Georgia, serif;
+  --font-mono: Consolas, "Courier New", "Liberation Mono", ui-monospace, monospace;
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-base: 15px;
+  --fs-lg: 17px;
+  --fs-xl: 20px;
+  --fs-display: clamp(30px, 4.6vw, 46px);
+
+  /* Shape and size */
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --btn: 36px; /* toolbar buttons (44 px on touch screens) */
+  --tap: 44px; /* minimum touch target */
+  --bar-h: 52px; /* top bar */
+  --rail-w: 76px; /* tool rail */
+  --pages-w: 168px; /* thumbnails panel */
+  --details-w: 264px; /* details panel */
+  --tab-h: 60px; /* phone tab bar, without the safe area */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --ws: #101217;
+    --surface: #191c23;
+    --surface-2: #20242d;
+    --line: #2c313c;
+    --line-strong: #3b414e;
+
+    --text: #e9ecf2;
+    --muted: #99a1b2;
+
+    --accent: #6f88ff;
+    --accent-hover: #8a9dff;
+    --on-accent: #0b1130;
+    --active-bg: rgba(111, 136, 255, 0.16);
+    --active-fg: #b0beff;
+    --active-border: rgba(111, 136, 255, 0.4);
+    --focus: #8a9dff;
+
+    --hint-bg: rgba(255, 212, 0, 0.12);
+    --hint-text: #ffe680;
+    --hint-line: rgba(255, 212, 0, 0.28);
+
+    --danger: #ff7b72;
+    --danger-hover: #ff968f;
+    --on-danger: #2a0b09;
+    --danger-soft: rgba(255, 123, 114, 0.12);
+    --danger-text: #ff8f87;
+
+    --hover: rgba(255, 255, 255, 0.06);
+    --pressed: rgba(255, 255, 255, 0.11);
+
+    --page-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 18px rgba(0, 0, 0, 0.35);
+    --shadow-float: 0 4px 14px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.35);
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+    --backdrop: rgba(0, 0, 0, 0.55);
+
+    --toast-bg: #2a2f3a;
+    --field-bg: #14171d;
+
+    --logo-ink: #8a9dff;
+    --logo-paper: #f4f6fb;
+    --logo-fold: #c9d3fb;
+    --logo-rule: #a9b5ef;
+  }
+}
+
+/* Before Chrome 122, Safari 17.4 and Firefox 120, ::backdrop inherits nothing, not even the
+   custom properties of :root: give it its own copy of the tokens its rules use (keep in step with
+   :root). A separate rule, not part of the :root selector list: a browser that rejected the
+   selector would otherwise drop every token. */
+::backdrop {
+  --backdrop: rgba(16, 18, 23, 0.42);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  ::backdrop {
+    --backdrop: rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* Touch screens: 44 px targets. */
+@media (pointer: coarse) {
+  :root {
+    --btn: 44px;
+  }
+}

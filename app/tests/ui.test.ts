@@ -1,6 +1,7 @@
 // UI logic against the app's real modules with a fake engine (no browser): overlapping opens,
 // text still in the line editor, no-op edits, saves finishing late, download re-entry, render
-// scale caps, engine error codes and the service-worker update flow.
+// scale caps, engine error codes, edited-page marks, closing a document, leaving edit mode and
+// the service-worker update flow.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
@@ -20,6 +21,7 @@ vi.mock("../src/engine/client.ts", () => {
     undo() { return e().undo(); }
     redo() { return e().redo(); }
     save() { return e().save(); }
+    close() { return e().close(); }
   }
   return { EngineError, EngineClient };
 });
@@ -38,6 +40,7 @@ const engineImpl: any = {
   undo: async () => { calls.push("undo"); return { editCount: 0, canUndo: false, canRedo: true, changedPages: [0] }; },
   redo: async () => { calls.push("redo"); return { editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }; },
   save: async () => { calls.push("save"); return { bytes: new ArrayBuffer(4) }; },
+  close: async () => { calls.push("close"); return null; },
 };
 (globalThis as any).__engine = engineImpl;
 
@@ -237,6 +240,86 @@ describe("U8 engine error codes", () => {
     const page = state.doc.value!.pages[0];
     await actions.replaceLine(page, LINE, "old ", page.rev.peek());
     expect(state.dirty.value).toBe(false);
+  });
+});
+
+describe("U9 edited pages", () => {
+  it("follow undo and redo, and forget an undone edit replaced by a new one", () => {
+    const step = (pages: number[], kind: "edit" | "undo" | "redo") =>
+      state.recordHistory({ editCount: 0, canUndo: true, canRedo: kind === "undo", changedPages: pages }, kind);
+    state.resetHistory();
+    step([2], "edit");
+    step([0], "edit");
+    expect([...state.editedPages.value].sort()).toEqual([0, 2]);
+    step([0], "undo");
+    expect([...state.editedPages.value]).toEqual([2]);
+    step([0], "redo");
+    expect([...state.editedPages.value].sort()).toEqual([0, 2]);
+    step([0], "undo");
+    step([1], "edit"); // the undone edit of page 0 can no longer come back
+    step([], "redo");
+    expect([...state.editedPages.value].sort()).toEqual([1, 2]);
+    state.resetHistory();
+    expect(state.editedPages.value.size).toBe(0);
+  });
+});
+
+describe("U10 closing a document", () => {
+  it("asks when edits are not downloaded, then resets everything and frees the engine", async () => {
+    await actions.openFile(fakeFile("G.pdf", "G"), { confirmed: true });
+    state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
+    state.editMode.value = true;
+    state.sheet.value = "more";
+
+    let p = actions.closeDocument();
+    await answerConfirm(false);
+    await p;
+    expect(state.doc.value?.fileName).toBe("G.pdf");
+
+    calls.length = 0;
+    p = actions.closeDocument();
+    await answerConfirm(true);
+    await p;
+    expect(state.doc.value).toBeNull();
+    expect(state.editMode.value).toBe(false);
+    expect(state.sheet.value).toBeNull();
+    expect(state.dirty.value).toBe(false);
+    expect(state.history.value.canUndo).toBe(false);
+    expect(calls).toEqual(["close"]);
+  });
+
+  it("abandons an open still being read", async () => {
+    let release!: () => void;
+    const h = fakeFile("H.pdf", "H", new Promise((r) => { release = r; }));
+    calls.length = 0;
+    const p = actions.openFile(h, { confirmed: true });
+    await vi.waitFor(() => expect(state.opening.value).toBe("H.pdf"));
+    await actions.closeDocument();
+    expect(state.opening.value).toBeNull();
+    release();
+    await p;
+    expect(state.doc.value).toBeNull();
+    expect(calls).toEqual([]); // nothing reached the engine: no document was open either
+  });
+});
+
+describe("U11 leaving edit mode", () => {
+  it("writes the text still in the line editor first", async () => {
+    engineImpl.replaceLine = async () => { calls.push("replaceLine"); return edited([0]); };
+    await actions.openFile(fakeFile("I.pdf", "I"), { confirmed: true });
+    const page = state.doc.value!.pages[0];
+    await actions.setEditMode(true);
+    expect(state.editMode.value).toBe(true);
+    const unregister = state.registerEditor({
+      changed: () => true,
+      commit: () => actions.replaceLine(page, LINE, "typed", page.rev.peek()),
+    });
+    calls.length = 0;
+    await actions.setEditMode(false);
+    unregister();
+    expect(calls).toEqual(["replaceLine"]);
+    expect(state.editMode.value).toBe(false);
+    expect(state.dirty.value).toBe(true);
   });
 });
 

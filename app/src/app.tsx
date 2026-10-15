@@ -1,17 +1,27 @@
-// The app shell: top bar, then either the empty state, the "opening…" state or the viewer;
-// plus the drop overlay, toasts and dialogs. Global listeners (shortcuts, "Open with",
-// beforeunload, "updated in another window") are installed once here.
-import { useEffect } from "preact/hooks";
+// The app shell, laid out by styles/layout.css. Without a document: top bar and home (or the
+// "opening…" state). With one, on desktop: top bar, tool rail, thumbnails panel, viewer and
+// details panel; on phones: top bar, viewer, tab bar and the bottom sheets. Plus the drop
+// overlay, toasts and dialogs. Global listeners (shortcuts, "Open with", beforeunload,
+// "updated in another window") are installed once here.
+import { useEffect, useLayoutEffect } from "preact/hooks";
 import { t } from "./i18n";
 import { onLaunchFiles } from "./platform/launch";
 import { updateInstalled } from "./platform/pwa";
 import { busy, doc, opening, showToast, startEngine } from "./state";
 import { openFile, shouldWarnBeforeUnload } from "./ui/actions";
+import { DetailsPanel } from "./ui/DetailsPanel";
 import { Dialogs } from "./ui/Dialogs";
 import { DropOverlay } from "./ui/DropOverlay";
 import { EmptyState, OpeningState } from "./ui/EmptyState";
+import { rescueFocus, viewerScroller } from "./ui/focus";
+import { isNarrow } from "./ui/media";
+import { PagesPanel } from "./ui/PagesPanel";
+import { detailsPanelOpen, pagesPanelOpen } from "./ui/panels";
+import { PhoneSheets } from "./ui/PhoneSheets";
 import { installShortcuts } from "./ui/shortcuts";
+import { TabBar } from "./ui/TabBar";
 import { Toasts } from "./ui/Toasts";
+import { ToolRail } from "./ui/ToolRail";
 import { TopBar } from "./ui/TopBar";
 import { Viewer } from "./viewer/Viewer";
 
@@ -45,6 +55,15 @@ export function App() {
   }, []);
 
   const d = doc.value;
+  const narrow = isNarrow.value;
+
+  // A document just opened (the "Open" button or the opening card that had the focus are gone),
+  // or the layout switched at 640 px (the top bar, rail or tab bar that had it are gone): keep
+  // the focus on the document.
+  const docId = d?.id;
+  useLayoutEffect(() => {
+    if (docId !== undefined) rescueFocus(viewerScroller);
+  }, [docId, narrow]);
 
   // Window title: the file name first, so it reads well in the taskbar and tab strip.
   const appName = t("app.name");
@@ -53,11 +72,16 @@ export function App() {
   }, [d, appName]);
 
   return (
-    <div class="app">
+    <div class={d ? "app has-doc" : "app"} data-layout={narrow ? "phone" : "desktop"}>
       <TopBar />
+      {d && !narrow && <ToolRail />}
+      {d && pagesPanelOpen.value && <PagesPanel key={d.id} doc={d} />}
       <main class="main" aria-busy={busy.value !== null || opening.value !== null}>
         {d ? <Viewer key={d.id} doc={d} /> : opening.value ? <OpeningState /> : <EmptyState />}
       </main>
+      {d && detailsPanelOpen.value && <DetailsPanel key={d.id} doc={d} />}
+      {d && narrow && <TabBar />}
+      {d && narrow && <PhoneSheets key={d.id} doc={d} />}
       <DropOverlay />
       <Toasts />
       <Dialogs />

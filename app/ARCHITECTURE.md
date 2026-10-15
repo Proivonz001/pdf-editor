@@ -22,9 +22,23 @@ repository root keeps working; it replaces it once it does everything the old on
   main-thread side.
 - **Viewer** (`src/viewer/`). Pages are laid out from their sizes in PDF points; only the pages
   near the screen are rendered, at zoom × devicePixelRatio, and their bitmaps are released when
-  they scroll away. Text lines are drawn as an overlay in the same coordinates.
-- **UI** (`src/ui/`, `src/app.tsx`). Phase 1 is a minimal working shell; the full design
-  (style "Carta" with the highlighter-yellow accent, desktop and phone layouts) is phase 2.
+  they scroll away. Text lines are drawn as an overlay in the same coordinates, with the inline
+  line editor and its context bar (Cancel / Apply). The page thumbnails (`Thumbnails.tsx`) have
+  their own observers and a separate one-at-a-time render queue, start only once their list is
+  still, and release far canvases, so they never delay the pages themselves.
+- **UI** (`src/ui/`, `src/app.tsx`), in the "Carta + giallo" style. `app.tsx` lays out a grid
+  (`styles/layout.css`) and marks the root `data-layout="phone"` below 640 px, `"desktop"` from
+  640 px (`ui/media.ts`):
+  - desktop: top bar, tool rail (Browse, Edit text, the panel toggles), thumbnails panel,
+    viewer, details panel (from 1200 px). The panels follow the window width until the user
+    toggles one; that choice is remembered on the device (`ui/panels.ts`);
+  - phone: compact top bar, the viewer, a tab bar at the bottom and bottom sheets for the
+    thumbnails and the other actions (`ui/TabBar.tsx`, `ui/Sheet.tsx`, `ui/PhoneSheets.tsx`).
+
+  `ui/actions.ts` holds what the controls do and `src/state.ts` the signals they share.
+  Styles are in `src/styles/`: `index.css` imports the tokens, the base, the grid and one file
+  per area, `phone.css` last. Colours are defined only in `tokens.css`, light and dark (from the
+  system setting); PDF pages stay white in both.
 - **Platform** (`src/platform/`, `public/`). Service worker and install (vite-plugin-pwa),
   "Open with" on desktop (`file_handlers` + `launchQueue`), Content-Security-Policy, deploy.
   The engine worker is started from a `blob:` module that imports the worker chunk, so it
@@ -46,9 +60,11 @@ repository root keeps working; it replaces it once it does everything the old on
 ## Undo and save
 
 The worker keeps the original bytes, the list of applied edits and a few **checkpoints** (the
-document serialized after every 8 edits, at most 6 and 256 MB in total). Undo re-opens the
-nearest checkpoint at or below the target and replays at most 7 edits, so its cost does not grow
-with the length of the session; a failed edit is rolled back the same way. If even that fails,
+document serialized after every 8 edits, at most 12 and 256 MB in total, thinned out so they
+stay spread over the whole session). Undo re-opens the nearest checkpoint at or below the target
+and replays the edits after it (at most 7 within the last few dozen edits, a few more further
+back), so its cost does not grow with the length of the session; a failed edit is rolled back
+the same way. If even that fails,
 the session is marked broken and the UI stops editing.
 
 Save never replays: it serializes the working document, re-opens the copy, subsets only the

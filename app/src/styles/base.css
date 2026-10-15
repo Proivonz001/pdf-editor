@@ -1,0 +1,310 @@
+/* Base: reset, type, focus, buttons and the small shared pieces (icon, badge, spinner, kbd).
+   Component styles live in the other files of this folder; colours always come from tokens.css. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ws);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+  overflow: hidden; /* the viewer and the home page scroll inside the app, the page does not */
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  height: 100%;
+}
+
+a {
+  color: var(--active-fg);
+  text-underline-offset: 2px;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.icon {
+  flex-shrink: 0;
+  display: block;
+}
+
+/* --- Logo (ui/Logo.tsx) ------------------------------------------------------------------- */
+
+.logo {
+  flex-shrink: 0;
+  display: block;
+}
+
+.logo-paper {
+  fill: var(--logo-paper);
+  stroke: var(--logo-ink);
+}
+
+.logo-fold {
+  fill: var(--logo-fold);
+  stroke: var(--logo-ink);
+}
+
+.logo-bar {
+  fill: var(--highlighter);
+}
+
+.logo-rule {
+  stroke: var(--logo-rule);
+}
+
+.logo-ink {
+  stroke: var(--logo-ink);
+}
+
+/* --- Buttons -------------------------------------------------------------------------------
+   .btn            quiet: transparent, tinted on hover
+   .btn-primary    ink blue, the one main action of a view (Download PDF, Open a PDF)
+   .btn-secondary  white with a border, for a second visible action (Open, Cancel)
+   .btn-accent     highlighter yellow, for "an update is ready"
+   .btn-danger     red, for a confirmed loss (Open anyway)
+   .tool           a square icon button (the accessible name is on the button)
+   aria-pressed    a tool that is on (rail, tab bar, fit width): tinted, with an ink-blue border
+                   so the state does not rest on a faint tint alone
+   Hover tints only apply where there is real hover: on touch screens they would stick after a
+   tap.                                                                                         */
+
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--btn);
+  min-width: var(--btn);
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    background: var(--hover);
+  }
+}
+
+.btn:active:not(:disabled) {
+  background: var(--pressed);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn.tool {
+  padding: 0 8px;
+}
+
+.btn.tool:not(.has-label) {
+  width: var(--btn);
+  padding: 0;
+}
+
+.btn[aria-pressed="true"] {
+  background: var(--active-bg);
+  border-color: var(--accent);
+  color: var(--active-fg);
+}
+
+/* A tool that is on keeps its fill under the pointer. */
+.btn[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--active-bg);
+}
+
+.btn[aria-pressed="true"]:active:not(:disabled) {
+  background: var(--pressed);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+
+@media (hover: hover) {
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--surface-2);
+  }
+}
+
+.btn-accent {
+  background: var(--highlighter);
+  color: var(--on-highlighter);
+  font-weight: 600;
+}
+
+.btn-accent:active:not(:disabled) {
+  background: var(--highlighter-hover);
+}
+
+@media (hover: hover) {
+  .btn-accent:hover:not(:disabled) {
+    background: var(--highlighter-hover);
+  }
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--on-danger);
+  font-weight: 600;
+}
+
+.btn-danger:active:not(:disabled) {
+  background: var(--danger-hover);
+}
+
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: var(--danger-hover);
+  }
+}
+
+.btn-big {
+  height: 52px;
+  padding: 0 26px;
+  gap: 10px;
+  border-radius: var(--radius-lg);
+  font-size: var(--fs-lg);
+}
+
+/* Small dot on a button (e.g. an update is waiting behind a menu). */
+.badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--highlighter);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* The small uppercase label over a panel section (details panel, thumbnails, rail groups). */
+.section-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* A key on the keyboard, in shortcut lists. */
+.kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 var(--fs-xs) / 18px var(--font-ui);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.spinner {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Forced colours (Windows contrast themes) ----------------------------------------------- */
+
+/* Fills and border colours are replaced by system colours there: show "on" with an outline. */
+@media (forced-colors: active) {
+  .btn[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+/* --- Reduced motion ------------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

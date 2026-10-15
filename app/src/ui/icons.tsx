@@ -60,6 +60,14 @@ export const IconZoomIn = () => (
   </Svg>
 );
 
+/** A plain magnifier: the zoom row of the phone More sheet. */
+export const IconZoom = () => (
+  <Svg>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="m20 20-4.6-4.6" />
+  </Svg>
+);
+
 export const IconFitWidth = () => (
   <Svg>
     <path d="M3.5 5v14M20.5 5v14" />
@@ -129,11 +137,100 @@ export const IconLock = () => (
   </Svg>
 );
 
-/** Large document illustration for the empty state. */
-export const IconDocument = () => (
-  <Svg size={56}>
-    <path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z" />
-    <path d="M14 3.5V8h4.5" />
-    <path d="M8.5 12.5h7M8.5 15.5h4.5" />
+
+// Tools, panels, sheets and the home page
+
+/** An arrow pointer: the "Browse" tool (scroll and zoom, nothing changes). */
+export const IconPointer = () => (
+  <Svg>
+    <path d="M6 3.8 18.6 10.9l-5.7 1.6-2.8 5.7z" />
+    <path d="m12.9 12.5 4.3 6.2" />
+  </Svg>
+);
+
+/** Two stacked pages: the thumbnails. */
+export const IconPages = () => (
+  <Svg>
+    <rect x="8.5" y="3.5" width="11" height="14" rx="1.6" />
+    <path d="M5 7.5v11a2 2 0 0 0 2 2h8.5" />
+  </Svg>
+);
+
+/** A window with a side column: the details panel. */
+export const IconDetails = () => (
+  <Svg>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+    <path d="M14.5 4.5v15" />
+    <path d="M16.9 8.5h1.4M16.9 11.5h1.4" />
+  </Svg>
+);
+
+export const IconCheck = () => (
+  <Svg>
+    <path d="m5 12.5 4.5 4.5L19 7.5" />
+  </Svg>
+);
+
+/** Back to the start (closes the document on phones). */
+export const IconBack = () => (
+  <Svg>
+    <path d="M19.5 12h-15" />
+    <path d="m10.5 6-6 6 6 6" />
+  </Svg>
+);
+
+export const IconInfo = () => (
+  <Svg>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5.5" />
+    <path d="M12 7.7v.1" />
+  </Svg>
+);
+
+/** "Aa": fonts. */
+export const IconFont = () => (
+  <Svg>
+    <path d="m3 18.5 5-13 5 13" />
+    <path d="M4.9 13.7h6.2" />
+    <circle cx="17.5" cy="15.5" r="3" />
+    <path d="M20.5 12.5v6" />
+  </Svg>
+);
+
+/** A laptop and a phone. */
+export const IconDevices = () => (
+  <Svg>
+    <path d="M14.5 15H4.5a1.5 1.5 0 0 1-1.5-1.5V6.5A1.5 1.5 0 0 1 4.5 5h10A1.5 1.5 0 0 1 16 6.5V8" />
+    <path d="M1.5 18.5h11" />
+    <rect x="16.5" y="9" width="6" height="11.5" rx="1.5" />
+    <path d="M19.5 17.8v.1" />
+  </Svg>
+);
+
+/** A shield: the file stays on this device. */
+export const IconShield = () => (
+  <Svg>
+    <path d="M12 3.5 19 6v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6z" />
+    <path d="m9 12 2.2 2.2L15.5 10" />
+  </Svg>
+);
+
+/** Angle brackets: source code. */
+export const IconCode = () => (
+  <Svg>
+    <path d="m8.5 7-5 5 5 5" />
+    <path d="m15.5 7 5 5-5 5" />
+  </Svg>
+);
+
+export const IconMinus = () => (
+  <Svg>
+    <path d="M5.5 12h13" />
+  </Svg>
+);
+
+export const IconPlus = () => (
+  <Svg>
+    <path d="M12 5.5v13M5.5 12h13" />
   </Svg>
 );

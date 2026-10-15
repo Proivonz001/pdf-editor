@@ -1,9 +1,13 @@
 // The whole window is a drop target for PDF files. Only drags that carry files are taken over:
-// dragging text (e.g. inside the line editor) keeps working as usual.
+// dragging text (e.g. inside the line editor) keeps working as usual. While a file is dragged
+// over the window, a tinted overlay with a dashed frame and the brand card says what a drop
+// does (styles/overlays.css); it is decorative, the drop itself is the action. While a dialog
+// is open, a drop is ignored and no overlay is shown.
 import { useEffect, useState } from "preact/hooks";
 import { t } from "../i18n";
 import { dialog, showToast } from "../state";
 import { isPdfFile, openFile } from "./actions";
+import { Logo } from "./Logo";
 
 function carriesFiles(e: DragEvent) {
   return !!e.dataTransfer && [...e.dataTransfer.types].includes("Files");
@@ -18,7 +22,8 @@ export function DropOverlay() {
       if (!carriesFiles(e)) return;
       e.preventDefault();
       depth++;
-      setActive(true);
+      // A drop is ignored while a dialog is open: then the overlay would promise too much.
+      if (!dialog.peek()) setActive(true);
     };
     const onOver = (e: DragEvent) => {
       if (!carriesFiles(e)) return;
@@ -56,7 +61,10 @@ export function DropOverlay() {
   if (!active) return null;
   return (
     <div class="drop-overlay" aria-hidden="true">
-      <div class="drop-card">{t("drop.overlay")}</div>
+      <div class="drop-card">
+        <Logo size={44} />
+        <p class="drop-text">{t("drop.overlay")}</p>
+      </div>
     </div>
   );
 }
