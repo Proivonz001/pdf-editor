@@ -7,6 +7,9 @@ declares a Content Security Policy that forbids it from sending data to any othe
 
 Try it online: https://vibesite-one.vercel.app/tools/pdf-edit/index.html
 
+New version, in progress (edits the real text in the PDF's own fonts, on phones too, and
+installs as an app): https://pdf-editor.priamo-anfuso.workers.dev
+
 ## Running it offline
 
 1. Double-click **`Start.bat`**.
@@ -84,6 +87,9 @@ Built with Claude Code.
 A rewrite is under way in the `app/` folder: MuPDF as the only engine, editing the real text
 in the PDF's own fonts, usable on phones, installable and offline. It does not change the
 editor described above, which stays the one to use until the new version can replace it.
+
+Try it at https://pdf-editor.priamo-anfuso.workers.dev: Cloudflare publishes it from `main`
+after every merge. For now it edits text; the other tools come in the next phases.
 How to run, test and deploy it: [app/README.md](app/README.md).
 
 ## License
