@@ -1,8 +1,8 @@
 /* Things that float above the app: the drop-down menu (ui/Menu.tsx), dialogs and their fields
-   (ui/Dialog.tsx, ui/Dialogs.tsx), toasts (ui/Toasts.tsx) and the drop overlay
-   (ui/DropOverlay.tsx). They are the only pieces with shadows, besides the PDF pages.
-   Colours only from tokens.css. Hover tints only where there is real hover: on touch screens
-   they would stick after a tap. */
+   (ui/Dialog.tsx, ui/Dialogs.tsx, the download options of ui/DownloadOptions.tsx), toasts
+   (ui/Toasts.tsx) and the drop overlay (ui/DropOverlay.tsx). They are the only pieces with
+   shadows, besides the PDF pages. Colours only from tokens.css. Hover tints only where there is
+   real hover: on touch screens they would stick after a tap. */
 
 /* --- Menu ---------------------------------------------------------------------------------- */
 
@@ -194,6 +194,209 @@
 @media (min-width: 640px) {
   .dialog {
     padding: 24px;
+  }
+}
+
+/* A body with several paragraphs and a list (the PDF/A questions): the list is the substance,
+   so it is in the text colour. */
+div.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialog-body p {
+  margin: 0;
+}
+
+.dialog-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text);
+}
+
+/* --- Download options (ui/DownloadOptions.tsx) --------------------------------------------- */
+
+.dl-group {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Floated, the legend is not drawn in the fieldset's border but laid out as an ordinary flex
+   item (float itself has no effect there), so the group's gap spaces it like the rest. */
+.dl-legend {
+  float: left;
+  width: 100%;
+  padding: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+/* A format: the whole card picks it (the radio inside keeps its own focus ring). */
+.dl-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: var(--tap);
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+/* The picked card: ink border and tint, so the choice does not rest on the small radio alone. */
+.dl-choice:has(.dl-radio:checked) {
+  border-color: var(--accent);
+  background: linear-gradient(var(--active-bg), var(--active-bg)) var(--surface);
+}
+
+@media (hover: hover) {
+  .dl-choice:hover:not(:has(.dl-radio:checked)) {
+    background: var(--surface-2);
+  }
+}
+
+.dl-radio,
+.dl-checkbox {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+
+.dl-choice-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dl-choice-title {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.dl-choice-hint,
+.dl-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+/* "Protect with a password": the label is the 44 px target. */
+.dl-check {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--tap);
+  padding-left: 15px; /* the checkbox under the radios */
+  font-size: var(--fs-base);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dl-check .dl-checkbox {
+  margin: 0;
+}
+
+.dl-check.is-disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* Hints and fields under the checkbox start where its label does (15 + 18 + 12). */
+.dl-check-note,
+.dl-fields {
+  padding-left: 45px;
+}
+
+.dl-check-note {
+  margin-top: -8px;
+}
+
+.dl-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dl-label-row {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* "Show": a small toggle on the label's line (aria-pressed draws its "on" state, base.css). */
+.btn.dl-show {
+  height: 28px;
+  padding: 0 10px;
+  color: var(--active-fg);
+  font-size: var(--fs-sm);
+}
+
+/* The signed-PDF note: quiet, information only. */
+.dl-note {
+  margin: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.dl-note .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Touch screens: "Show" keeps its look; an invisible ::after makes it 44 px tall. */
+@media (pointer: coarse) {
+  .dl-label-row {
+    min-height: 36px;
+  }
+
+  .btn.dl-show {
+    height: 36px;
+  }
+
+  .btn.dl-show::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+}
+
+/* Narrow screens: the fields under the checkbox take the whole width. */
+@media (max-width: 399.98px) {
+  .dl-check-note,
+  .dl-fields {
+    padding-left: 0;
+  }
+
+  .dl-check-note {
+    margin-top: -4px;
   }
 }
 

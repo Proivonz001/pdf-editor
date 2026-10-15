@@ -99,6 +99,8 @@ h3 {
    .tool           a square icon button (the accessible name is on the button)
    aria-pressed    a tool that is on (rail, tab bar, fit width): tinted, with an ink-blue border
                    so the state does not rest on a faint tint alone
+   aria-disabled   looks like :disabled but keeps the focus (Download while a download runs):
+                   the click handler does nothing then
    Hover tints only apply where there is real hover: on touch screens they would stick after a
    tap.                                                                                         */
 
@@ -127,16 +129,17 @@ h3 {
 }
 
 @media (hover: hover) {
-  .btn:hover:not(:disabled) {
+  .btn:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--hover);
   }
 }
 
-.btn:active:not(:disabled) {
+.btn:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--pressed);
 }
 
-.btn:disabled {
+.btn:disabled,
+.btn[aria-disabled="true"] {
   opacity: 0.4;
   cursor: default;
 }
@@ -157,11 +160,11 @@ h3 {
 }
 
 /* A tool that is on keeps its fill under the pointer. */
-.btn[aria-pressed="true"]:hover:not(:disabled) {
+.btn[aria-pressed="true"]:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--active-bg);
 }
 
-.btn[aria-pressed="true"]:active:not(:disabled) {
+.btn[aria-pressed="true"]:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--pressed);
 }
 
@@ -172,12 +175,12 @@ h3 {
 }
 
 @media (hover: hover) {
-  .btn-primary:hover:not(:disabled) {
+  .btn-primary:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--accent-hover);
   }
 }
 
-.btn-primary:active:not(:disabled) {
+.btn-primary:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--accent-hover);
 }
 
@@ -187,7 +190,7 @@ h3 {
 }
 
 @media (hover: hover) {
-  .btn-secondary:hover:not(:disabled) {
+  .btn-secondary:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--surface-2);
   }
 }
@@ -198,12 +201,12 @@ h3 {
   font-weight: 600;
 }
 
-.btn-accent:active:not(:disabled) {
+.btn-accent:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--highlighter-hover);
 }
 
 @media (hover: hover) {
-  .btn-accent:hover:not(:disabled) {
+  .btn-accent:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--highlighter-hover);
   }
 }
@@ -214,12 +217,12 @@ h3 {
   font-weight: 600;
 }
 
-.btn-danger:active:not(:disabled) {
+.btn-danger:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--danger-hover);
 }
 
 @media (hover: hover) {
-  .btn-danger:hover:not(:disabled) {
+  .btn-danger:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--danger-hover);
   }
 }

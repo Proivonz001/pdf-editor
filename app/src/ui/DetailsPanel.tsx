@@ -1,11 +1,12 @@
 // Desktop details panel (right, from 1200 px). It follows what the user is doing:
-// - browsing: facts about the document (file, pages, size of the current page, protection,
-//   edits and whether they were downloaded), how to start editing, and the privacy note;
+// - browsing: facts about the document (file, pages, size of the current page, PDF/A format,
+//   protection, digital signature, edits and whether they were downloaded), how to start
+//   editing, and the privacy note;
 // - edit mode, no line open: the three steps, the legend of the line marks, the shortcuts;
 // - edit mode with a line open: that line's text, font, size, style and colour, the shortcuts.
 // Read-only: it shows state and offers one action (enter edit mode), nothing else.
 import type { ComponentChildren } from "preact";
-import type { LineInfo } from "../engine/protocol";
+import type { DocInfo, LineInfo } from "../engine/protocol";
 import { formatFontSize, t } from "../i18n";
 import { currentPage, dirty, editingLine, editingStopped, editMode, history } from "../state";
 import { fontDisplayName, isSubsetFont } from "../viewer/fontName";
@@ -47,13 +48,30 @@ function Row({ label, children }: { label: string; children: ComponentChildren }
   );
 }
 
+/**
+ * The "Protected" row: what the one-tap download does with the protection (actions.ts,
+ * defaultChoice), or null when there is none. A password that cannot protect the copy (whatever
+ * the reason: the download options say what to do) is not promised to the copy.
+ */
+export function protectionText(info: DocInfo): string | null {
+  if (info.needsPassword) return info.canKeepPassword ? t("details.protectedPassword") : t("details.protectedNewPassword");
+  return info.encrypted ? t("details.protectedRestrictions") : null;
+}
+
+/** The PDF/A claim as people write it: "2B" → "PDF/A-2b", "1A" → "PDF/A-1a", "4" → "PDF/A-4". */
+function pdfaLabel(claim: string): string {
+  return `PDF/A-${claim.replace(/[A-Za-z]+$/, (level) => level.toLowerCase())}`;
+}
+
 function DocumentInfo({ doc }: { doc: OpenDoc }) {
+  const info = doc.info;
   const count = doc.pages.length;
   const page = doc.pages[Math.min(currentPage.value, count - 1)] ?? doc.pages[0];
   const size = page ? pageSize(page.width, page.height) : null;
   const edits = history.value.editCount;
   const edited = dirty.value;
   const stopped = editingStopped.value;
+  const protection = protectionText(info);
 
   return (
     <>
@@ -74,7 +92,9 @@ function DocumentInfo({ doc }: { doc: OpenDoc }) {
               </span>
             </Row>
           )}
-          {doc.info.encrypted && <Row label={t("details.protected")}>{t("details.protectedValue")}</Row>}
+          {info.pdfa && <Row label={t("details.format")}>{pdfaLabel(info.pdfa)}</Row>}
+          {protection && <Row label={t("details.protected")}>{protection}</Row>}
+          {info.signatures > 0 && <Row label={t("details.signature")}>{t("details.signatureValue")}</Row>}
           {/* Undoing every edit after a download leaves no edits, but a file on disk that still
               has them: that is "not downloaded", as the top bar's "Edited" says. */}
           <Row label={t("details.edits")}>

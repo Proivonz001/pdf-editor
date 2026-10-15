@@ -60,6 +60,13 @@ export const IconZoomIn = () => (
   </Svg>
 );
 
+/** A small chevron: the "more download options" half of the split Download button. */
+export const IconChevronDown = () => (
+  <Svg size={16}>
+    <path d="m6.5 9.5 5.5 5.5 5.5-5.5" />
+  </Svg>
+);
+
 /** A plain magnifier: the zoom row of the phone More sheet. */
 export const IconZoom = () => (
   <Svg>

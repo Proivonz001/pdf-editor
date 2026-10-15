@@ -8,7 +8,8 @@
 // edits. Undo re-opens the nearest checkpoint below the target (or the original) and replays
 // the few edits after it. Save writes the working document out as it is, re-opens that as a
 // scratch copy and saves the copy, because saving subsets the fallback fonts of the document it
-// saves (core.savePdf), which would break later edits that need more glyphs of them.
+// saves (core.subsetFallbackFonts), which would break later edits that need more glyphs of them.
+// The PDF/A conversion (pdfa.ts) works on such a scratch copy too.
 //
 // A snapshot is written unencrypted and without garbage collection, so every object keeps its
 // number and core.restoreFallbackFonts finds the fallback fonts again in the re-opened copy.
@@ -25,8 +26,10 @@ import {
   renderPixmap,
   replaceText,
   restoreFallbackFonts,
-  savePdf,
+  subsetFallbackFonts,
 } from "./core.js";
+import { checkPdfA, convertToPdfA, countSignatures, dropPdfaClaim, pdfaClaim } from "./pdfa";
+import { passwordProblem } from "./protocol";
 import type {
   DocInfo,
   EditResult,
@@ -35,7 +38,10 @@ import type {
   LineInfo,
   OpenResult,
   PageInfo,
+  PdfaReport,
   Rect,
+  SaveOptions,
+  SaveResult,
   SegmentSource,
 } from "./protocol";
 
@@ -69,6 +75,23 @@ const MAX_CHECKPOINT_BYTES = 256 * 1024 * 1024;
  * document it writes this way; the working document still decrypts with the key it opened with.
  */
 const SNAPSHOT_OPTIONS = "encrypt=none";
+
+/**
+ * How a download is written (rule 4): garbage collected and compressed, unencrypted. PDF/A uses
+ * exactly this too: MuPDF leaves the XMP metadata stream uncompressed, as PDF/A wants.
+ */
+const SAVE_OPTIONS = "garbage=compact,compress=yes,encrypt=none";
+
+/**
+ * ...or protected with a password: AES-256, with the same password as user and owner password,
+ * so whoever knows it keeps full control (no restrictions to lift). MuPDF reads these options as
+ * a comma-separated string, which is why passwordProblem refuses commas.
+ */
+const encryptedSaveOptions = (password: string) =>
+  `garbage=compact,compress=yes,encrypt=aes-256,user-password=${password},owner-password=${password}`;
+
+/** The default of save(): a normal PDF without password, what the app has always written. */
+const PLAIN_PDF: SaveOptions = { format: "pdf", password: { mode: "none" } };
 
 /** The document after the first `editCount` edits of the log, serialized. */
 interface Checkpoint {
@@ -108,7 +131,9 @@ export type SessionErrorCode =
   /** The line has characters the engine cannot rewrite safely (LineInfo.editable is false). */
   | "not-editable"
   /** An edit failed and the document could not be restored: only close and open still work. */
-  | "broken";
+  | "broken"
+  /** Saving as PDF/A found something that blocks the conversion (pdfaCheck lists it). */
+  | "pdfa-blocked";
 
 export class SessionError extends Error {
   constructor(message: string, readonly code: SessionErrorCode) {
@@ -132,7 +157,16 @@ const isBlank = (text: string) => text.trim() === "";
 export class EngineSession {
   private doc: MuPDF.PDFDocument | null = null;
   private original: Uint8Array | null = null;
+  /** The password the user gave to open the document ("" when none was needed). */
   private password = "";
+  /** Opening needed that password (DocInfo.needsPassword): a download may keep it. */
+  private neededPassword = false;
+  /**
+   * That password was the owner password, not the user password. "keep" would then write it as
+   * the copy's one password, so the user password the recipients know would stop opening it:
+   * the session refuses "keep" and the user chooses (DocInfo.canKeepPassword is false).
+   */
+  private ownerPasswordOnly = false;
   private log: LoggedEdit[] = [];
   private redoStack: LoggedEdit[] = [];
   /** Ascending editCount. After undo some lie beyond the log: redo reaches them again. */
@@ -161,19 +195,23 @@ export class EngineSession {
         opened.destroy();
         return { ok: false, reason: "damaged", message: "Not a PDF document" };
       }
-      let neededPassword = false;
+      let neededPassword = false, ownerPasswordOnly = false;
       if (doc.needsPassword()) {
         if (!password) {
           this.dispose(doc);
           return { ok: false, reason: "password-required" };
         }
-        if (!doc.authenticatePassword(password)) {
+        // MuPDF's result is a bit set: 2 the user password matched, 4 the owner password (6 when
+        // they are the same). 4 alone: the file was opened with its owner password only.
+        const auth = doc.authenticatePassword(password);
+        if (!auth) {
           this.dispose(doc);
           return { ok: false, reason: "wrong-password" };
         }
         neededPassword = true;
+        ownerPasswordOnly = (auth & 2) === 0;
       }
-      const info = this.describe(doc, neededPassword);
+      const info = this.describe(doc, neededPassword, password ?? "", ownerPasswordOnly);
       if (info.pageCount === 0) {
         this.dispose(doc);
         return { ok: false, reason: "damaged", message: "The document has no pages" };
@@ -181,6 +219,8 @@ export class EngineSession {
       this.doc = doc;
       this.original = original;
       this.password = password ?? "";
+      this.neededPassword = neededPassword;
+      this.ownerPasswordOnly = ownerPasswordOnly;
       return { ok: true, ...info };
     } catch (err) {
       if (doc) this.dispose(doc);
@@ -194,6 +234,8 @@ export class EngineSession {
     this.doc = null;
     this.original = null;
     this.password = "";
+    this.neededPassword = false;
+    this.ownerPasswordOnly = false;
     this.log = [];
     this.redoStack = [];
     this.checkpoints = [];
@@ -201,7 +243,7 @@ export class EngineSession {
     return null;
   }
 
-  private describe(doc: MuPDF.PDFDocument, neededPassword: boolean): DocInfo {
+  private describe(doc: MuPDF.PDFDocument, neededPassword: boolean, password: string, ownerPasswordOnly: boolean): DocInfo {
     // Owner-password-only files open without a password but are encrypted all the same.
     const trailer = doc.getTrailer();
     const encryptObj = trailer.get("Encrypt");
@@ -219,7 +261,17 @@ export class EngineSession {
       }
     }
     const title = doc.getMetaData("info:Title")?.trim();
-    return { pageCount, pages, encrypted, title: title || null };
+    return {
+      pageCount,
+      pages,
+      encrypted,
+      needsPassword: neededPassword,
+      // The same rule as savePassword's "keep": what this says is possible, save does.
+      canKeepPassword: neededPassword && !ownerPasswordOnly && passwordProblem(password) === null,
+      pdfa: pdfaClaim(doc),
+      signatures: countSignatures(doc),
+      title: title || null,
+    };
   }
 
   // ------------------------------------------------------------------ reading
@@ -377,44 +429,118 @@ export class EngineSession {
   // ------------------------------------------------------------------ saving
 
   /**
-   * The edited PDF, unencrypted (rule 4). The working document is left untouched: a snapshot of
-   * it is re-opened with its fallback-font bookkeeping, and that scratch copy is saved (fallback
-   * fonts subset, garbage collected) and destroyed. Nothing is replayed.
+   * The edited document as a file to download (rule 4). The working document is left untouched:
+   * a snapshot of it is re-opened with its fallback-font bookkeeping, and that scratch copy is
+   * saved (fallback fonts subset, garbage collected) and destroyed. Nothing is replayed.
+   *
+   * - format "pdf": a normal PDF, unencrypted, or AES-256 with the chosen password ("keep": the
+   *   one the file was opened with, only when DocInfo.canKeepPassword was true; "set": a new one
+   *   that passes passwordProblem).
+   * - format "pdfa-2b": the scratch copy is converted (pdfa.ts); blockers refuse the download
+   *   ("pdfa-blocked"), and the written bytes must pass the engine's own check, or the save
+   *   fails rather than hand out a file that only claims to be PDF/A. PDF/A takes no password.
+   *
+   * Invalid options are refused ("bad-request") before anything is done.
    */
-  save(): { bytes: ArrayBuffer } {
+  save(options: SaveOptions = PLAIN_PDF): SaveResult {
     if (!this.doc) throw new SessionError("No document is open", "no-document");
-    let scratch: MuPDF.PDFDocument;
-    if (this.broken) {
-      // The working document may be half-edited: save the last good state instead, rebuilt from
-      // the log (the rebuild failed once already, so this can fail again: then still "broken").
-      try {
-        scratch = this.rebuild(this.log.length);
-      } catch (err) {
-        throw new SessionError(`The document could not be rebuilt: ${errorMessage(err)}`, "broken");
-      }
-    } else {
-      const snapshot = this.doc.saveToBuffer(SNAPSHOT_OPTIONS);
-      try {
-        scratch = this.openSnapshot(snapshot); // the document keeps its own reference to the buffer
-      } finally {
-        snapshot.destroy();
-      }
-      try {
-        restoreFallbackFonts(scratch, fallbackFontState(this.doc));
-      } catch (err) {
-        this.dispose(scratch);
-        throw err;
-      }
-    }
+    const password = this.savePassword(options);
+    const scratch = this.scratchCopy();
     try {
-      const { bytes } = savePdf(this.mupdf, scratch, { garbage: "compact", decrypt: true, subset: "fallback" });
-      const u8 = bytes as Uint8Array;
-      // savePdf copies out of the wasm heap with slice(): the buffer is exactly the file.
-      const buffer = u8.byteOffset === 0 && u8.byteLength === u8.buffer.byteLength ? u8.buffer : u8.slice().buffer;
-      return { bytes: buffer as ArrayBuffer };
+      subsetFallbackFonts(this.mupdf, scratch);
+      if (options.format === "pdf") {
+        // An edited PDF/A saved as a normal PDF: nothing re-checked it, so it stops claiming PDF/A.
+        if (this.log.length > 0) dropPdfaClaim(this.mupdf, scratch);
+        return { bytes: writeBytes(scratch, password === null ? SAVE_OPTIONS : encryptedSaveOptions(password)), pdfa: null };
+      }
+      const report = convertToPdfA(this.mupdf, scratch);
+      if (report.blockers.length)
+        throw new SessionError(`Cannot be saved as PDF/A: ${report.blockers.map((b) => b.code).join(", ")}`, "pdfa-blocked");
+      const bytes = writeBytes(scratch, SAVE_OPTIONS);
+      const problems = checkPdfA(this.mupdf, new Uint8Array(bytes));
+      // Not a SessionError: the worker reports it as "engine", an engine bug, never as a file.
+      if (problems.length) throw new Error(`The PDF/A file failed the engine's own check: ${problems.join("; ")}`);
+      return { bytes, pdfa: report };
     } finally {
       this.dispose(scratch);
     }
+  }
+
+  /**
+   * What saving as PDF/A would do, without writing a file: the same conversion as save() on a
+   * scratch copy, so the UI can ask before removing anything or explain why it cannot.
+   */
+  pdfaCheck(): PdfaReport {
+    if (!this.doc) throw new SessionError("No document is open", "no-document");
+    const scratch = this.scratchCopy();
+    try {
+      subsetFallbackFonts(this.mupdf, scratch);
+      return convertToPdfA(this.mupdf, scratch);
+    } finally {
+      this.dispose(scratch);
+    }
+  }
+
+  /** The password to protect the download with (null: none), or "bad-request". */
+  private savePassword(options: SaveOptions): string | null {
+    // Checked as untrusted: the options arrive from the main thread as plain data.
+    const format = options?.format, password = options?.password;
+    if (format !== "pdf" && format !== "pdfa-2b") throw new SessionError(`Unknown format ${String(format)}`, "bad-request");
+    let chosen: string | null;
+    switch (password?.mode) {
+      case "none":
+        chosen = null;
+        break;
+      case "keep":
+        if (!this.neededPassword) throw new SessionError("The document was opened without a password: there is none to keep", "bad-request");
+        if (this.ownerPasswordOnly)
+          throw new SessionError("The document was opened with its owner password: keeping it would lock out the user password", "bad-request");
+        chosen = this.password; // passwordProblem below, as for DocInfo.canKeepPassword
+        break;
+      case "set":
+        if (typeof password.password !== "string") throw new SessionError("No password given", "bad-request");
+        chosen = password.password;
+        break;
+      default:
+        throw new SessionError("Unknown password option", "bad-request");
+    }
+    if (chosen !== null) {
+      const problem = passwordProblem(chosen);
+      if (problem) throw new SessionError(`The password cannot protect the download (${problem})`, "bad-request");
+      if (format === "pdfa-2b") throw new SessionError("A PDF/A file cannot have a password", "bad-request");
+    }
+    return chosen;
+  }
+
+  /**
+   * A scratch copy of the current state, with its fallback-font bookkeeping: a snapshot of the
+   * working document, or, when the session is broken (the working document may be half-edited),
+   * the last good state rebuilt from the log (that failed once already, so it can fail again:
+   * then still "broken").
+   */
+  private scratchCopy(): MuPDF.PDFDocument {
+    const doc = this.doc!;
+    if (this.broken) {
+      try {
+        return this.rebuild(this.log.length);
+      } catch (err) {
+        throw new SessionError(`The document could not be rebuilt: ${errorMessage(err)}`, "broken");
+      }
+    }
+    const snapshot = doc.saveToBuffer(SNAPSHOT_OPTIONS);
+    let scratch: MuPDF.PDFDocument;
+    try {
+      scratch = this.openSnapshot(snapshot); // the document keeps its own reference to the buffer
+    } finally {
+      snapshot.destroy();
+    }
+    try {
+      restoreFallbackFonts(scratch, fallbackFontState(doc));
+    } catch (err) {
+      this.dispose(scratch);
+      throw err;
+    }
+    return scratch;
   }
 
   // ------------------------------------------------------------------ internals
@@ -613,6 +739,16 @@ function linesBeyondBMP(lines: RawLine[], glyphs: Glyph[]): Set<RawLine> {
 }
 
 const toRect = (r: ArrayLike<number>): Rect => [r[0], r[1], r[2], r[3]];
+
+/** Writes `doc` with MuPDF save `options`, copied out of the wasm heap: the buffer is exactly the file. */
+function writeBytes(doc: MuPDF.PDFDocument, options: string): ArrayBuffer {
+  const buf = doc.saveToBuffer(options);
+  try {
+    return buf.asUint8Array().slice().buffer;
+  } finally {
+    buf.destroy();
+  }
+}
 
 /** Each non-whitespace character once, in order. */
 function visibleChars(chars: string[]): string[] {

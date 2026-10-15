@@ -61,9 +61,11 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
     case "redo":
       return reply<"redo">(s.redo());
     case "save": {
-      const { bytes } = s.save();
-      return reply<"save">({ bytes }, [bytes]);
+      const result = s.save(msg.options);
+      return reply<"save">(result, [result.bytes]);
     }
+    case "pdfaCheck":
+      return reply<"pdfaCheck">(s.pdfaCheck());
     case "close":
       return reply<"close">(s.close());
     default: {

@@ -611,11 +611,23 @@ function fallbackFor(mupdf, doc, chain, cp) {
 		}
 		const gid = fb.font.encodeCharacter(cp);
 		if (gid > 0) {
-			if (!fb.ref) fb.ref = doc.addFont(fb.font); // Type0 / Identity-H + ToUnicode
+			// Type0 / Identity-H + ToUnicode. App change: CIDToGIDMap written (identityCidToGid).
+			if (!fb.ref) fb.ref = identityCidToGid(doc.addFont(fb.font));
 			return { fb, gid };
 		}
 	}
 	return null;
+}
+
+// App addition: addFont() writes a TrueType program (the CJK fallback) as a
+// CIDFontType2 without /CIDToGIDMap. Identity is the default, and the mapping
+// MuPDF draws with, but PDF/A-2 (6.2.11.3.2) wants it written: it is, so every
+// download carries it. Returns `ref`.
+function identityCidToGid(ref) {
+	const d = ref.get("DescendantFonts", 0);
+	if (d.isDictionary() && d.get("Subtype").isName() && d.get("Subtype").asName() === "CIDFontType2" && d.get("CIDToGIDMap").isNull())
+		d.put("CIDToGIDMap", "Identity");
+	return ref;
 }
 
 // App addition: destroys the fallback Font objects cached for `doc`. Call it
@@ -671,7 +683,7 @@ export function subsetFallbackFonts(mupdf, doc) {
 			const hex = [...fb.used].map((g) => hexCode(g, 2)).join("");
 			scratch.insertPage(-1, scratch.addPage([0, 0, 100, 100], 0, { Font: { F: ref } }, `BT /F 10 Tf <${hex}> Tj ET`));
 			scratch.subsetFonts();
-			const small = doc.graftObject(ref);
+			const small = identityCidToGid(doc.graftObject(ref)); // App change: see identityCidToGid
 			const smallV = fb.refV ? verticalTwin(doc, small) : null;
 			const swap = new Map([[fb.ref.asIndirect(), small]]);
 			if (fb.refV) swap.set(fb.refV.asIndirect(), smallV);
