@@ -1,11 +1,13 @@
 // Phone bottom sheets, driven by the `sheet` signal: "pages" (the thumbnail grid; picking a page
-// closes it) and "more" (open another PDF, share, zoom, language, update, close document, then
-// the privacy note and the source link). On phones they stand in for the desktop's thumbnails
-// panel, zoom controls and More menu. Styled by styles/phone.css (.sheet-pages, .sheet-more).
+// closes it) and "more" (open another PDF, share, download with options, zoom, language,
+// update, close document, then the privacy note and the source link). On phones they stand in
+// for the desktop's thumbnails panel, zoom controls, More menu and the chevron of the Download
+// button. Styled by styles/phone.css (.sheet-pages, .sheet-more).
 //
-// Open, Share and Close document close the sheet first: they lead somewhere else (the file
-// picker, the share sheet, the home page). Zoom, language and update keep it open, so their
-// effect shows behind it (an update that needs a confirmation asks above it).
+// Open, Share, Download with options and Close document close the sheet first: they lead
+// somewhere else (the file picker, the share sheet, the download options sheet, the home page).
+// Zoom, language and update keep it open, so their effect shows behind it (an update that needs
+// a confirmation asks above it).
 import type { ComponentChildren } from "preact";
 import { useEffect, useId } from "preact/hooks";
 import { LOCALE_NAMES, otherLocale, pageCount, t, toggleLocale } from "../i18n";
@@ -16,11 +18,11 @@ import { MAX_ZOOM, MIN_ZOOM } from "../viewer/layout";
 import type { OpenDoc } from "../viewer/model";
 import { PageThumbnails } from "../viewer/Thumbnails";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
-import { closeDocument, share, updateApp } from "./actions";
+import { closeDocument, openDownloadOptions, share, updateApp } from "./actions";
 import { openFilePicker } from "./filePicker";
 import {
-  IconClose, IconCode, IconFitWidth, IconGlobe, IconMinus, IconOpen, IconPlus, IconShare, IconShield, IconUpdate,
-  IconZoom,
+  IconClose, IconCode, IconDownload, IconFitWidth, IconGlobe, IconMinus, IconOpen, IconPlus, IconShare, IconShield,
+  IconUpdate, IconZoom,
 } from "./icons";
 import { canSharePdf, shortcuts } from "./media";
 import { Sheet } from "./Sheet";
@@ -47,10 +49,13 @@ function Row(p: {
   lang?: string;
   /** Highlighter yellow: an update is ready. */
   accent?: boolean;
+  /** It opens a dialog of its own (aria-haspopup). */
+  opensDialog?: boolean;
   onClick: (e: MouseEvent) => void;
 }) {
   return (
-    <button type="button" class={p.accent ? "more-row is-accent" : "more-row"} title={p.tip} onClick={p.onClick}>
+    <button type="button" class={p.accent ? "more-row is-accent" : "more-row"} title={p.tip}
+      aria-haspopup={p.opensDialog ? "dialog" : undefined} onClick={p.onClick}>
       {p.icon}
       <span class="more-label" lang={p.lang}>{p.label}</span>
     </button>
@@ -135,6 +140,15 @@ function MoreActions() {
             }}
           />
         )}
+        <Row
+          icon={<IconDownload />}
+          label={t("more.downloadOptions")}
+          opensDialog
+          onClick={(e) => {
+            leaveSheet(e);
+            openDownloadOptions();
+          }}
+        />
       </div>
       <ZoomRow />
       <div class="more-section">

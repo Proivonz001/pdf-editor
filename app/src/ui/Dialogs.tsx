@@ -1,12 +1,14 @@
 // The dialogs the app can show (one at a time, from the `dialog` signal): confirm, alert,
-// password for protected PDFs, and "ready to share" when the share sheet needs another tap.
+// password for protected PDFs, "ready to share" when the share sheet needs another tap, and the
+// download options and PDF/A questions (ui/DownloadOptions.tsx).
 // Cancel is always the quiet secondary button; a confirm that throws edits away is red, and
 // it is Cancel that gets the focus, so Enter never loses work by accident.
 import { useState } from "preact/hooks";
 import { t } from "../i18n";
-import { dialog, showDialog, type DialogState } from "../state";
+import { dialog, doc, showDialog, type DialogState } from "../state";
 import { openFile, shareFile } from "./actions";
 import { Dialog } from "./Dialog";
+import { DownloadOptions, PdfaBlockedDialog, PdfaConfirmDialog } from "./DownloadOptions";
 import { IconShare } from "./icons";
 
 type Of<K extends DialogState["kind"]> = Extract<DialogState, { kind: K }>;
@@ -129,5 +131,11 @@ export function Dialogs() {
     case "alert": return <AlertDialog key={key} state={d} />;
     case "password": return <PasswordDialog key={key} state={d} />;
     case "share": return <ShareDialog key={key} state={d} />;
+    case "download-options": {
+      const open = doc.value;
+      return open ? <DownloadOptions key={key} doc={open} purpose={d.purpose} /> : null;
+    }
+    case "pdfa-blocked": return <PdfaBlockedDialog key={key} state={d} />;
+    case "pdfa-confirm": return <PdfaConfirmDialog key={key} state={d} />;
   }
 }

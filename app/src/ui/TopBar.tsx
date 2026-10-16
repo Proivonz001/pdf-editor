@@ -1,30 +1,36 @@
 // Top bar, in three forms:
 // - no document (desktop and phone): the brand, then "Update available" and the language switch;
 // - desktop with a document: brand, file chip (name and "Edited"), Undo/Redo, zoom, Open,
-//   Share, Download PDF, Update and a "More" menu (language, source code, close document);
+//   Share, Download PDF (a split button: the one-tap download, and a chevron that opens the
+//   download options), Update and a "More" menu (language, what the bar has no room for, source
+//   code, close document);
 // - phone with a document: Back (closes it), the file name over "Page n of m · Edited",
-//   Undo, Redo and Download. Zoom, share, language, update and open live in the phone "More"
-//   sheet (PhoneSheets), editing in the tab bar.
-// Width budget of the desktop bar (nothing may overflow at 640 px, with 44 px buttons on touch
+//   Undo, Redo and Download. Zoom, share, the download options, language, update and open live
+//   in the phone "More" sheet (PhoneSheets), editing in the tab bar.
+// Width budget of the desktop bar (nothing may overflow from 640 px, with 44 px buttons on touch
 // screens, and the file name must stay readable): below 768 px the zoom controls move into the
 // More menu (pinch and Ctrl + wheel still zoom). Share and Update stay in the bar from 1024 px,
 // or from 768 px with a mouse (Share is only offered on touch screens anyway); otherwise they
-// move into More too, which then carries the update badge. shell.css does the
-// rest (app name from 900 px, "Edited" as a dot below 900 px). After the engine lost the
-// document ("broken"), Undo and Redo stay off; Download still works.
+// move into More too, which then carries the update badge. On touch screens the tightest case is
+// not 640 px but 768 px, where the zoom group comes back with 44 px buttons and the chevron:
+// there Open moves into More as well (below 1024 px), and it keeps its label only from 1200 px
+// (at 1024 px Share, Update and "Modificato" need the room). shell.css does the rest (app name
+// from 900 px, "Edited" as a dot below 900 px). After the engine lost the document ("broken"),
+// Undo and Redo stay off; Download still works. While a download runs, its two buttons stay
+// focusable but do nothing (aria-disabled), so the focus is still there after its questions.
 import { computed } from "@preact/signals";
 import { LOCALE_NAMES, otherLocale, t, toggleLocale } from "../i18n";
 import { SOURCE_URL } from "../links";
 import { updateInstalled, updateReady } from "../platform/pwa";
-import { busy, currentPage, dirty, doc, editingStopped, fitMode, history, zoom } from "../state";
+import { busy, currentPage, dirty, doc, downloadRunning, editingStopped, fitMode, history, zoom } from "../state";
 import { MAX_ZOOM, MIN_ZOOM } from "../viewer/layout";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
-import { closeDocument, download, redo, share, undo, updateApp } from "./actions";
+import { closeDocument, download, openDownloadOptions, redo, share, undo, updateApp } from "./actions";
 import { ToolButton } from "./Button";
 import { openFilePicker } from "./filePicker";
 import {
-  IconBack, IconClose, IconCode, IconDownload, IconFitWidth, IconGlobe, IconMore, IconOpen, IconRedo, IconShare,
-  IconUndo, IconUpdate, IconZoomIn, IconZoomOut,
+  IconBack, IconChevronDown, IconClose, IconCode, IconDownload, IconFitWidth, IconGlobe, IconMore, IconOpen,
+  IconRedo, IconShare, IconUndo, IconUpdate, IconZoomIn, IconZoomOut,
 } from "./icons";
 import { Logo } from "./Logo";
 import { canSharePdf, hasZoomRoom, isCoarse, isNarrow, isRoomy, isWide, shortcuts } from "./media";
@@ -32,6 +38,10 @@ import { MenuButton, type MenuItem } from "./Menu";
 
 /** Room for Share and Update too: from 1024 px, or from 768 px with 36 px (mouse) buttons. */
 const extrasInBar = computed(() => isRoomy.value || (hasZoomRoom.value && !isCoarse.value));
+/** Open in the bar: always with a mouse; with 44 px touch buttons only from 1024 px. */
+const openInBar = computed(() => isRoomy.value || !isCoarse.value);
+/** Open with its label: from 1024 px with a mouse, from 1200 px on touch screens. */
+const openLabelled = computed(() => isWide.value || (isRoomy.value && !isCoarse.value));
 
 function Brand() {
   return (
@@ -79,11 +89,44 @@ function UndoRedo() {
   );
 }
 
-function DownloadButton({ showLabel }: { showLabel: boolean }) {
+/**
+ * A download is under way (its check, questions, save dialog, or the wait behind an edit), or
+ * the engine is writing one: no second download, and no options, meanwhile.
+ */
+const saving = computed(() => downloadRunning.value || busy.value === "save" || busy.value === "check");
+
+/**
+ * Download PDF, the one-tap download. A ToolButton in all but one thing: while `saving` it is
+ * aria-disabled rather than disabled, so it keeps the focus (a disabled button would drop it to
+ * <body>, and the PDF/A questions would give it back there).
+ */
+function DownloadButton({ showLabel, class: cls }: { showLabel: boolean; class?: string }) {
+  const label = t("toolbar.downloadPdf");
+  const classes = ["btn tool btn-primary", showLabel && "has-label", cls].filter(Boolean).join(" ");
   return (
-    <ToolButton icon={<IconDownload />} label={t("toolbar.downloadPdf")}
-      tip={t("toolbar.downloadTip", { shortcut: shortcuts.save })} showLabel={showLabel} variant="primary"
-      disabled={busy.value === "save"} onClick={() => void download()} />
+    <button type="button" class={classes} aria-label={label} title={t("toolbar.downloadTip", { shortcut: shortcuts.save })}
+      aria-disabled={saving.value || undefined} onClick={() => { if (!saving.peek()) void download(); }}>
+      <IconDownload />
+      {showLabel && <span class="btn-label" aria-hidden="true">{label}</span>}
+    </button>
+  );
+}
+
+/**
+ * Desktop: Download PDF (one tap) joined to a chevron that opens "How do you want to download
+ * it?". One shape, two real buttons, each with its own name; both aria-disabled while saving.
+ */
+function SplitDownload() {
+  const label = t("toolbar.downloadOptions");
+  return (
+    <div class="split-btn">
+      <DownloadButton showLabel class="split-main" />
+      <button type="button" class="btn btn-primary split-more" aria-label={label} title={label}
+        aria-haspopup="dialog" aria-disabled={saving.value || undefined}
+        onClick={() => { if (!saving.peek()) openDownloadOptions(); }}>
+        <IconChevronDown />
+      </button>
+    </div>
   );
 }
 
@@ -150,6 +193,7 @@ export function TopBar() {
   const percent = `${Math.round(z * 100)}%`;
   const zoomShown = hasZoomRoom.value;
   const extrasShown = extrasInBar.value;
+  const openShown = openInBar.value;
   const shareable = canSharePdf();
   const edited = dirty.value;
   const next = otherLocale();
@@ -158,6 +202,9 @@ export function TopBar() {
   const items: MenuItem[] = [
     { key: "lang", label: LOCALE_NAMES[next], lang: next, icon: <IconGlobe />, onSelect: toggleLocale },
   ];
+  if (!openShown) {
+    items.push({ key: "open", label: t("toolbar.open"), icon: <IconOpen />, onSelect: openFilePicker });
+  }
   if (!zoomShown) {
     items.push(
       { key: "zoom-out", label: t("toolbar.zoomOut"), icon: <IconZoomOut />, onSelect: zoomOut, disabled: z <= MIN_ZOOM },
@@ -209,12 +256,14 @@ export function TopBar() {
           </>
         )}
         <div class="topbar-group topbar-actions">
-          <ToolButton icon={<IconOpen />} label={t("toolbar.open")} tip={t("toolbar.openTip", { shortcut: shortcuts.open })}
-            showLabel={isRoomy.value} variant="secondary" onClick={openFilePicker} />
+          {openShown && (
+            <ToolButton icon={<IconOpen />} label={t("toolbar.open")} tip={t("toolbar.openTip", { shortcut: shortcuts.open })}
+              showLabel={openLabelled.value} variant="secondary" onClick={openFilePicker} />
+          )}
           {extrasShown && shareable && (
             <ToolButton icon={<IconShare />} label={t("toolbar.share")} onClick={() => void share()} />
           )}
-          <DownloadButton showLabel />
+          <SplitDownload />
           {extrasShown && update && <UpdateButton compact={!isWide.value} />}
         </div>
         <MenuButton label={t("toolbar.more")} icon={<IconMore />} items={items} badge={update && !extrasShown} />

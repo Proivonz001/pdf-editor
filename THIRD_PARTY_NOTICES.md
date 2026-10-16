@@ -61,7 +61,7 @@ https://mupdf.com/downloads/archive/mupdf-1.27.1-source.tar.gz).
 | zlib | 1.3.1 | zlib License | `thirdparty/zlib/LICENSE` |
 | jbig2dec | 0.20 | AGPL-3.0-or-later (Artifex) | `thirdparty/jbig2dec/COPYING` |
 | Gumbo HTML5 parser | 0.10.1 | Apache-2.0 (text below) | `thirdparty/gumbo-parser/COPYING` |
-| URW++ base 35 fonts: Nimbus Sans, Nimbus Roman, Nimbus Mono PS, Standard Symbols PS, Dingbats (MuPDF's built-in Base-14 fonts; the new app also writes subsets of them into edited PDFs) | 2016 | SIL Open Font License 1.1 (text below) | `resources/fonts/urw/OFL.txt` |
+| URW++ base 35 fonts: Nimbus Sans, Nimbus Roman, Nimbus Mono PS, Standard Symbols PS, Dingbats (MuPDF's built-in Base-14 fonts; the new app also writes subsets of them into edited PDFs, and whole copies into the PDF/A files it writes) | 2016 | SIL Open Font License 1.1 (text below) | `resources/fonts/urw/OFL.txt` |
 | Droid Sans Fallback (built-in CJK font; the new app writes subsets of it into edited PDFs) | | Apache-2.0 (text below) | `resources/fonts/droid/NOTICE` |
 | Small files in MuPDF's `source/fitz/` with their own terms: UCDN (Unicode data, Grigori Goronzy, ISC, text below), AES (XySSL, Christophe Devine, BSD-style), ARC4 (Kalle Kaukonen, BSD-style), MD5 (Alexander Peslyak, public domain), SHA-2 (from 7-Zip / Crypto++, public domain), Unicode Bidirectional Algorithm reference code (ASMUS, Inc., Unicode terms of use) | | as stated | headers of `ucdn.c`, `crypt-aes.c`, `crypt-arc4.c`, `crypt-md5.c`, `crypt-sha2.c`, `bidi-std.c` |
 

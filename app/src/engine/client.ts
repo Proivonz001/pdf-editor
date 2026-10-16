@@ -1,5 +1,5 @@
 // Main-thread side of the engine: starts the worker and turns messages into promises.
-import type { Op, RequestOf, ResponseMessage, ResultMap } from "./protocol";
+import type { Op, RequestOf, ResponseMessage, ResultMap, SaveOptions } from "./protocol";
 // The URL of the worker chunk: Vite bundles worker.ts as a worker entry for this import.
 import workerPath from "./worker.ts?worker&url";
 
@@ -87,8 +87,11 @@ export class EngineClient {
   redo() {
     return this.call<"redo">({ op: "redo" });
   }
-  save() {
-    return this.call<"save">({ op: "save" });
+  save(options: SaveOptions = { format: "pdf", password: { mode: "none" } }) {
+    return this.call<"save">({ op: "save", options });
+  }
+  pdfaCheck() {
+    return this.call<"pdfaCheck">({ op: "pdfaCheck" });
   }
   close() {
     return this.call<"close">({ op: "close" });

@@ -71,17 +71,18 @@ export function App() {
     document.title = d ? `${d.fileName} – ${appName}` : appName;
   }, [d, appName]);
 
+  // Keys: a fresh panel for each document; siblings need different keys, hence the prefixes.
   return (
     <div class={d ? "app has-doc" : "app"} data-layout={narrow ? "phone" : "desktop"}>
       <TopBar />
       {d && !narrow && <ToolRail />}
-      {d && pagesPanelOpen.value && <PagesPanel key={d.id} doc={d} />}
+      {d && pagesPanelOpen.value && <PagesPanel key={`pages:${d.id}`} doc={d} />}
       <main class="main" aria-busy={busy.value !== null || opening.value !== null}>
         {d ? <Viewer key={d.id} doc={d} /> : opening.value ? <OpeningState /> : <EmptyState />}
       </main>
-      {d && detailsPanelOpen.value && <DetailsPanel key={d.id} doc={d} />}
+      {d && detailsPanelOpen.value && <DetailsPanel key={`details:${d.id}`} doc={d} />}
       {d && narrow && <TabBar />}
-      {d && narrow && <PhoneSheets key={d.id} doc={d} />}
+      {d && narrow && <PhoneSheets key={`sheets:${d.id}`} doc={d} />}
       <DropOverlay />
       <Toasts />
       <Dialogs />

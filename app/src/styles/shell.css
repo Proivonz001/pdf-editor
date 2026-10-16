@@ -2,11 +2,13 @@
    tokens.css.
 
    Width budget of the desktop top bar: at 640 px it must hold the logo, the file chip,
-   Undo/Redo, Open, "Download PDF" (always labelled) and More, with 44 px buttons on touch
-   screens. So TopBar.tsx moves the whole zoom group (zoom out, value, zoom in, Fit width) into
-   the More menu below 768 px, and keeps Share and Update in the bar only from 1024 px, or from
-   768 px with a mouse (in More otherwise). Here the spacing tightens below 768 px, and below
-   900 px the app name is hidden and the "Edited" pill becomes a dot. */
+   Undo/Redo, Open, "Download PDF" (always labelled, with its options chevron) and More, with
+   44 px buttons on touch screens. So TopBar.tsx moves the whole zoom group (zoom out, value,
+   zoom in, Fit width) into the More menu below 768 px, and keeps Share and Update in the bar
+   only from 1024 px, or from 768 px with a mouse (in More otherwise). On touch screens the
+   tightest case is 768 px, where the zoom group is back with 44 px buttons: Open moves into
+   More there too (below 1024 px), and is labelled only from 1200 px. Here the spacing tightens
+   below 768 px, and below 900 px the app name is hidden and the "Edited" pill becomes a dot. */
 
 /* --- Top bar: shared ----------------------------------------------------------------------- */
 
@@ -107,6 +109,46 @@
 .topbar .btn.tool.has-label.btn-secondary,
 .topbar .lang-btn {
   padding: 0 12px 0 10px;
+}
+
+/* Download PDF and its options chevron (TopBar.tsx, SplitDownload): one shape, two buttons,
+   parted by a thin line in the button's own ink. The chevron is narrow with a mouse and 44 px
+   wide on touch screens. A focused half draws its ring above the other one. */
+.split-btn {
+  flex-shrink: 0;
+  display: flex;
+}
+
+.topbar .split-btn .split-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.split-btn .split-more {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--on-accent) 40%, transparent);
+}
+
+.split-btn .btn:focus-visible {
+  z-index: 1;
+}
+
+@media (pointer: coarse) {
+  .split-btn .split-more {
+    width: var(--tap);
+    min-width: var(--tap);
+  }
+}
+
+/* Contrast themes drop the shadow: a real border parts the halves there. */
+@media (forced-colors: active) {
+  .split-btn .split-more {
+    border-left-color: ButtonText;
+  }
 }
 
 /* Small highlighter dot: edits not downloaded (phone top bar, details panel, and the "Edited"

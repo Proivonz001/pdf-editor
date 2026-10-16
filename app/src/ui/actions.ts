@@ -1,19 +1,20 @@
 // What the buttons, shortcuts and the line editor do: open, close, edit mode, edit, undo/redo,
-// download, share, update. Engine changes run one at a time (a promise chain), so an Undo clicked
-// while an edit is being written applies after it, never in between. Download, share, open,
-// close, update and leaving edit mode first write what is still typed in the line editor
-// (flushEditor), so it is neither left out of the file nor lost without a warning.
+// download (one tap, or with options: PDF/A, password), share, update. Engine changes run one at
+// a time (a promise chain), so an Undo clicked while an edit is being written applies after it,
+// never in between. Download, share, open, close, update and leaving edit mode first write what
+// is still typed in the line editor (flushEditor), so it is neither left out of the file nor
+// lost without a warning.
 import { batch } from "@preact/signals";
 import { EngineError } from "../engine/client";
-import type { LineInfo } from "../engine/protocol";
+import type { DocInfo, LineInfo, PdfaReport, SaveFormat, SaveOptions, SavePassword } from "../engine/protocol";
 import { t } from "../i18n";
 import { applyUpdate } from "../platform/pwa";
 import {
-  busy, confirmDialog, currentPage, doc, editingLine, editingStopped, editMode, engine, engineStatus, fitMode,
-  flushEditor, hasUnsavedWork, history, markSaved, opening, recordHistory, resetHistory, saveKey, sheet, showDialog,
-  showToast, type BusyKind,
+  busy, confirmDialog, currentPage, dialog, dismissToast, doc, downloadRunning, editingLine, editingStopped, editMode,
+  engine, engineStatus, fitMode, flushEditor, hasUnsavedWork, history, markSaved, opening, recordHistory,
+  resetHistory, saveKey, sheet, showDialog, showToast, type BusyKind, type DialogState, type SavePurpose,
 } from "../state";
-import { createPages, type PageModel } from "../viewer/model";
+import { createPages, type OpenDoc, type PageModel } from "../viewer/model";
 import { rescueFocus, viewerScroller } from "./focus";
 
 // ---------------------------------------------------------------------------------------------
@@ -81,10 +82,14 @@ export function isPdfFile(file: File) {
   return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
 }
 
-/** "report.pdf" → "report-edited.pdf" (IT: "report-modificato.pdf"). */
-export function outputName(fileName: string) {
+/**
+ * "report.pdf" → "report-edited.pdf" (IT: "report-modificato.pdf"); as PDF/A
+ * "report-edited-PDFA.pdf" (a source already called "…-PDFA" does not get it twice).
+ */
+export function outputName(fileName: string, format: SaveFormat = "pdf") {
   const base = fileName.replace(/\.pdf$/i, "") || "document";
-  return `${base}${t("download.suffix")}.pdf`;
+  if (format === "pdf") return `${base}${t("download.suffix")}.pdf`;
+  return `${base.replace(/-PDFA$/i, "") || "document"}${t("download.suffix")}-PDFA.pdf`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -124,7 +129,11 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
     const result = await engine().open(bytes, opts.password);
     if (seq !== openSeq) return;
     if (result.ok) {
-      const info = { pageCount: result.pageCount, pages: result.pages, encrypted: result.encrypted, title: result.title };
+      const info: DocInfo = {
+        pageCount: result.pageCount, pages: result.pages, encrypted: result.encrypted,
+        needsPassword: result.needsPassword, canKeepPassword: result.canKeepPassword, pdfa: result.pdfa,
+        signatures: result.signatures, title: result.title,
+      };
       batch(() => {
         fitMode.value = true;
         currentPage.value = 0;
@@ -262,6 +271,63 @@ export const redo = () => historyStep("redo");
 
 // ---------------------------------------------------------------------------------------------
 // Download and share
+//
+// One tap (Download, Ctrl+S, Share) keeps what the file is: a PDF/A stays PDF/A, a PDF that needed
+// a password to open stays protected with it. "More download options" picks the format and the
+// password for one download (or one share, when a password must be chosen anew for it). Before a
+// PDF/A the engine checks what the conversion would do: what makes it impossible is explained (a
+// normal PDF is offered instead), what it removes or changes is asked first, and a clean file
+// downloads straight away.
+
+/** What one download writes: the format, and the password the file gets as a normal PDF. */
+export interface DownloadChoice {
+  format: SaveFormat;
+  /** Not sent for a PDF/A (which cannot have one), but kept for the normal PDF offered instead. */
+  password: SavePassword;
+}
+
+/**
+ * The one-tap choice for a document. A file that needs a password cannot be a valid PDF/A
+ * (PDF/A forbids encryption), whatever its metadata claims: there the password wins, so a
+ * protected file never comes out unprotected without being asked.
+ */
+export function defaultChoice(info: DocInfo): DownloadChoice {
+  return {
+    format: info.pdfa && !info.needsPassword ? "pdfa-2b" : "pdf",
+    password: info.canKeepPassword ? { mode: "keep" } : { mode: "none" },
+  };
+}
+
+/**
+ * A file that needed a password the download cannot be protected with again (one the engine
+ * cannot carry or other readers would read differently, or the owner password it was opened
+ * with): one tap must not quietly drop the protection, so it opens the download options, where
+ * the user picks a new password or none.
+ */
+const mustChoosePassword = (info: DocInfo) => info.needsPassword && !info.canKeepPassword;
+
+/**
+ * The regular PDF offered instead of a PDF/A carries the one-tap password, which is none for
+ * such a file: written as it is, it would drop the protection without asking.
+ */
+const dropsProtection = (d: OpenDoc, choice: DownloadChoice) =>
+  choice.format === "pdf" && choice.password.mode === "none" && mustChoosePassword(d.info);
+
+/** What the engine is asked for: a PDF/A never carries a password. */
+export function saveOptionsFor(choice: DownloadChoice): SaveOptions {
+  return choice.format === "pdfa-2b"
+    ? { format: "pdfa-2b", password: { mode: "none" } }
+    : { format: "pdf", password: choice.password };
+}
+
+/**
+ * Removals always need a yes; of the warnings, only text that may move and a signature that
+ * stops being valid. A replaced blend mode or colour declaration is not worth a question.
+ */
+export function pdfaNeedsConfirm(report: PdfaReport): boolean {
+  return report.removals.length > 0 ||
+    report.warnings.some((w) => w.code === "text-may-shift" || w.code === "signature-invalid");
+}
 
 // The File System Access API is not in TypeScript's DOM types yet.
 interface SaveFilePickerOptions {
@@ -270,11 +336,82 @@ interface SaveFilePickerOptions {
 }
 type SaveFilePicker = (options?: SaveFilePickerOptions) => Promise<FileSystemFileHandle>;
 
-/** Build the edited PDF in the engine. */
-async function buildPdf(): Promise<ArrayBuffer | null> {
+type PdfaQuestion = Extract<DialogState, { kind: "pdfa-blocked" | "pdfa-confirm" }>;
+/** A question without its answer callback (Omit applied to each kind separately). */
+type Unanswered<Q> = Q extends unknown ? Omit<Q, "resolve"> : never;
+
+/**
+ * Ask a PDF/A question; resolves false on Cancel, Escape, or another dialog taking its place.
+ * The check takes a while, and Close, Open and Update still work meanwhile: when the user has
+ * opened one of their questions (or any other dialog), that one stays, and this download stops
+ * with a word instead of answering it "no" behind their back.
+ */
+function ask(question: Unanswered<PdfaQuestion>): Promise<boolean> {
+  if (dialog.peek()) {
+    showToast("info", question.purpose === "share" ? t("share.cancelled") : t("download.cancelled"));
+    return Promise.resolve(false);
+  }
+  return new Promise((resolve) => {
+    showDialog({ ...question, resolve } as PdfaQuestion);
+  });
+}
+
+/** Run the engine's PDF/A check, with a status toast while it works. Null when it failed. */
+async function checkPdfa(d: OpenDoc): Promise<PdfaReport | null> {
+  const status = showToast("info", t("pdfa.checking"), 0);
   try {
-    return (await engine().save()).bytes;
+    return await exclusive("check", async () => {
+      if (doc.peek() !== d) return null;
+      try {
+        return await engine().pdfaCheck();
+      } catch (e) {
+        reportEngineError(e, t("pdfa.checkFailed"));
+        return null;
+      }
+    });
+  } finally {
+    dismissToast(status);
+  }
+}
+
+/**
+ * What a download ends with: nothing more to do, or "choose-password" when the regular PDF taken
+ * instead of a PDF/A would drop the file's password (dropsProtection): the options open then.
+ */
+type Delivered = "choose-password" | void;
+
+/**
+ * For a PDF/A: check first, then explain or ask. Returns what to write (the normal PDF when the
+ * user took it instead), "choose-password" (see Delivered), or null to stop. Any other choice
+ * goes through unchanged.
+ */
+async function settleChoice(
+  d: OpenDoc, choice: DownloadChoice, purpose: SavePurpose,
+): Promise<DownloadChoice | "choose-password" | null> {
+  if (choice.format !== "pdfa-2b") return choice;
+  await flushEditor(); // the check must see the text still in the line editor
+  const report = await checkPdfa(d);
+  if (!report || doc.peek() !== d) return null;
+  let ok = true;
+  if (report.blockers.length) {
+    ok = await ask({ kind: "pdfa-blocked", blockers: report.blockers, purpose });
+    choice = { format: "pdf", password: choice.password };
+  } else if (pdfaNeedsConfirm(report)) {
+    ok = await ask({ kind: "pdfa-confirm", removals: report.removals, warnings: report.warnings, purpose });
+  }
+  if (!ok || doc.peek() !== d) return null;
+  return dropsProtection(d, choice) ? "choose-password" : choice;
+}
+
+/**
+ * Build the file in the engine. "blocked": the engine refused the PDF/A when writing it (its own
+ * final check); null: it failed, and the user was told.
+ */
+async function buildPdf(choice: DownloadChoice): Promise<ArrayBuffer | "blocked" | null> {
+  try {
+    return (await engine().save(saveOptionsFor(choice))).bytes;
   } catch (e) {
+    if (e instanceof EngineError && e.code === "pdfa-blocked") return "blocked";
     reportEngineError(e, t("download.failed"));
     return null;
   }
@@ -295,30 +432,74 @@ function downloadBlob(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-let downloading = false;
+function doneMessage(choice: DownloadChoice, name: string): string {
+  if (choice.format === "pdfa-2b") return t("download.donePdfa", { name });
+  if (choice.password.mode !== "none") return t("download.doneProtected", { name });
+  return t("download.done", { name });
+}
 
 /**
- * Download the edited PDF as "<name>-edited.pdf". With the File System Access API the user
- * picks where (asked first, while the click still counts as a user gesture); otherwise it is a
- * normal download. Afterwards the edits count as saved.
+ * Download the edited PDF as "<name>-edited.pdf" ("…-PDFA.pdf" for a PDF/A), with `choice` from
+ * the download options, or else the one-tap choice. With the File System Access API the user
+ * picks where, asked while the click still counts as a user gesture (the click that started it,
+ * or the one that answered a PDF/A question); otherwise, or when the gesture has expired
+ * meanwhile, it is a normal download. Afterwards the edits count as saved.
  *
  * One download at a time: a second click or Ctrl+S while the save dialog is open is ignored
  * (Chrome would refuse a second dialog, and that must not turn into an extra plain download).
  */
-export async function download() {
-  if (downloading) return;
-  downloading = true;
-  try {
-    await downloadOnce();
-  } finally {
-    downloading = false;
-  }
+export function download(choice?: DownloadChoice) {
+  return start("download", choice);
 }
 
-async function downloadOnce() {
+/**
+ * Share the edited PDF through the system share sheet (touch devices), with `choice` from the
+ * options, or else the one-tap choice. A building that outlasts the tap's user gesture asks for
+ * one more tap (shareFile).
+ */
+export function share(choice?: DownloadChoice) {
+  return start("share", choice);
+}
+
+/** Download or share, one at a time (downloadRunning), its PDF/A questions included. */
+async function start(purpose: SavePurpose, choice: DownloadChoice | undefined) {
   const d = doc.peek();
   if (!d) return;
-  const name = outputName(d.fileName);
+  if (downloadRunning.peek()) {
+    // A one-tap repeat is simply ignored; a choice made in the options must not vanish silently.
+    if (choice) showToast("info", t("download.busy"));
+    return;
+  }
+  if (!choice && mustChoosePassword(d.info)) {
+    openDownloadOptions(purpose);
+    return;
+  }
+  downloadRunning.value = true;
+  let next: Delivered;
+  try {
+    next = await deliver(d, choice ?? defaultChoice(d.info), purpose);
+  } finally {
+    downloadRunning.value = false;
+  }
+  // The options open once this download is over (they refuse to open while one runs).
+  if (next === "choose-password" && doc.peek() === d) openDownloadOptions(purpose);
+}
+
+/** Settle the choice and write the file; when the engine still refuses the PDF/A, offer a normal PDF. */
+async function deliver(d: OpenDoc, choice: DownloadChoice, purpose: SavePurpose): Promise<Delivered> {
+  const settled = await settleChoice(d, choice, purpose);
+  if (settled === null) return;
+  if (settled === "choose-password") return settled;
+  const outcome = purpose === "download" ? await writeDownload(d, settled) : await writeShare(d, settled);
+  if (outcome !== "blocked") return;
+  const fallback = await ask({ kind: "pdfa-blocked", blockers: [], purpose });
+  if (!fallback || doc.peek() !== d) return;
+  const regular: DownloadChoice = { format: "pdf", password: settled.password };
+  return dropsProtection(d, regular) ? "choose-password" : deliver(d, regular, purpose);
+}
+
+async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"blocked" | void> {
+  const name = outputName(d.fileName, choice.format);
   const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
   let handle: FileSystemFileHandle | null = null;
   if (picker) {
@@ -340,10 +521,11 @@ async function downloadOnce() {
     }
   }
   await flushEditor();
-  await exclusive("save", async () => {
+  return exclusive("save", async () => {
     if (doc.peek() !== d) return;
     const key = saveKey();
-    const bytes = await buildPdf();
+    const bytes = await buildPdf(choice);
+    if (bytes === "blocked") return "blocked";
     if (!bytes) return;
     try {
       if (handle) {
@@ -354,7 +536,7 @@ async function downloadOnce() {
         downloadBlob(new Blob([bytes], { type: "application/pdf" }), name);
       }
       markSaved(key); // ignored if another file was opened while writing
-      showToast("info", t("download.done", { name: handle?.name ?? name }));
+      showToast("info", doneMessage(choice, handle?.name ?? name));
     } catch (e) {
       console.error(e);
       showToast("error", t("download.failed"));
@@ -362,20 +544,32 @@ async function downloadOnce() {
   });
 }
 
-/** Share the edited PDF through the system share sheet (touch devices). */
-export async function share() {
-  const d = doc.peek();
-  if (!d) return;
-  const name = outputName(d.fileName);
+async function writeShare(d: OpenDoc, choice: DownloadChoice): Promise<"blocked" | void> {
   await flushEditor();
-  await exclusive("save", async () => {
+  return exclusive("save", async () => {
     if (doc.peek() !== d) return;
     const key = saveKey();
-    const bytes = await buildPdf();
+    const bytes = await buildPdf(choice);
+    if (bytes === "blocked") return "blocked";
     if (!bytes) return;
-    const file = new File([bytes], name, { type: "application/pdf" });
+    const file = new File([bytes], outputName(d.fileName, choice.format), { type: "application/pdf" });
     await shareFile(file, key, true);
   });
+}
+
+/**
+ * "More download options": format and password for one download, or one share when a file whose
+ * password must be chosen anew is shared (a dialog; a sheet on phones). Not while a download
+ * runs: the choice made there would be refused, or a PDF/A question would take its place. The
+ * top bar's chevron is off then; the phone's "Download with options…" row gets a word instead.
+ */
+export function openDownloadOptions(purpose: SavePurpose = "download") {
+  if (!doc.peek() || dialog.peek()) return;
+  if (downloadRunning.peek()) {
+    showToast("info", t("download.busy"));
+    return;
+  }
+  showDialog({ kind: "download-options", purpose });
 }
 
 /**

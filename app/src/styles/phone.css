@@ -1,5 +1,6 @@
-/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the bottom sheets (ui/Sheet.tsx) and
-   the rows of the "More" sheet (ui/PhoneSheets.tsx). The thumbnails inside the pages sheet are
+/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the bottom sheets (ui/Sheet.tsx), the
+   rows of the "More" sheet (ui/PhoneSheets.tsx) and the download options sheet
+   (ui/DownloadOptions.tsx). The thumbnails inside the pages sheet are
    styled by pages.css; this file only gives them their room. Colours only from tokens.css.
 
    The tab bar and the sheets take pans only, no pinch or double-tap zoom: zooming the page from
@@ -283,6 +284,23 @@
   min-height: 0;
 }
 
+/* --- Download options sheet ------------------------------------------------------------------
+   The form of the desktop dialog (overlays.css, .dl-*) under the sheet's own header; it scrolls
+   when the keyboard leaves little room. Cancel and Download share the width. */
+
+.sheet-download .sheet-content {
+  padding: 16px 20px 20px;
+}
+
+.sheet-download .dialog-actions {
+  flex-wrap: nowrap;
+}
+
+.sheet-download .dialog-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 /* --- More sheet -----------------------------------------------------------------------------
    Rows line up on two columns: the icons 20 px from the sheet's edge (content 8 + row 12),
    the labels after them (icon 20 + gap 14). The title in the header starts at 20 px too. */
@@ -427,13 +445,6 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-align: center;
-}
-
-/* At a limit: still focusable (aria-disabled), but it looks off and does nothing. */
-.more-stepper .btn[aria-disabled="true"] {
-  background: transparent;
-  opacity: 0.4;
-  cursor: default;
 }
 
 .more-zoom .more-fit:not([aria-pressed="true"]) {

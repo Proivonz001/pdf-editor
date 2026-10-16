@@ -1,6 +1,7 @@
 // The document viewer: a scroller with the pages stacked vertically, laid out from their sizes
-// in points × zoom. Only pages near the viewport are rendered (see PageView). Above it, in edit
-// mode, the edit banner (what to do, and "Done"); over it, the page indicator and the busy bar.
+// in points × zoom. Only pages near the viewport are rendered (see PageView). Above it, for a
+// digitally signed PDF, a notice until it is dismissed, and in edit mode the edit banner (what
+// to do, and "Done"); over it, the page indicator and the busy bar.
 //
 // Zoom keeps a point in place: every zoom change records an anchor (a point on a page, in
 // points) and the viewport position it must stay at; after the new layout is committed the
@@ -8,8 +9,11 @@
 import type { RefObject } from "preact";
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
-import { busy, currentPage, editingLine, editingStopped, editMode, engine, fitMode, zoom } from "../state";
+import {
+  busy, currentPage, editingLine, editingStopped, editMode, engine, fitMode, signedNoticeDismissed, zoom,
+} from "../state";
 import { setEditMode } from "../ui/actions";
+import { rescueFocus, viewerScroller } from "../ui/focus";
 import { IconCheck, IconInfo } from "../ui/icons";
 import { isCoarse, prefersReducedMotion } from "../ui/media";
 import { installZoomGestures, type Anchor } from "./gestures";
@@ -55,6 +59,30 @@ function EditBanner({ kind, elRef }: { kind: BannerKind; elRef: RefObject<HTMLDi
 }
 
 /**
+ * A digitally signed PDF: every downloaded copy is written anew, edited or not, so its signature
+ * is no longer valid there (a PDF/A copy has it removed). Said once per document, above the edit
+ * banner, until "Got it".
+ */
+function SignedNotice({ docId, elRef }: { docId: number; elRef: RefObject<HTMLDivElement> }) {
+  return (
+    <div ref={elRef} class="signed-notice">
+      <IconInfo />
+      <p class="signed-notice-text" role="note">{t("signed.notice")}</p>
+      <button
+        type="button"
+        class="btn btn-secondary signed-notice-ok"
+        onClick={() => {
+          signedNoticeDismissed.value = docId;
+          rescueFocus(viewerScroller); // the button goes with the notice
+        }}
+      >
+        {t("signed.dismiss")}
+      </button>
+    </div>
+  );
+}
+
+/**
  * "2 / 9" at the bottom centre. Not while a line editor is open: the pill could cover the field
  * or its context bar. It reads editingLine itself, so opening a line re-renders only the pill.
  */
@@ -88,7 +116,12 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
   const picked = useRef<{ index: number; top: number; until: number } | null>(null);
   const banner: BannerKind | null = editingStopped.value ? "stopped" : editMode.value ? "edit" : null;
   const bannerRef = useRef<HTMLDivElement>(null);
-  /** Height of the edit banner on screen (0 when there is none); null before the first layout. */
+  const signedNotice = doc.info.signatures > 0 && signedNoticeDismissed.value !== doc.id;
+  const noticeRef = useRef<HTMLDivElement>(null);
+  /**
+   * Height of the bars above the scroller (signed notice and edit banner; 0 when there are none);
+   * null before the first layout.
+   */
   const bannerHeight = useRef<number | null>(null);
   /**
    * The scroll position as of the last scroll event. When the banner goes, the scroller grows and
@@ -209,11 +242,12 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
     currentPage.value = pageIndexAt(layout, el.scrollTop + el.clientHeight / 2);
   }, [layout]);
 
-  // The edit banner pushes the scroller down when it comes and lets it up when it goes: scroll
-  // by the same amount, so the document stays still on screen (not on the first layout).
+  // The edit banner (and the signed notice) push the scroller down when they come and let it up
+  // when they go: scroll by the same amount, so the document stays still on screen (not on the
+  // first layout).
   useLayoutEffect(() => {
     const before = bannerHeight.current;
-    const after = bannerRef.current?.offsetHeight ?? 0;
+    const after = (bannerRef.current?.offsetHeight ?? 0) + (noticeRef.current?.offsetHeight ?? 0);
     bannerHeight.current = after;
     const el = scrollerRef.current;
     if (!el || before === null || after === before) return;
@@ -223,10 +257,11 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
     // document did not move on screen, so the pick moves with the scroll.
     const p = picked.current;
     if (p && Math.abs(from - p.top) < 2) p.top = el.scrollTop;
-  }, [banner]);
+  }, [banner, signedNotice]);
 
   return (
     <div class="viewer">
+      {signedNotice && <SignedNotice docId={doc.id} elRef={noticeRef} />}
       {banner && <EditBanner kind={banner} elRef={bannerRef} />}
       <div class="viewer-body">
         <div ref={scrollerRef} class="scroller" tabIndex={0} role="region" aria-label={t("viewer.label")}>

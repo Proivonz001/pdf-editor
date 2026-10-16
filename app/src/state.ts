@@ -1,9 +1,12 @@
 // App-wide state, all in @preact/signals: the engine, the open document, the edit history
-// (and whether it has been downloaded), the viewer settings, toasts and dialogs.
+// (and whether it has been downloaded), the viewer settings, toasts and dialogs (the download
+// options and the PDF/A questions among them).
 // The actions that change it live in src/ui/actions.ts.
 import { batch, computed, signal } from "@preact/signals";
 import { EngineClient, EngineError } from "./engine/client";
-import type { HistoryState, LineInfo } from "./engine/protocol";
+import type {
+  HistoryState, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode,
+} from "./engine/protocol";
 import type { OpenDoc } from "./viewer/model";
 
 // ---------------------------------------------------------------------------------------------
@@ -47,9 +50,14 @@ export const doc = signal<OpenDoc | null>(null);
 /** Name of the file being opened (shown while the engine parses it). */
 export const opening = signal<string | null>(null);
 
-export type BusyKind = "edit" | "undo" | "redo" | "save";
-/** A change or a save is running in the engine. */
+export type BusyKind = "edit" | "undo" | "redo" | "save" | "check";
+/** A change, a save or a PDF/A check is running in the engine. */
 export const busy = signal<BusyKind | null>(null);
+/**
+ * A download or share is under way, from the click to the file written: the PDF/A check and its
+ * questions, the save dialog, and the wait behind an edit still being written. One at a time.
+ */
+export const downloadRunning = signal(false);
 
 // ---------------------------------------------------------------------------------------------
 // History and "edits not downloaded"
@@ -193,6 +201,11 @@ export const sheet = signal<SheetKind | null>(null);
  * redo stay off until another file is opened. Downloading still works.
  */
 export const editingStopped = signal(false);
+/**
+ * The id of the open document whose "digitally signed" notice was dismissed: it stays away for
+ * that document only (in memory), and comes back for the next file opened.
+ */
+export const signedNoticeDismissed = signal<number | null>(null);
 
 /** What the open line editor offers to the rest of the app (see LineLayer). */
 export interface LineEditorHandle {
@@ -235,12 +248,18 @@ export const toasts = signal<readonly Toast[]>([]);
 let nextToastId = 1;
 const MAX_TOASTS = 4;
 
-export function showToast(kind: ToastKind, text: string, ms = kind === "info" ? 4000 : 10000) {
+/**
+ * Show a toast for `ms` milliseconds; with `ms` 0 it stays until dismissToast() (a status such as
+ * "Checking the PDF/A…", taken away when the work ends). Returns its id.
+ */
+export function showToast(kind: ToastKind, text: string, ms = kind === "info" ? 4000 : 10000): number {
   // The same message is already on screen (e.g. a locked line clicked twice): not again.
-  if (toasts.peek().some((x) => x.kind === kind && x.text === text)) return;
+  const same = toasts.peek().find((x) => x.kind === kind && x.text === text);
+  if (same) return same.id;
   const id = nextToastId++;
   toasts.value = [...toasts.value, { id, kind, text }].slice(-MAX_TOASTS);
-  setTimeout(() => dismissToast(id), ms);
+  if (ms > 0) setTimeout(() => dismissToast(id), ms);
+  return id;
 }
 
 export function dismissToast(id: number) {
@@ -250,17 +269,44 @@ export function dismissToast(id: number) {
 // ---------------------------------------------------------------------------------------------
 // Dialogs (one at a time)
 
+/** What the bytes are for: the buttons of the PDF/A questions say "Download" or "Share". */
+export type SavePurpose = "download" | "share";
+
 export type DialogState =
   | { kind: "confirm"; title: string; body: string; confirmLabel: string; resolve: (ok: boolean) => void }
   | { kind: "alert"; title: string; body: string }
   | { kind: "password"; file: File; wrong: boolean }
-  | { kind: "share"; file: File; saveKey: string };
+  | { kind: "share"; file: File; saveKey: string }
+  /**
+   * "How do you want to download it?" (or "…share it?"): format and password, for one download
+   * or share, which `purpose` says.
+   */
+  | { kind: "download-options"; purpose: SavePurpose }
+  /**
+   * No PDF/A can be written; resolves true when the user takes a normal PDF instead. `blockers`
+   * is empty when only the engine's final check refused it (no details to list).
+   */
+  | {
+    kind: "pdfa-blocked";
+    blockers: PdfaIssue<PdfaBlockerCode>[];
+    purpose: SavePurpose;
+    resolve: (fallback: boolean) => void;
+  }
+  /** The conversion removes or changes something: resolves true to go on. */
+  | {
+    kind: "pdfa-confirm";
+    removals: PdfaIssue<PdfaRemovalCode>[];
+    warnings: PdfaIssue<PdfaWarningCode>[];
+    purpose: SavePurpose;
+    resolve: (ok: boolean) => void;
+  };
 
 export const dialog = signal<DialogState | null>(null);
 
+/** Show `next` (or nothing). A question still open is answered "no" first, so its caller goes on. */
 export function showDialog(next: DialogState | null) {
   const prev = dialog.peek();
-  if (prev?.kind === "confirm") prev.resolve(false);
+  if (prev && "resolve" in prev) prev.resolve(false);
   dialog.value = next;
 }
 

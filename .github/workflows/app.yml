@@ -1,5 +1,5 @@
-# Checks the new app (app/) on every pull request and on main: types, tests, production build.
-# Deployment is not done here: Cloudflare builds and deploys from the repository by itself
+# Checks the new app (app/) on every pull request and on main: types, tests, production build,
+# and PDF/A conformance with veraPDF. Deployment is not done here: Cloudflare builds and deploys from the repository by itself
 # (see app/README.md).
 name: App
 
@@ -56,3 +56,59 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # PDF/A: the engine converts the test files (tests/pdfa.test.ts writes them when PDFA_OUT is
+  # set), then veraPDF, the reference validator, checks every one against PDF/A-2b. veraPDF is a
+  # Java program, so it cannot run in the browser or in the Node tests: this job is where real
+  # conformance is checked. The files the app refuses to convert are validated too, for the log
+  # only (they are expected to fail).
+  pdfa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Use npm 11
+        run: npm install --global npm@11.6.2
+
+      - name: Install
+        run: npm ci
+
+      - name: Convert the test files to PDF/A
+        run: PDFA_OUT="$RUNNER_TEMP/pdfa" npx vitest run tests/pdfa.test.ts
+
+      # veraPDF 1.30.2, pinned by digest (Docker Hub only keeps moving tags).
+      - name: Validate with veraPDF (PDF/A-2b)
+        run: |
+          image="verapdf/cli@sha256:d5ee329657cf9bc4b2400392dd54c7d0a0ce9980ff6fa2da5590eebeec007cdb"
+          docker run --rm -v "$RUNNER_TEMP/pdfa:/data" "$image" -f 2b --format xml /data > "$RUNNER_TEMP/verapdf.xml" || true
+          python3 -I scripts/verapdf_summary.py "$RUNNER_TEMP/verapdf.xml" expect-compliant
+
+      - name: veraPDF on the files the app refuses (log only)
+        if: always()
+        run: |
+          image="verapdf/cli@sha256:d5ee329657cf9bc4b2400392dd54c7d0a0ce9980ff6fa2da5590eebeec007cdb"
+          if [ -d "$RUNNER_TEMP/pdfa/refused" ]; then
+            docker run --rm -v "$RUNNER_TEMP/pdfa/refused:/data" "$image" -f 2b --format xml /data > "$RUNNER_TEMP/verapdf-refused.xml" || true
+            python3 -I scripts/verapdf_summary.py "$RUNNER_TEMP/verapdf-refused.xml" expect-refused
+          fi
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verapdf-report
+          path: |
+            ${{ runner.temp }}/verapdf*.xml
+            ${{ runner.temp }}/pdfa
+          if-no-files-found: ignore

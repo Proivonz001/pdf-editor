@@ -1,5 +1,5 @@
-/* Document viewer: the workspace and its pages, the edit banner, the page indicator, the busy
-   bar, and edit mode (text lines, the line editor and its context bar).
+/* Document viewer: the workspace and its pages, the edit banner and the signed-PDF notice, the
+   page indicator, the busy bar, and edit mode (text lines, the line editor and its context bar).
    Colours only from tokens.css. PDF pages are white in both themes, so what is drawn on a page
    (lines, editor, their focus rings) must read on white in dark mode too: there --focus is
    tuned for dark surfaces, so on-page rings use --accent, which is the same colour in the light
@@ -156,6 +156,45 @@
   from {
     opacity: 0;
   }
+}
+
+/* --- Signed PDF notice ---------------------------------------------------------------------
+   For a digitally signed PDF, above the edit banner until "Got it": information, not a
+   warning, so quiet paper with an ink-blue info icon, laid out like the banner. */
+
+.signed-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 max(12px, env(safe-area-inset-right)) 0 16px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+}
+
+.signed-notice > .icon {
+  width: 18px;
+  height: 18px;
+  color: var(--active-fg);
+}
+
+.signed-notice-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.signed-notice-ok {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  font-size: var(--fs-sm);
 }
 
 /* --- Page indicator ------------------------------------------------------------------------
@@ -442,11 +481,13 @@
    The compact buttons keep their look; an invisible ::after makes each one 44 px tall. */
 
 @media (pointer: coarse) {
-  .edit-banner {
+  .edit-banner,
+  .signed-notice {
     min-height: 44px;
   }
 
   .edit-banner-done,
+  .signed-notice-ok,
   .context-btn,
   .context-writing {
     height: 36px;
@@ -457,6 +498,7 @@
   }
 
   .edit-banner-done::after,
+  .signed-notice-ok::after,
   .context-btn::after {
     content: "";
     position: absolute;
@@ -480,13 +522,21 @@
   padding-right: max(12px, env(safe-area-inset-right));
 }
 
-/* The narrowest phones: the hint keeps to two lines. */
+/* "Got it" lines up with "Done" and the top bar. */
+.app[data-layout="phone"] .signed-notice {
+  gap: 8px;
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(4px, env(safe-area-inset-right));
+}
+
+/* The narrowest phones: the hint keeps to two lines, and the signed notice is as small. */
 @media (max-width: 359.98px) {
   .edit-banner-mark {
     display: none;
   }
 
-  .app[data-layout="phone"] .edit-banner {
+  .app[data-layout="phone"] .edit-banner,
+  .app[data-layout="phone"] .signed-notice {
     font-size: var(--fs-xs);
   }
 }
