@@ -19,9 +19,13 @@ import {
 /**
  * core.replaceText, as the session sees it, counted (one call per edit applied or replayed) and
  * able to fail: "always" throws before editing, "after" lets one edit change the document and
- * then throws, as an edit that fails half way would.
+ * then throws, as an edit that fails half way would. `last` is what the latest call returned.
  */
-const replaceTextSpy = vi.hoisted(() => ({ calls: 0, fail: "no" as "no" | "always" | "after" }));
+const replaceTextSpy = vi.hoisted(() => ({
+  calls: 0,
+  fail: "no" as "no" | "always" | "after",
+  last: null as { toUnicodeAdded: number; widthsAdded: number } | null,
+}));
 vi.mock("../src/engine/core.js", async (importOriginal) => {
   const core = await importOriginal<typeof import("../src/engine/core.js")>();
   return {
@@ -30,6 +34,7 @@ vi.mock("../src/engine/core.js", async (importOriginal) => {
       replaceTextSpy.calls++;
       if (replaceTextSpy.fail === "always") throw new Error("injected failure");
       const result = core.replaceText(...args);
+      replaceTextSpy.last = result;
       if (replaceTextSpy.fail === "after") {
         replaceTextSpy.fail = "no";
         throw new Error("injected failure after a half-done edit");
@@ -41,6 +46,7 @@ vi.mock("../src/engine/core.js", async (importOriginal) => {
 beforeEach(() => {
   replaceTextSpy.calls = 0;
   replaceTextSpy.fail = "no";
+  replaceTextSpy.last = null;
 });
 
 const fixture = (name: string) => new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
@@ -563,6 +569,83 @@ describe("replaceLine and save", () => {
     expectSessionError(() => s.save(), "no-document");
     expectSessionError(() => s.undo(), "no-document");
     expect(s.close()).toBeNull();
+  });
+});
+
+/**
+ * Word's Identity-H subsets hold glyphs their /ToUnicode does not list ("r" of Calibri-Bold in
+ * word-winansi.pdf, "l" and "r" of Aptos in word-images.pdf). An edit that uses one adds it to the
+ * font's /ToUnicode and /W. MuPDF keeps the fonts it has loaded, so unless it loads this one again
+ * the working document reads U+FFFD for those codes, the line editor opens with it, and the next
+ * edit of the line writes it into the file for good.
+ */
+describe("an edit that extends a font's /ToUnicode and /W", () => {
+  const cases = [
+    { name: "word-winansi.pdf", line: "Relazione tecnica" },
+    { name: "word-images.pdf", line: "Images in a Word PDF" },
+  ];
+  const text = "hello world, fill";
+
+  /** `s` after the edit, which must have changed the font (else the case proves nothing). */
+  function extendFont(name: string, line: string) {
+    const s = session(name);
+    s.replaceLine(0, lineWith(s.lines(0), line).index, text);
+    expect(replaceTextSpy.last!.toUnicodeAdded).toBeGreaterThan(0);
+    expect(replaceTextSpy.last!.widthsAdded).toBeGreaterThan(0);
+    return s;
+  }
+
+  for (const c of cases) {
+    it(`the working document reads and draws the new line as the saved file does (${c.name})`, () => {
+      const s = extendFont(c.name, c.line);
+      const live = texts(s);
+      expect(live).toContain(text);
+      expect(live.join("\n")).not.toContain("�");
+      const shown = s.render(0, 2); // the old widths would place glyphs elsewhere
+      const saved = reopen(s.save().bytes);
+      expect(texts(saved)).toEqual(live);
+      expect(pixelsChangedOutside(shown, saved.render(0, 2))).toBe(0);
+    });
+
+    it(`a second edit of that line writes no U+FFFD into the download (${c.name})`, () => {
+      const s = extendFont(c.name, c.line);
+      const line = lineWith(s.lines(0), "hello");
+      // What the line editor opens with, plus one more change.
+      const r = s.replaceLine(0, line.index, line.text.replace("fill", "full!"));
+      expect(r.before).toBe(text);
+      expect(r.fallbackChars).not.toContain("�");
+      const saved = texts(reopen(s.save().bytes));
+      expect(saved).toContain("hello world, full!");
+      expect(saved.join("\n")).not.toContain("�");
+    });
+  }
+
+  it("undo and redo agree with the working document across the checkpoint after it", () => {
+    const s = session("word-winansi.pdf");
+    // CHECKPOINT_EVERY - 1 edits of another line first, so that the checkpoint (bytes re-opened
+    // later, where the font is loaded afresh) is taken right after the edit that extends the font.
+    for (let i = 1; i < CHECKPOINT_EVERY; i++)
+      s.replaceLine(0, lineWith(s.lines(0), i === 1 ? "Capitolo secondo" : `Capitolo ${i}`).index, `Capitolo ${i + 1}`);
+    s.replaceLine(0, lineWith(s.lines(0), "Relazione tecnica").index, text);
+    expect(replaceTextSpy.last!.toUnicodeAdded).toBeGreaterThan(0);
+    const extended = texts(s);
+    const line = lineWith(s.lines(0), "hello");
+    s.replaceLine(0, line.index, line.text.replace("fill", "full"));
+    const edited = texts(s);
+    expect(edited).toContain("hello world, full");
+
+    replaceTextSpy.calls = 0;
+    s.undo(); // exactly the checkpoint: nothing replayed
+    expect(replaceTextSpy.calls).toBe(0);
+    expect(texts(s)).toEqual(extended);
+    s.redo(); // the last edit must find its line in the re-opened checkpoint
+    expect(texts(s)).toEqual(edited);
+    s.undo();
+    s.undo(); // before the font changed: the original plus CHECKPOINT_EVERY - 1 edits
+    s.redo();
+    s.redo(); // the font changes again, then the last edit must find its line in the live document
+    expect(texts(s)).toEqual(edited);
+    expect(texts(reopen(s.save().bytes))).toEqual(edited);
   });
 });
 

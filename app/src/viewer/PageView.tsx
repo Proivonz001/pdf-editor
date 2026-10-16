@@ -1,5 +1,5 @@
 // One page: a box sized from the page bounds × zoom, a canvas while the page is near the
-// viewport, and the line overlay in edit mode.
+// viewport, and in edit mode the overlays of its text lines and of its images.
 //
 // Rendering: at zoom × devicePixelRatio (capped in pixels on touch devices), through the shared
 // render queue. On a zoom change the old bitmap stays, stretched by CSS, and the new one is
@@ -7,7 +7,8 @@
 // page is re-rendered at once.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
-import { devicePixelRatio, editingLine, editMode } from "../state";
+import { devicePixelRatio, editingLine, editMode, selectedImage } from "../state";
+import { ImageLayer } from "./ImageLayer";
 import { LineLayer } from "./LineLayer";
 import type { PageModel } from "./model";
 import type { RenderQueue } from "./renderQueue";
@@ -49,14 +50,18 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
   /** What the canvas currently shows. */
   const drawn = useRef<{ scale: number; rev: number } | null>(null);
   const [ready, setReady] = useState(false);
+  /** The page revision the canvas shows (the image overlay keeps a moved picture's preview until then). */
+  const [shownRev, setShownRev] = useState(-1);
 
   const near = page.near.value;
   const keep = page.keep.value || near;
   const rev = page.rev.value;
   const ratio = devicePixelRatio.value;
-  // Line overlay: near pages in edit mode, and the page whose line editor is open even if it
-  // scrolled away (unmounting the editor would lose what was typed).
-  const showLines = editMode.value && (near || editingLine.value?.pageIndex === page.index);
+  // Line and image overlays: near pages in edit mode, and the page whose line editor is open or
+  // that holds the selected image even if it scrolled away (unmounting the editor would lose
+  // what was typed, and the selection what is about to be written).
+  const showOverlays = editMode.value &&
+    (near || editingLine.value?.pageIndex === page.index || selectedImage.value?.pageIndex === page.index);
 
   useEffect(() => {
     const node = el.current!;
@@ -75,6 +80,7 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
       }
       drawn.current = null;
       setReady(false);
+      setShownRev(-1);
     };
   }, [keep]);
 
@@ -101,6 +107,7 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
         result.bitmap.close();
         drawn.current = { scale, rev };
         setReady(true);
+        setShownRev(rev);
       });
     }, delay);
     return () => {
@@ -119,7 +126,9 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
       data-page={page.index}
     >
       {keep && <canvas ref={canvas} class="page-canvas" aria-hidden="true" />}
-      {showLines && <LineLayer page={page} zoom={zoom} />}
+      {/* Lines first, so Tab reaches them before the images; the images stack below them (viewer.css). */}
+      {showOverlays && <LineLayer page={page} zoom={zoom} />}
+      {showOverlays && <ImageLayer page={page} zoom={zoom} canvasRev={shownRev} />}
     </div>
   );
 }

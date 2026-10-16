@@ -241,3 +241,52 @@ export const IconPlus = () => (
     <path d="M12 5.5v13M5.5 12h13" />
   </Svg>
 );
+
+// Images (edit mode)
+
+/** A picture: a frame with a sun and hills. Replace the selected image. */
+export const IconImage = () => (
+  <Svg>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+    <circle cx="9" cy="9.5" r="1.6" />
+    <path d="m4 17.5 4.5-4.5 3.5 3.5 2.5-2.5 5.5 5.5" />
+  </Svg>
+);
+
+/** A square with an arrow turning clockwise over it: rotate 90° clockwise. */
+export const IconRotate = () => (
+  <Svg>
+    <rect x="3.5" y="10.5" width="10" height="10" rx="1.6" />
+    <path d="M8 6.5h5.5a5 5 0 0 1 5 5v2.5" />
+    <path d="m16 11.5 2.5 2.5 2.5-2.5" />
+  </Svg>
+);
+
+/** A bin: delete. */
+export const IconTrash = () => (
+  <Svg>
+    <path d="M4.5 7h15" />
+    <path d="M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7" />
+    <path d="m6.5 7 .9 11.6a2 2 0 0 0 2 1.9h5.2a2 2 0 0 0 2-1.9L17.5 7" />
+    <path d="M10 11v5.5M14 11v5.5" />
+  </Svg>
+);
+
+/**
+ * The four corners of a selection frame with a small cross inside: deselect the image (not the
+ * check of the edit banner's Done, which leaves edit mode).
+ */
+export const IconDeselect = () => (
+  <Svg>
+    <path d="M4 8.5v-3A1.5 1.5 0 0 1 5.5 4h3M15.5 4h3A1.5 1.5 0 0 1 20 5.5v3M20 15.5v3a1.5 1.5 0 0 1-1.5 1.5h-3M8.5 20h-3A1.5 1.5 0 0 1 4 18.5v-3" />
+    <path d="m9.5 9.5 5 5M14.5 9.5l-5 5" />
+  </Svg>
+);
+
+/** Four arrows from the centre: move (the grip of a selected image on touch screens). */
+export const IconMove = () => (
+  <Svg>
+    <path d="M12 4v16M4 12h16" />
+    <path d="m9.5 6.5 2.5-2.5 2.5 2.5M9.5 17.5l2.5 2.5 2.5-2.5M6.5 9.5 4 12l2.5 2.5M17.5 9.5 20 12l-2.5 2.5" />
+  </Svg>
+);

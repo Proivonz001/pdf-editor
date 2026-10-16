@@ -11,6 +11,10 @@
 // saves (core.subsetFallbackFonts), which would break later edits that need more glyphs of them.
 // The PDF/A conversion (pdfa.ts) works on such a scratch copy too.
 //
+// Image edits (images.ts) are logged like text edits, and found again at every replay by their
+// position in the page's painting order plus the matrix they must still have: resource names and
+// offsets in the content are not stable, since a text edit rewrites the stream.
+//
 // A snapshot is written unencrypted and without garbage collection, so every object keeps its
 // number and core.restoreFallbackFonts finds the fallback fonts again in the re-opened copy.
 import type * as MuPDF from "mupdf";
@@ -28,14 +32,32 @@ import {
   restoreFallbackFonts,
   subsetFallbackFonts,
 } from "./core.js";
+import {
+  DevicePassError,
+  MAX_SPRITE_CLIP_BYTES,
+  SpriteClipBudget,
+  deletePlacement,
+  findPlacements,
+  nearlyEqual,
+  openImage,
+  renderPlacement,
+  replacePlacement,
+  straightRGBA,
+  transformPlacement,
+  type PagePlacements,
+  type Placement,
+} from "./images";
 import { checkPdfA, convertToPdfA, countSignatures, dropPdfaClaim, pdfaClaim } from "./pdfa";
-import { passwordProblem } from "./protocol";
+import { MAX_IMAGE_BYTES, MAX_IMAGE_SIDE, MIN_IMAGE_SIDE, passwordProblem } from "./protocol";
 import type {
   DocInfo,
   EditResult,
   EditSegment,
   HistoryState,
+  ImageEditResult,
+  ImageInfo,
   LineInfo,
+  Matrix,
   OpenResult,
   PageInfo,
   PdfaReport,
@@ -56,6 +78,10 @@ type Glyph = ReturnType<typeof captureGlyphs>[number];
 export const MAX_RENDER_PIXELS = 16_000_000;
 /** Longest side of a bitmap render() returns, in pixels: Chromium and Firefox refuse longer canvases. */
 export const MAX_RENDER_SIDE = 32_767;
+/** Largest bitmap renderImage() returns, in pixels (a preview: it need not be as sharp as the page). */
+export const MAX_SPRITE_PIXELS = 4_000_000;
+/** Lowest scale renderImage() goes down to when the clips around a picture are too many to draw it sharper (pixels per point). */
+export const MIN_SPRITE_SCALE = 0.25;
 
 /** A checkpoint is taken every CHECKPOINT_EVERY applied edits. */
 export const CHECKPOINT_EVERY = 8;
@@ -112,7 +138,11 @@ export interface RenderPixels {
 }
 
 /** One applied edit, as replayed by undo. Plain data, so it can be stored later. */
-export interface LoggedEdit {
+export type LoggedEdit = TextEdit | ImageEdit;
+
+/** One whole line of text replaced (deleted when `replacement` is empty). */
+export interface TextEdit {
+  kind: "text";
   pageIndex: number;
   /** The text the edit replaced (one whole line, without its leading/trailing whitespace). */
   find: string;
@@ -121,14 +151,34 @@ export interface LoggedEdit {
   replacement: string;
 }
 
+/**
+ * One image placement moved (resized, rotated), deleted or replaced. It is found again at every
+ * replay: image `imageIndex` in the page's painting order, which must still be drawn at `expect`
+ * (ImageInfo.matrix, within 0.01 pt), or the entry no longer fits the document and the edit fails.
+ */
+export type ImageEdit = { kind: "image"; pageIndex: number; imageIndex: number; expect: Matrix } & (
+  /** Drawn at `matrix` instead (ImageInfo.matrix convention). */
+  | { op: "transform"; matrix: Matrix }
+  | { op: "delete" }
+  /** Replaced with this picture (the file's bytes, a private copy: undo replays it). */
+  | { op: "replace"; bytes: Uint8Array }
+);
+
 export type SessionErrorCode =
   /** No document is open. */
   | "no-document"
-  /** Page or line index out of range, invalid scale. */
+  /** Page, line or image index out of range, invalid scale, image matrix or picture. */
   | "bad-request"
-  /** MuPDF could not apply the edit; the document is back to the state before it. */
+  /**
+   * MuPDF could not apply the edit; the document is back to the state before it. Also: MuPDF
+   * failed while reading a page's images or drawing one alone (images, renderImage, and the image
+   * edits before anything is changed), say on a picture it cannot decode: nothing changed.
+   */
   | "edit-failed"
-  /** The line has characters the engine cannot rewrite safely (LineInfo.editable is false). */
+  /**
+   * The line has characters the engine cannot rewrite safely (LineInfo.editable is false), or the
+   * image is locked (ImageInfo.movable is false).
+   */
   | "not-editable"
   /** An edit failed and the document could not be restored: only close and open still work. */
   | "broken"
@@ -361,18 +411,8 @@ export class EngineSession {
       };
     }
 
-    const edit: LoggedEdit = { pageIndex, find, occurrence, replacement };
-    let result: ReturnType<typeof replaceText>;
-    try {
-      result = this.apply(doc, edit);
-    } catch (err) {
-      throw this.recover(`Could not edit the line: ${errorMessage(err)}`);
-    }
-    // Checkpoints beyond this point hold undone edits, which this one replaces for good.
-    this.checkpoints = this.checkpoints.filter((c) => c.editCount <= this.log.length);
-    this.log.push(edit);
-    this.redoStack = [];
-    this.checkpoint(doc);
+    const edit: TextEdit = { kind: "text", pageIndex, find, occurrence, replacement };
+    const result = this.commit(doc, edit, () => this.applyText(doc, edit), "Could not edit the line");
 
     // core's segment kinds are exactly the protocol's SegmentSource values.
     const segments: EditSegment[] = result.segments.map((s) => ({
@@ -391,6 +431,166 @@ export class EngineSession {
       fallbackChars,
       missingChars: visibleChars(result.missing as string[]),
     };
+  }
+
+  // ------------------------------------------------------------------ images
+
+  /** The page's images (placements), in painting order, locked ones included (with the reason). */
+  images(pageIndex: number): ImageInfo[] {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const page = doc.loadPage(pageIndex);
+    try {
+      return placementsOf(this.mupdf, page).placements.map(imageInfo);
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /**
+   * Moves, resizes or rotates one image so that it is drawn at `matrix` (ImageInfo.matrix
+   * convention). `imageIndex` is ImageInfo.index from the latest images() of that page; the
+   * image keeps it (its painting position does not change).
+   *
+   * - A matrix that is not six finite numbers, is degenerate, makes a side shorter than
+   *   MIN_IMAGE_SIDE or longer than MAX_IMAGE_SIDE, or puts the centre off the page is refused
+   *   ("bad-request"). A side that is already outside those limits may stay as it is, or come
+   *   closer to them: a 0.5 pt rule can be moved and turned.
+   * - The image's current matrix (within 0.001) is a no-op: nothing is logged, the redo stack is
+   *   kept and changedPages is empty.
+   * - A locked image (ImageInfo.movable false) is refused ("not-editable"), unchanged.
+   */
+  transformImage(pageIndex: number, imageIndex: number, matrix: Matrix): ImageEditResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const target = matrixFrom(matrix);
+    const changed = this.editImage(doc, pageIndex, imageIndex, "Could not move the image", (p, page) => {
+      checkTarget(target, page.getBounds() as Rect, p.matrix);
+      if (nearlyEqual(target, p.matrix, 0.001)) return null;
+      return { kind: "image", pageIndex, imageIndex, expect: p.matrix, op: "transform", matrix: target };
+    });
+    return { ...this.history(changed ? [pageIndex] : []), pageIndex, imageIndex };
+  }
+
+  /**
+   * Deletes one image placement: only its drawing instruction (tags and other placements stay).
+   * The picture leaves the page's resources, and the dictionaries other pages or forms draw with
+   * (shared, inherited), and so the download, when nothing else draws it; the structure element
+   * of a tagged picture (a Figure, or one that held only the picture) loses its description
+   * (/Alt, /ActualText).
+   */
+  deleteImage(pageIndex: number, imageIndex: number): ImageEditResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    this.editImage(doc, pageIndex, imageIndex, "Could not delete the image", (p) =>
+      ({ kind: "image", pageIndex, imageIndex, expect: p.matrix, op: "delete" }));
+    return { ...this.history([pageIndex]), pageIndex, imageIndex: null };
+  }
+
+  /**
+   * Replaces one image placement with another picture (file bytes MuPDF can read: JPEG, PNG...),
+   * fitted inside the part of the old one that showed, keeping its own proportions, centred, with
+   * the same rotation, never mirrored (images.replacePlacement); a JPEG is embedded as it is, the
+   * same bytes once however many places they go, in the old picture's layer (/OC). Other
+   * placements of the old picture stay. More than MAX_IMAGE_BYTES, or bytes that are not a
+   * picture, are refused ("bad-request") before anything is done. `bytes` is copied, unless
+   * `transfer` is set (as for open()).
+   */
+  replaceImage(pageIndex: number, imageIndex: number, bytes: ArrayBuffer | Uint8Array, { transfer = false } = {}): ImageEditResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const picture = this.checkPicture(bytes, transfer);
+    this.editImage(doc, pageIndex, imageIndex, "Could not replace the image", (p) =>
+      ({ kind: "image", pageIndex, imageIndex, expect: p.matrix, op: "replace", bytes: picture }));
+    return { ...this.history([pageIndex]), pageIndex, imageIndex };
+  }
+
+  /**
+   * One image alone on a transparent bitmap, with the clips that apply to it: the preview while it
+   * is dragged. The bitmap covers the image's visible box rounded out to whole pixels at `scale`
+   * pixels per point (lowered to stay within MAX_SPRITE_PIXELS and MAX_RENDER_SIDE); `rect` is that
+   * box in page space. The RGBA is straight (not premultiplied) alpha. When the clips around the
+   * image would take too much memory to draw at that scale (images.MAX_SPRITE_CLIP_BYTES: nested
+   * rounded or turned frames from design tools), it is drawn at the lower scale where they fit,
+   * down to MIN_SPRITE_SCALE. A picture MuPDF cannot draw, or clips too many even there, fail with
+   * "edit-failed", leaving everything as it was.
+   */
+  renderImage(pageIndex: number, imageIndex: number, scale: number): RenderPixels & { rect: Rect } {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    if (!(scale > 0) || !Number.isFinite(scale)) throw new SessionError(`Invalid scale ${scale}`, "bad-request");
+    const page = doc.loadPage(pageIndex);
+    try {
+      const p = pickImage(placementsOf(this.mupdf, page), pageIndex, imageIndex);
+      let { scale: used, box } = spriteBox(p.visible, scale);
+      let pix: MuPDF.Pixmap;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          pix = renderPlacement(this.mupdf, page, p.drawIndex, used, box);
+          break;
+        } catch (err) {
+          const lower = err instanceof SpriteClipBudget && attempt < 4 ? scaleWithin(err.bytes, used) : null;
+          if (lower === null) throw err instanceof DevicePassError ? new SessionError(err.message, "edit-failed") : err;
+          ({ scale: used, box } = spriteBox(p.visible, lower));
+        }
+      }
+      try {
+        const { width, height, rgba } = straightRGBA(pix);
+        return { width, height, rgba, scale: used, rect: [box[0] / used, box[1] / used, box[2] / used, box[3] / used] };
+      } finally {
+        pix.destroy();
+      }
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /**
+   * Finds image `imageIndex` of the page ("bad-request" when there is none, "not-editable" when
+   * it is locked), lets `plan` make the edit to log (null: nothing to do), then applies it on the
+   * placements just found and records it. Returns whether an edit was made.
+   */
+  private editImage(
+    doc: MuPDF.PDFDocument,
+    pageIndex: number,
+    imageIndex: number,
+    failure: string,
+    plan: (p: Placement, page: MuPDF.PDFPage) => ImageEdit | null,
+  ): boolean {
+    const page = doc.loadPage(pageIndex);
+    try {
+      const found = placementsOf(this.mupdf, page);
+      const p = pickImage(found, pageIndex, imageIndex);
+      if (!p.movable)
+        throw new SessionError(`Image ${imageIndex} on page ${pageIndex + 1} cannot be changed (${p.reason})`, "not-editable");
+      const edit = plan(p, page);
+      if (!edit) return false;
+      this.commit(doc, edit, () => applyImageEdit(this.mupdf, doc, page, found, p, edit), failure);
+      return true;
+    } finally {
+      page.destroy(); // after a failed edit its document may be gone already: the page kept it alive until here
+    }
+  }
+
+  /** The picture's bytes for a replace, checked as untrusted ("bad-request"), as a private copy unless transferred. */
+  private checkPicture(bytes: ArrayBuffer | Uint8Array, transfer: boolean): Uint8Array {
+    if (!(bytes instanceof ArrayBuffer) && !(bytes instanceof Uint8Array)) throw new SessionError("No picture given", "bad-request");
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (view.byteLength === 0) throw new SessionError("The picture is empty", "bad-request");
+    if (view.byteLength > MAX_IMAGE_BYTES)
+      throw new SessionError(`The picture is larger than ${MAX_IMAGE_BYTES} bytes`, "bad-request");
+    let image: MuPDF.Image;
+    try {
+      image = openImage(this.mupdf, view);
+    } catch (err) {
+      throw new SessionError(`The picture cannot be read: ${errorMessage(err)}`, "bad-request");
+    }
+    try {
+      if (!(image.getWidth() > 0 && image.getHeight() > 0)) throw new SessionError("The picture has no pixels", "bad-request");
+    } finally {
+      image.destroy();
+    }
+    return transfer ? view : view.slice();
   }
 
   /** Undoes the last edit: re-opens the nearest checkpoint (or the original) and replays from there. */
@@ -423,7 +623,7 @@ export class EngineSession {
 
   /** The edits currently applied, oldest first (a copy). */
   edits(): LoggedEdit[] {
-    return this.log.map((e) => ({ ...e }));
+    return this.log.map(copyEdit);
   }
 
   // ------------------------------------------------------------------ saving
@@ -598,8 +798,53 @@ export class EngineSession {
     }
   }
 
+  /**
+   * Applies a new edit through `run` and records it: if it fails the document is rolled back
+   * (recover, "edit-failed"); if not, the edit is logged, the redo stack cleared and a checkpoint
+   * taken when due.
+   */
+  private commit<T>(doc: MuPDF.PDFDocument, edit: LoggedEdit, run: () => T, failure: string): T {
+    let result: T;
+    try {
+      result = run();
+    } catch (err) {
+      throw this.recover(`${failure}: ${errorMessage(err)}`);
+    }
+    // Checkpoints beyond this point hold undone edits, which this one replaces for good.
+    this.checkpoints = this.checkpoints.filter((c) => c.editCount <= this.log.length);
+    this.log.push(edit);
+    this.redoStack = [];
+    this.checkpoint(doc);
+    return result;
+  }
+
+  /** Applies a logged edit again (redo, rebuild). */
   private apply(doc: MuPDF.PDFDocument, edit: LoggedEdit) {
+    if (edit.kind === "image") this.applyImage(doc, edit);
+    else this.applyText(doc, edit);
+  }
+
+  private applyText(doc: MuPDF.PDFDocument, edit: TextEdit) {
     return replaceText(this.mupdf, doc, edit.pageIndex, edit.find, edit.replacement, { occurrence: edit.occurrence });
+  }
+
+  /**
+   * Finds the edit's image again (walk and safety gate) and applies the edit. Throws when the
+   * image is missing, locked, or not drawn where the entry expects it: the log no longer fits.
+   */
+  private applyImage(doc: MuPDF.PDFDocument, edit: ImageEdit) {
+    const page = doc.loadPage(edit.pageIndex);
+    try {
+      const found = findPlacements(this.mupdf, page);
+      const p = found.placements[edit.imageIndex];
+      const where = `image ${edit.imageIndex} on page ${edit.pageIndex + 1}`;
+      if (!p) throw new Error(`There is no ${where}`);
+      if (!p.movable) throw new Error(`The ${where} cannot be changed (${p.reason})`);
+      if (!nearlyEqual(p.matrix, edit.expect)) throw new Error(`The ${where} is not where the edit expects it`);
+      applyImageEdit(this.mupdf, doc, page, found, p, edit);
+    } finally {
+      page.destroy();
+    }
   }
 
   /** Opens the original bytes again, with the password the user gave. */
@@ -739,6 +984,126 @@ function linesBeyondBMP(lines: RawLine[], glyphs: Glyph[]): Set<RawLine> {
 }
 
 const toRect = (r: ArrayLike<number>): Rect => [r[0], r[1], r[2], r[3]];
+
+/** A copy of a log entry, its matrices and bytes included. */
+function copyEdit(e: LoggedEdit): LoggedEdit {
+  if (e.kind === "text") return { ...e };
+  const expect = [...e.expect] as Matrix;
+  switch (e.op) {
+    case "transform":
+      return { ...e, expect, matrix: [...e.matrix] as Matrix };
+    case "replace":
+      return { ...e, expect, bytes: e.bytes.slice() };
+    default:
+      return { ...e, expect };
+  }
+}
+
+const imageInfo = (p: Placement): ImageInfo => ({
+  index: p.index,
+  matrix: [...p.matrix] as Matrix,
+  bbox: toRect(p.bbox),
+  visible: toRect(p.visible),
+  pixelWidth: p.pixelWidth,
+  pixelHeight: p.pixelHeight,
+  movable: p.movable,
+  reason: p.reason,
+});
+
+/** The page's placements (images.findPlacements), a failure of MuPDF while reading them reported as "edit-failed". */
+function placementsOf(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePlacements {
+  try {
+    return findPlacements(mupdf, page);
+  } catch (err) {
+    throw err instanceof DevicePassError ? new SessionError(err.message, "edit-failed") : err;
+  }
+}
+
+/** Image `imageIndex` of the placements found, or "bad-request". */
+function pickImage(found: PagePlacements, pageIndex: number, imageIndex: number): Placement {
+  const p = Number.isInteger(imageIndex) ? found.placements[imageIndex] : undefined;
+  if (!p) throw new SessionError(`No image ${imageIndex} on page ${pageIndex + 1}`, "bad-request");
+  return p;
+}
+
+/** Does what a logged image edit says to placement `p` (found on `page` just before). */
+function applyImageEdit(mupdf: MuPDFModule, doc: MuPDF.PDFDocument, page: MuPDF.PDFPage, found: PagePlacements, p: Placement, edit: ImageEdit) {
+  switch (edit.op) {
+    case "transform":
+      transformPlacement(mupdf, doc, page, found, p, edit.matrix);
+      break;
+    case "delete":
+      deletePlacement(mupdf, doc, page, found, p);
+      break;
+    case "replace": {
+      const image = openImage(mupdf, edit.bytes);
+      try {
+        replacePlacement(mupdf, doc, page, found, p, image, edit.bytes);
+      } finally {
+        image.destroy();
+      }
+      break;
+    }
+  }
+}
+
+/** A matrix from the main thread, checked as untrusted: six finite numbers ("bad-request" otherwise). */
+function matrixFrom(matrix: unknown): Matrix {
+  if (!Array.isArray(matrix) || matrix.length !== 6 || !matrix.every((v) => typeof v === "number" && Number.isFinite(v)))
+    throw new SessionError("An image matrix is six finite numbers", "bad-request");
+  return [...matrix] as Matrix;
+}
+
+/**
+ * Where an image now drawn at `current` may be drawn ("bad-request" otherwise): not degenerate,
+ * each side within MIN_IMAGE_SIDE..MAX_IMAGE_SIDE, the centre on the page (so it can always be
+ * grabbed again). A side already outside those limits only may not get further from them: it is
+ * refused when shorter than both MIN_IMAGE_SIDE and its current length, or longer than both
+ * MAX_IMAGE_SIDE and its current length (a 0.5 pt rule, or a 1-pixel spacer drawn at 0.75 pt, can
+ * be moved and turned; a side is matched with the same side of `current`).
+ */
+function checkTarget(m: Matrix, bounds: Rect, current: Matrix) {
+  if (!(Math.abs(m[0] * m[3] - m[1] * m[2]) > 1e-6)) throw new SessionError("The image matrix is degenerate", "bad-request");
+  const sidesOf = (x: Matrix) => [Math.hypot(x[0], x[1]), Math.hypot(x[2], x[3])];
+  const now = sidesOf(current);
+  sidesOf(m).forEach((side, k) => {
+    // (a little slack: a turn computed in floating point may shorten a side by a rounding error)
+    const min = Math.min(MIN_IMAGE_SIDE, now[k] * (1 - 1e-6)), max = Math.max(MAX_IMAGE_SIDE, now[k] * (1 + 1e-6));
+    if (!(side >= min && side <= max))
+      throw new SessionError(`An image side of ${side} pt is outside ${MIN_IMAGE_SIDE}..${MAX_IMAGE_SIDE}`, "bad-request");
+  });
+  const cx = (m[0] + m[2]) / 2 + m[4], cy = (m[1] + m[3]) / 2 + m[5];
+  if (!(cx >= bounds[0] && cx <= bounds[2] && cy >= bounds[1] && cy <= bounds[3]))
+    throw new SessionError("The image's centre would be off the page", "bad-request");
+}
+
+/**
+ * The scale and pixel box of a sprite covering `rect` (page space): the box rounded out to whole
+ * pixels, at least one pixel each way, the scale lowered until it fits MAX_SPRITE_PIXELS and
+ * MAX_RENDER_SIDE.
+ */
+export function spriteBox(rect: Rect, scale: number): { scale: number; box: Rect } {
+  const w = Math.max(rect[2] - rect[0], 1e-3), h = Math.max(rect[3] - rect[1], 1e-3);
+  const boxAt = (s: number): Rect => {
+    const x0 = Math.floor(rect[0] * s), y0 = Math.floor(rect[1] * s);
+    return [x0, y0, Math.max(x0 + 1, Math.ceil(rect[2] * s)), Math.max(y0 + 1, Math.ceil(rect[3] * s))];
+  };
+  const fits = ([x0, y0, x1, y1]: Rect) =>
+    (x1 - x0) * (y1 - y0) <= MAX_SPRITE_PIXELS && x1 - x0 <= MAX_RENDER_SIDE && y1 - y0 <= MAX_RENDER_SIDE;
+  let s = Math.min(scale, Math.sqrt(MAX_SPRITE_PIXELS / (w * h)), MAX_RENDER_SIDE / w, MAX_RENDER_SIDE / h);
+  while (!fits(boxAt(s))) s *= 0.999;
+  return { scale: s, box: boxAt(s) };
+}
+
+/**
+ * The scale to draw a sprite at when the clips around it would hold `bytes` in the draw device at
+ * `scale`: what they hold goes with the pixels, so with the square of the scale. Null when even
+ * MIN_SPRITE_SCALE would be too much, or `scale` is that low already.
+ */
+function scaleWithin(bytes: number, scale: number): number | null {
+  if (scale <= MIN_SPRITE_SCALE || bytes * (MIN_SPRITE_SCALE / scale) ** 2 > MAX_SPRITE_CLIP_BYTES) return null;
+  return Math.max(MIN_SPRITE_SCALE, Math.min(scale * Math.sqrt(MAX_SPRITE_CLIP_BYTES / bytes) * 0.9, scale * 0.9));
+}
 
 /** Writes `doc` with MuPDF save `options`, copied out of the wasm heap: the buffer is exactly the file. */
 function writeBytes(doc: MuPDF.PDFDocument, options: string): ArrayBuffer {

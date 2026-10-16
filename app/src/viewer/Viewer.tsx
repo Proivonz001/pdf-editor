@@ -10,7 +10,7 @@ import type { RefObject } from "preact";
 import { useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
 import {
-  busy, currentPage, editingLine, editingStopped, editMode, engine, fitMode, signedNoticeDismissed, zoom,
+  busy, currentPage, editingLine, editingStopped, editMode, engine, fitMode, selectedImage, signedNoticeDismissed, zoom,
 } from "../state";
 import { setEditMode } from "../ui/actions";
 import { rescueFocus, viewerScroller } from "../ui/focus";
@@ -83,11 +83,12 @@ function SignedNotice({ docId, elRef }: { docId: number; elRef: RefObject<HTMLDi
 }
 
 /**
- * "2 / 9" at the bottom centre. Not while a line editor is open: the pill could cover the field
- * or its context bar. It reads editingLine itself, so opening a line re-renders only the pill.
+ * "2 / 9" at the bottom centre. Not while a line editor is open or an image is selected: the pill
+ * could cover the field or the context bar. It reads those signals itself, so opening a line or
+ * selecting an image re-renders only the pill.
  */
 function PageIndicator({ count }: { count: number }) {
-  if (editingLine.value) return null;
+  if (editingLine.value || selectedImage.value) return null;
   const page = Math.min(currentPage.value, count - 1) + 1;
   return (
     <div class="page-indicator">

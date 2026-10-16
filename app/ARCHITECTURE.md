@@ -17,7 +17,8 @@ repository root keeps working; it replaces it once it does everything the old on
 - **Engine** (`src/engine/`). MuPDF 1.27.0 in a module Web Worker; the UI never blocks on it.
   `core.js` + `tables.js` come from the validated prototype (`prototypes/mupdf-text/`, 39 test
   cases in Node and Chrome, cross-checked with pdfium). `session.ts` holds one open document and
-  the edit history and is plain TypeScript, so the tests run it in Node. `pdfa.ts` converts a
+  the edit history and is plain TypeScript, so the tests run it in Node. `images.ts` finds the
+  pictures of a page and edits one placement at a time (see "Images"). `pdfa.ts` converts a
   copy to PDF/A and checks the result, with our own colour profile from `icc.ts` (see "PDF/A").
   `worker.ts` only turns messages into `EngineSession` calls. `protocol.ts` is the contract;
   `client.ts` is the main-thread side.
@@ -30,7 +31,7 @@ repository root keeps working; it replaces it once it does everything the old on
 - **UI** (`src/ui/`, `src/app.tsx`), in the "Carta + giallo" style. `app.tsx` lays out a grid
   (`styles/layout.css`) and marks the root `data-layout="phone"` below 640 px, `"desktop"` from
   640 px (`ui/media.ts`):
-  - desktop: top bar, tool rail (Browse, Edit text, the panel toggles), thumbnails panel,
+  - desktop: top bar, tool rail (Browse, Edit, the panel toggles), thumbnails panel,
     viewer, details panel (from 1200 px). The panels follow the window width until the user
     toggles one; that choice is remembered on the device (`ui/panels.ts`);
   - phone: compact top bar, the viewer, a tab bar at the bottom and bottom sheets for the
@@ -59,6 +60,16 @@ repository root keeps working; it replaces it once it does everything the old on
    `subsetFonts()` on the whole document).
 5. **Destroy MuPDF objects explicitly** (pages, documents, pixmaps, buffers): a page wrapper
    keeps its whole document alive until the JS garbage collector runs.
+6. **MuPDF does not see in-place changes to a resource it has loaded.** It keeps loaded
+   resources (fonts, images, colour spaces) in its store, keyed by their PDF object. So
+   `core.replaceText` calls `mupdf.emptyStore()` after an edit that extended a font's
+   /ToUnicode or /W: without it, the working document kept reading the old font, lines() returned
+   U+FFFD for the new characters and a second edit of the line wrote it into the file. It does so
+   only then, because emptying the store also drops decoded images, of every page: the next
+   render of a page with a large scan decodes it again (measured: 454 ms instead of 75 ms for a
+   300 dpi full-page JPEG at scale 2), a cost paid once per such edit, accepted for correctness.
+   New code that changes an already-loaded resource in place must do the same, or write a new
+   object instead.
 
 ## Undo and save
 
@@ -119,6 +130,172 @@ never changed: every download is a new file, so the digital signatures of a sign
 says so.
 
 The edit list is plain data, so it can later be stored for "resume session".
+
+## Images
+
+The pictures drawn on a page can be moved, resized, rotated, deleted or replaced, one
+**placement** at a time: the same picture drawn twice is two placements (`images.ts`, ported from
+the phase 3 prototype; `EngineSession.images`, `transformImage`, `deleteImage`, `replaceImage`,
+`renderImage`).
+
+**Finding them.** MuPDF.js 1.27 has no content-stream processor or filter, so `images.ts` walks
+the page's content itself: a small lexer, the q/Q/cm stack, Form XObjects (recursively, with
+/Matrix, the /BBox clip, /Resources and a loop guard), inline images (BI..ID..EI: skipped by length
+when unfiltered or when /L gives it, otherwise up to the first EI between whitespace), clips, soft
+masks set with `gs`, marked content, colours set to a pattern, and pages with several content
+streams. Names are read as MuPDF reads them: `#xx` escapes decoded (`/Logo#20A` draws the key
+"Logo A"), the bytes taken as UTF-8, which is how MuPDF.js gives and looks up keys (a name whose
+bytes are not UTF-8 cannot be looked up through MuPDF.js: the gate then locks the page). For each
+placement it keeps the painting operation (the Do, the BI..EI, or the Do of the
+form holding the image), the image's **own block** (the outermost q..Q, within one stream, that
+paints nothing else) and the clips that move with it (set inside that block, or inside the form).
+The clips in effect are a list whose tails the states saved by q share, so adding one copies
+nothing. The walk is capped: at most 1,000,000 operations (a form's counted each time it is
+drawn), 5,000 placements and 2,000,000 clips checked (the clips in effect at each placement,
+summed). Past a cap, a page of a few KB that expands into a million placements, or one with tens
+of thousands of clips, is listed as MuPDF draws it (5,000 images at most), all locked as
+"unreadable", instead of keeping the worker busy for minutes.
+
+**The safety gate.** Then MuPDF's own interpreter runs the page (`runPageContents` with a JS
+`Device`) and records every `fillImage` and `fillImageMask` in order, leaving out images inside
+tiling patterns and soft-mask groups. Each placement of the walk must be, in order, an image
+MuPDF draws at the same matrix (within 0.01 pt): a hidden optional-content layer, an inline image
+read wrongly, a broken stream or a `cm` MuPDF reads otherwise fail that, and the page's images
+are then listed as MuPDF draws them, all locked as "unreadable". MuPDF may draw images that are
+not placements: the cells of a pattern fill smaller than one cell come without `beginTile`, and
+a stencil mask painted with a pattern is drawn as a clip and the pattern (the walk leaves those
+masks out). Such extra images are accepted only on a page that paints with a pattern or a
+Type 3 font; anywhere else they mean the walk missed something, and its blocks cannot be
+trusted. The device pass also gives each image's pixel size and visible box (its bounding box
+within the clips in effect and the page).
+
+**No exception leaves a device callback.** An error thrown inside a JS device callback (MuPDF
+failing to decode a picture, or running out of memory, in a call the callback makes) would unwind
+through MuPDF's C frames and corrupt the shared WebAssembly module: after about twenty, every
+call fails, saving included, in every session. So every callback catches, the first failure is
+kept, the rest of the pass does nothing, and the failure is thrown once `runPageContents` has
+returned ("edit-failed" from the session).
+
+**The matrix.** `ImageInfo.matrix` maps the picture's unit square as it is seen, (0, 0) its
+top-left corner, onto page space: exactly the matrix MuPDF reports to a device. The PDF image
+matrix P has the flip [1 0 0 -1 0 1] in front of it; the flip is its own inverse.
+
+**An edit** changes only the drawing instruction of that one placement, where it is in the
+stream. So the painting order stays (text over the picture stays over it), marked content (tags)
+and the clips inside the image's own block stay right, and other placements of the same picture
+do not change. With X the CTM where the change is made, M = X · P⁻¹ · P′ · X⁻¹:
+
+- when the image's own block starts with `q a b c d e f cm`, M is folded into that cm (twenty
+  moves in a row leave the stream the same size);
+- otherwise ` M cm` is inserted right after the block's q;
+- without a block of its own (a frame stroked in the same block, say), the painting operation is
+  wrapped in `q M cm … Q`.
+
+The edited stream is written back into the same stream object, unless another page draws it too
+(or the page twice): then into a new one in that page's /Contents only. A new object per edit
+would leave a dead copy of the page's content in the working document and in every checkpoint
+(snapshots are not garbage collected), a megabyte per drag on a heavy drawing. Numbers are
+written in fixed notation: PDF has no exponents. A target must be six finite numbers, not
+degenerate, its centre on the page, and each side within 1..14,400 pt, or, for a side already
+outside those limits (a 0.5 pt rule, a 1-pixel spacer drawn at 0.75 pt), no further from them
+than it is: such a picture can be moved and turned, not made thinner.
+
+**Delete** removes only the painting operation, so q/Q and BDC/EMC stay balanced. **Replace**
+draws the new picture as `q K cm /PEImg<n> Do Q`, in place of the painting operation, or of the
+innermost block around it when that block holds only a cm and the operation (as many producers
+write a picture, and as a replacement leaves it): replacing again takes the place of the last
+replacement instead of nesting inside it. The new picture fits inside the part of the old one
+that showed: the old unit square within the clips that move with it (each by its bounding box
+along the picture's axes), keeping its own proportions, centred, so with the same rotation. A
+form's own clips (its /BBox, those set inside it) would go with its Do: they are written again
+around the new picture, the path's points mapped into the user space there. A mirrored old
+picture (negative determinant: stored bottom-up, or flipped for display) is read as the more
+upright of its two readings, and the new one is drawn at that angle, not mirrored, over the same
+box. The XObject goes in the page's own /Resources as `PEImg<n>`; a JPEG is embedded as it is
+(DCTDecode); the same bytes put in several places in one session are embedded once (a map per
+working document, by the bytes; a replay from a checkpoint may add a copy); the new XObject gets
+the /OC of the old picture and of the forms it was drawn in (several: one membership dictionary
+with /P /AllOn, which MuPDF 1.27 itself does not apply, other readers do). MuPDF backs a picture
+without a colour profile with its own (Artifex's) profiles, which the app does not ship (see
+"Colour profile" under PDF/A): such pictures get /DeviceRGB, /DeviceGray or /DeviceCMYK instead; a
+JPEG's or PNG's own profile is kept.
+
+**What leaves the file.** After a delete or a replace, every XObject name the page no longer
+draws leaves its resources: what its content draws, and the content that uses the page's
+resources because it has none of its own (forms, Type 3 glyphs, patterns, soft-mask groups,
+annotation appearances), counts. The page first gets its own shallow copy of /Resources and of
+/XObject (inherited ones, or a dictionary shared with other pages), so the other pages keep
+theirs. The pictures behind the names it dropped may still be listed elsewhere, which keeps them
+in the file: in the one /Resources FPDF and TCPDF give every page, in resources inherited from
+the page tree, in a form whose /Resources is the page's dictionary, or in the dictionary the
+other pages keep after a text edit gave this page renamed resources of its own. So the cleanup
+looks through the document's resources (every page's, the page tree's, and those of the forms,
+patterns, Type 3 fonts, soft-mask groups and appearances found in them, each once) for XObject
+dictionaries that list those pictures (by object number). Such a name leaves its dictionary when
+nothing drawing with that dictionary draws it: the pages that resolve to it, directly or by
+inheritance, and what has it as /Resources or has none and is drawn with it. Only those users'
+content is read, each stream once (a 1,000-page file where every page shares one dictionary:
+about 0.1 s; with resources of their own, about 30 ms). Objects are told apart as pdfa.ts does
+(the indirect object, or the same direct one in memory: a text edit's copy of inherited
+resources keeps the page tree's /XObject). The cleanup is conservative: when some content that
+may draw with a dictionary cannot be decoded (a bad /DecodeParms in an appearance, a pattern, a
+Type 3 glyph or another page), draws a name that is not one of its keys (so it cannot be sure it
+reads the names MuPDF does), or the form fields' default resources (/AcroForm /DR) have it,
+nothing more is pruned for that edit, and the edit is made all the same; past 4,000,000 operations
+or 200,000 dictionaries read, the same. The download's garbage collection then drops the
+picture unless something still draws it: a deleted photo is not in the file for an extraction
+tool to find, and deleting the only CMYK picture lets the file be saved as PDF/A.
+
+**Descriptions.** On a tagged page, the structure element that owns the placement's marked
+content (through /StructParents and the ParentTree) loses /Alt and /ActualText, which described
+the old picture, when it is a Figure or a Formula (its own type, or the one the RoleMap gives a
+custom type), or when the picture was all it held: its marked-content sequence paints nothing
+else and the element has no other content. Any other element keeps them: a paragraph with text
+and an inline icon has them for its text too (MuPDF reads the text through /ActualText). Nothing
+happens when the file has no structure tree or it cannot be read.
+
+**Locked images** are listed with the reason, and every edit refuses them ("not-editable"):
+
+- "group": drawn in a form that also paints something else, such as a caption: moving the form
+  would move the caption too (cloning the form for this page is for later);
+- "soft-mask": a soft mask set with `gs` outside the image's own block applies to it;
+- "cropped": a clip set outside the image's own block crops it as a frame would (it cuts part of
+  the picture off, and lies within the picture's box): moved, it would show another part. A
+  larger clip that the picture reaches, such as the page-margin clip Chrome writes around
+  everything, does not lock it, or a picture moved partly under the margin could not be moved
+  back. Clips that cannot be measured (curves, text) count as cutting;
+- "unreadable": the safety gate failed, or the page is past the walk's caps.
+
+**How edits are identified.** An image edit is logged as plain data: page, image index (painting
+order), the matrix it must still have (`expect`), and the operation with its data (the target
+matrix, or a copy of the new picture's bytes). Every replay (undo, redo, checkpoints, rollback)
+finds the page's placements again, walk and gate, and refuses an entry whose image is missing,
+locked or more than 0.01 pt away from `expect` ("edit-failed", through the usual rollback).
+Resource names and byte offsets are not stable, since a text edit's redaction rewrites the stream
+and renames resources; the painting order is. Text and image edits mix freely in one history; a
+move to where the image already is is a no-op, like an unchanged line.
+
+**The sprite.** `renderImage` draws one placement alone, for the preview while it is dragged: a JS
+device forwards only that image (the one the gate matched it to, counted as the gate counts) and
+every clip to a DrawDevice on a transparent pixmap covering its visible box, at most 4 million
+pixels. Each clip that is not a rectangle along the pixel grid holds a mask and a copy of its
+area in the draw device until it is popped (about 5 bytes a pixel): a clip that would take what
+the clips open at once hold past 128 MB is not forwarded, so MuPDF never runs out of memory. If
+such a clip is still in effect when the image comes (clips set and ended elsewhere on the page do
+not matter), the sprite is drawn again at the lower scale where they fit, since what they hold
+goes with the square of the scale: 30 nested rounded frames around a full-page picture at scale 2
+(a retina screen at 100 %) give a sprite at about 1.2. It is refused ("edit-failed") only when
+even 0.25 pixel per point would be over. MuPDF's pixmaps with alpha are premultiplied; the worker
+builds an ImageData, which wants straight alpha, so the engine converts.
+
+**Not in this release**: "replace everywhere" for a picture used several times, links or
+captions that move with the picture, bring to front / send to back, cropping, snap guides, images
+inside annotations (stamps), images in groups with other content (locked). After a delete the
+picture's structure element (Figure) keeps an empty marked-content sequence, and a moved
+picture's /BBox layout attribute, when a tagged file has one, is not updated. Replacing a form
+placement drops what the form set besides clips (a soft mask or marked content inside it). A
+picture also listed in the form fields' default resources, or reached only from outside the
+pages' resources (a structure element's object reference), stays in the file.
 
 ## PDF/A ("PDF/A per l'archivio")
 

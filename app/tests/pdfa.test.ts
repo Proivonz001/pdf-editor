@@ -11,8 +11,9 @@ import { join } from "node:path";
 import * as mupdf from "mupdf";
 import { describe, expect, it, vi } from "vitest";
 import { SRGB_PROFILE_NAME, srgbProfile, srgbToLinear } from "../src/engine/icc";
+import { concat } from "../src/engine/images";
 import { checkPdfA, convertToPdfA, standardFontFor } from "../src/engine/pdfa";
-import type { DocInfo, PdfaIssue, PdfaReport, SaveOptions } from "../src/engine/protocol";
+import type { DocInfo, Matrix, PdfaIssue, PdfaReport, SaveOptions } from "../src/engine/protocol";
 import { EngineSession, SessionError, type RenderPixels } from "../src/engine/session";
 
 const PDFA: SaveOptions = { format: "pdfa-2b", password: { mode: "none" } };
@@ -555,6 +556,7 @@ describe("converting files", () => {
   const fixtures: [string, string?][] = [
     ["chrome-rotate90-crop.pdf"], ["chrome-subset.pdf"], ["enc-user-aes128.pdf", "utente"],
     ["reportlab-form.pdf"], ["type3-matplotlib.pdf"], ["word-winansi.pdf"],
+    ["chrome-images.pdf"], ["word-images.pdf"],
   ];
   for (const [name, password] of fixtures)
     it(`${name}: converts, passes the check, looks the same`, () => {
@@ -641,6 +643,113 @@ describe("converting files", () => {
     expect(report).toMatchObject({ blockers: [], removals: [], warnings: [] });
     expect(changedPixels(shown, again.render(0, 0.5))).toBe(0);
     expect(again.lines(0).map((l) => l.text.trim())).toContain("Relazione tecnica 2027 – Ω ≈ π →");
+  });
+
+  it("converts images moved and rotated, replaced by a PNG with transparency, and deleted", () => {
+    const { s } = open(fixture("word-images.pdf"));
+    const images = s.images(0);
+    expect(images.every((i) => i.movable)).toBe(true);
+    // #0 moved 20 pt right and 30 pt down, and turned 15° about its centre.
+    const m = images[0].matrix, cx = (m[0] + m[2]) / 2 + m[4] + 20, cy = (m[1] + m[3]) / 2 + m[5] + 30;
+    const r = (15 * Math.PI) / 180;
+    const turn: Matrix = [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0];
+    const target = concat(concat(concat(m, [1, 0, 0, 1, 20 - cx, 30 - cy]), turn), [1, 0, 0, 1, cx, cy]);
+    s.transformImage(0, 0, target);
+    // #2 replaced by a round logo: transparent outside a circle (premultiplied pixels).
+    const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 64, 64], true);
+    let png: Uint8Array;
+    try {
+      const px = pix.getPixels();
+      for (let y = 0; y < 64; y++)
+        for (let x = 0; x < 64; x++) {
+          const o = (y * 64 + x) * 4, a = Math.hypot(x - 32, y - 32) < 28 ? 255 : 0;
+          px.set([a ? 220 : 0, a ? 90 : 0, a ? 30 : 0, a], o);
+        }
+      png = pix.asPNG().slice();
+    } finally {
+      pix.destroy();
+    }
+    s.replaceImage(0, 2, png);
+    // #4 deleted.
+    s.deleteImage(0, 4);
+    const shown = s.render(0, 0.5);
+    const { report, again } = convert("word-images-edited", s);
+    expect(report).toMatchObject({ blockers: [], removals: [], warnings: [] });
+    expect(changedPixels(shown, again.render(0, 0.5))).toBe(0);
+    const after = again.images(0);
+    expect(after).toHaveLength(5);
+    expect(after[0].matrix.map((v, i) => Math.abs(v - target[i]) < 0.01)).toEqual([true, true, true, true, true, true]);
+    expect([after[2].pixelWidth, after[2].pixelHeight]).toEqual([64, 64]);
+  });
+
+  it("converts once the only CMYK picture is deleted or replaced: neither it nor a profile of MuPDF's is in the file", () => {
+    /** A CMYK picture and an RGB one, both raw (no profile at all). */
+    const source = () => makePdf((doc) => {
+      const raw = (bytes: Uint8Array, space: string) => {
+        const buf = new mupdf.Buffer(bytes);
+        try {
+          return doc.addRawStream(buf, { Type: "XObject", Subtype: "Image", Width: 4, Height: 4, ColorSpace: space, BitsPerComponent: 8 });
+        } finally {
+          buf.destroy();
+        }
+      };
+      const resources = { XObject: { C: raw(new Uint8Array(64).fill(60), "DeviceCMYK"), R: raw(new Uint8Array(48).fill(200), "DeviceRGB") } };
+      doc.insertPage(-1, doc.addPage([0, 0, 300, 200], 0, resources, "q 100 0 0 100 20 50 cm /C Do Q q 100 0 0 100 160 50 cm /R Do Q"));
+    });
+    const cmykImages = (bytes: Uint8Array) => inspect(bytes, (doc) => dictionaries(doc).filter((o) => nameOf(o, "ColorSpace") === "DeviceCMYK").length);
+    const mupdfProfiles = (bytes: Uint8Array) => inspect(bytes, (doc) => dictionaries(doc).filter((o) => {
+      if (!o.isStream()) return false;
+      const buf = o.readStream();
+      try {
+        return new TextDecoder("latin1").decode(buf.asUint8Array()).includes("Artifex");
+      } finally {
+        buf.destroy();
+      }
+    }).length);
+    expect(codes(open(source()).s.pdfaCheck().blockers)).toEqual(["cmyk"]);
+    const deleted = open(source()).s;
+    deleted.deleteImage(0, 0);
+    expect(cmykImages(convert("cmyk-picture-deleted", deleted).bytes)).toBe(0);
+    const replaced = open(source()).s;
+    const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 30, 20], false);
+    let jpeg: Uint8Array;
+    try {
+      pix.clear(180);
+      jpeg = pix.asJPEG(90).slice();
+    } finally {
+      pix.destroy();
+    }
+    replaced.replaceImage(0, 0, jpeg);
+    const { bytes } = convert("cmyk-picture-replaced", replaced);
+    expect(cmykImages(bytes)).toBe(0);
+    expect(mupdfProfiles(bytes)).toBe(0);
+    expect(mupdfProfiles(new Uint8Array(replaced.save().bytes))).toBe(0);
+  });
+
+  it("converts once the only CMYK picture is deleted, when the pages share one /Resources (FPDF, TCPDF)", () => {
+    // The CMYK picture is drawn on page 1 only, the RGB one on page 2; both are listed for both.
+    const source = makePdf((doc) => {
+      const raw = (bytes: Uint8Array, space: string) => {
+        const buf = new mupdf.Buffer(bytes);
+        try {
+          return doc.addRawStream(buf, { Type: "XObject", Subtype: "Image", Width: 4, Height: 4, ColorSpace: space, BitsPerComponent: 8 });
+        } finally {
+          buf.destroy();
+        }
+      };
+      const resources = doc.addObject({ XObject: { C: raw(new Uint8Array(64).fill(60), "DeviceCMYK"), R: raw(new Uint8Array(48).fill(200), "DeviceRGB") } });
+      doc.insertPage(-1, doc.addPage([0, 0, 300, 200], 0, resources, "q 100 0 0 100 20 50 cm /C Do Q"));
+      doc.insertPage(-1, doc.addPage([0, 0, 300, 200], 0, resources, "q 100 0 0 100 160 50 cm /R Do Q"));
+    });
+    const imagesIn = (bytes: Uint8Array, space: string) => inspect(bytes, (doc) => dictionaries(doc).filter((o) => nameOf(o, "Subtype") === "Image" && nameOf(o, "ColorSpace") === space).length);
+    const { s } = open(source);
+    expect(codes(s.pdfaCheck().blockers)).toEqual(["cmyk"]);
+    s.deleteImage(0, 0);
+    const second = s.render(1, 0.5);
+    const { bytes, again } = convert("cmyk-picture-deleted-shared", s);
+    expect(imagesIn(bytes, "DeviceCMYK")).toBe(0);
+    expect(imagesIn(bytes, "DeviceRGB")).toBe(1); // page 2 still draws it
+    expect(changedPixels(second, again.render(1, 0.5))).toBe(0);
   });
 
   /** The embedded CIDFontType2 fonts of a file, and whether each has a CIDToGIDMap. */
