@@ -15,6 +15,9 @@ import { concat } from "../src/engine/images";
 import { checkPdfA, convertToPdfA, standardFontFor } from "../src/engine/pdfa";
 import type { DocInfo, Matrix, PdfaIssue, PdfaReport, SaveOptions } from "../src/engine/protocol";
 import { EngineSession, SessionError, type RenderPixels } from "../src/engine/session";
+import { releaseFallbackFonts, savePdf } from "../src/engine/core.js";
+import { applyFieldEdit, fullName, planFieldEdit } from "../src/engine/forms";
+import type { FieldValue } from "../src/engine/protocol";
 
 const PDFA: SaveOptions = { format: "pdfa-2b", password: { mode: "none" } };
 
@@ -1200,6 +1203,412 @@ describe("what blocks", () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------------
+// Filled forms (release 3, "Compila e firma": agent Forms). Fields filled with forms.ts, as the
+// session's field edits fill them, saved as a download is, then converted through the session,
+// so veraPDF checks them in CI (PDFA_OUT).
+
+describe("filled forms", () => {
+  const PRINT = 4, TX_MULTI = 1 << 12, TX_PASSWORD = 1 << 13, TX_COMB = 1 << 24, BTN_RADIO = 1 << 15, BTN_PUSH = 1 << 16, CH_COMBO = 1 << 17, CH_MULTI = 1 << 21;
+
+  /** A one-page form with these widgets (each field and its widget one dictionary). */
+  const formPdf = (defs: Record<string, unknown>[], acro: Record<string, unknown> = {}) => makePdf((doc) => {
+    const helv = doc.addObject({ Type: "Font", Subtype: "Type1", BaseFont: "Helvetica", Encoding: "WinAnsiEncoding" });
+    doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: helv } }, "BT /F1 10 Tf 40 800 Td (Modulo di prova) Tj ET"));
+    const pageObj = doc.findPage(0);
+    const fields = defs.map((d) => doc.addObject({ Type: "Annot", Subtype: "Widget", F: PRINT, P: pageObj, DA: "(/Helv 10 Tf 0 g)", ...d }));
+    pageObj.put("Annots", fields);
+    doc.getTrailer().get("Root").put("AcroForm", doc.addObject({ Fields: fields, DR: { Font: { Helv: helv } }, ...acro }));
+  });
+
+  /** Options with export values: [export, label] pairs as a PDF array. */
+  const pairs = (doc: mupdf.PDFDocument, list: [string, string][]) => {
+    const opt = doc.newArray();
+    for (const [e, d] of list) {
+      const pair = doc.newArray();
+      pair.push(doc.newString(e));
+      pair.push(doc.newString(d));
+      opt.push(pair);
+    }
+    return opt;
+  };
+
+  /** `bytes` with the fields filled as the session's field edits fill them, saved as a download is. */
+  function filled(bytes: Uint8Array, values: [string, FieldValue][]): Uint8Array {
+    const doc = mupdf.Document.openDocument(bytes, "application/pdf").asPDF()!;
+    try {
+      for (const [name, value] of values) {
+        const edit = planFieldEdit(mupdf, doc, name, value);
+        if (edit) applyFieldEdit(mupdf, doc, edit);
+      }
+      return savePdf(mupdf, doc).bytes;
+    } finally {
+      releaseFallbackFonts(doc);
+      doc.destroy();
+    }
+  }
+
+  /** What each field's widgets draw: the text, glyphs outside the widget's box, .notdef glyphs. */
+  function drawnFields(bytes: Uint8Array) {
+    return inspect(bytes, (doc) => {
+      const out: Record<string, { text: string; outside: number; notdef: number }> = {};
+      for (let p = 0; p < doc.countPages(); p++) {
+        const page = doc.loadPage(p);
+        const widgets = [...page.getWidgets()];
+        try {
+          for (const w of widgets) {
+            const r = w.getRect();
+            const entry = (out[fullName(w.getObject())] ??= { text: "", outside: 0, notdef: 0 });
+            let failure: unknown = null;
+            const dev = new mupdf.Device({
+              fillText(t, ctm, cs) {
+                try {
+                  t.walk({
+                    showGlyph(font, trm, gid, uni) {
+                      const m = mupdf.Matrix.concat(trm, ctm);
+                      entry.text += String.fromCodePoint(uni);
+                      if (gid <= 0) entry.notdef++;
+                      if (m[4] < r[0] - 0.5 || m[4] > r[2] + 0.5 || m[5] < r[1] - 0.5 || m[5] > r[3] + 0.5) entry.outside++;
+                      font.destroy();
+                    },
+                  });
+                } catch (err) {
+                  failure ??= err;
+                }
+                t.destroy();
+                cs.destroy();
+              },
+            });
+            try {
+              w.run(dev, mupdf.Matrix.identity);
+              dev.close();
+            } finally {
+              dev.destroy();
+            }
+            if (failure) throw failure;
+          }
+        } finally {
+          for (const w of widgets) w.destroy();
+          page.destroy();
+        }
+      }
+      return out;
+    });
+  }
+
+  /** A widget's normal appearance (the state shown, for buttons) as text, by field name. */
+  function appearance(bytes: Uint8Array, name: string): string {
+    return inspect(bytes, (doc) => {
+      const annots = doc.findPage(0).get("Annots");
+      for (let i = 0; i < annots.length; i++) {
+        const a = annots.get(i);
+        if (fullName(a) !== name) continue;
+        let n = a.get("AP", "N");
+        if (n.isDictionary() && !n.isStream()) n = a.get("AS").isName() ? n.get(a.get("AS").asName()) : mupdf.PDFObject.Null;
+        if (!n.isStream()) return "(none)";
+        const buf = n.readStream();
+        try {
+          return buf.asString();
+        } finally {
+          buf.destroy();
+        }
+      }
+      return "(no such field)";
+    });
+  }
+
+  /**
+   * Streams of the file that draw MuPDF's "SIGN" placeholder: its orange tag, the word in glyph
+   * codes. (MuPDF itself always shows it over an unsigned signature field on screen, whatever the
+   * file holds: only the file can tell.)
+   */
+  function signPlaceholders(bytes: Uint8Array): number {
+    return inspect(bytes, (doc) => dictionaries(doc).filter((o) => {
+      if (!o.isStream()) return false;
+      const buf = o.readStream();
+      try {
+        return buf.asString().includes(".95 .33 .18 rg");
+      } finally {
+        buf.destroy();
+      }
+    }).length);
+  }
+
+  it("every kind of field filled, MuPDF's drawing and the app's writer: converts, values and glyphs kept", () => {
+    const form = makePdf((doc) => {
+      const helv = doc.addObject({ Type: "Font", Subtype: "Type1", BaseFont: "Helvetica", Encoding: "WinAnsiEncoding" });
+      doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: helv } }, "BT /F1 10 Tf 40 800 Td (Modulo di prova) Tj ET"));
+      const pageObj = doc.findPage(0);
+      const defs: Record<string, unknown>[] = [
+        { FT: "Tx", T: "(nome)", Rect: [150, 780, 400, 797] },
+        { FT: "Tx", T: "(cognome)", Rect: [150, 750, 400, 767], MK: { BG: [1, 1, 0.9], BC: [0, 0, 0.6] } },
+        { FT: "Tx", T: "(citta)", Rect: [150, 720, 400, 737], DA: "(/Helv 0 Tf 0 0 1 rg)" },
+        { FT: "Tx", T: "(note)", Ff: TX_MULTI, Rect: [150, 640, 400, 710] },
+        { FT: "Tx", T: "(cf)", Ff: TX_COMB, MaxLen: 16, Rect: [150, 610, 406, 628] },
+        { FT: "Btn", T: "(privacy)", Rect: [150, 580, 164, 594], DA: "(/ZaDb 0 Tf 0 g)", MK: { CA: "(4)" } },
+        { FT: "Ch", T: "(provincia)", Ff: CH_COMBO, Rect: [150, 550, 300, 567], Opt: pairs(doc, [["RM", "Roma"], ["BV", "Brașov"]]) },
+        { FT: "Ch", T: "(interessi)", Ff: CH_MULTI, Rect: [150, 470, 300, 540], Opt: ["(Sport)", "(Musica)", "(Arte)", "(Cucina)"] },
+        { FT: "Sig", T: "(firma)", Rect: [150, 400, 350, 450] },
+        { FT: "Btn", T: "(invia)", Ff: BTN_PUSH, Rect: [400, 400, 500, 420], A: { S: "JavaScript", JS: "(app.alert(1);)" } },
+      ];
+      const fields = defs.map((d) => doc.addObject({ Type: "Annot", Subtype: "Widget", F: PRINT, P: pageObj, DA: "(/Helv 10 Tf 0 g)", ...d }));
+      pageObj.put("Annots", fields);
+      doc.getTrailer().get("Root").put("AcroForm", doc.addObject({ Fields: fields, DR: { Font: { Helv: helv } } }));
+    });
+    const bytes = filled(form, [
+      ["nome", { kind: "text", text: "Città: Forlì – 1.234,56 € «ok»" }],
+      ["cognome", { kind: "text", text: "Zażółć Ștefănescu" }],
+      ["citta", { kind: "text", text: "東京 你好 – Καλημέρα" }],
+      ["note", { kind: "text", text: "Riga uno: Łódź\nRiga due, più lunga di quanto stia in una riga sola, ż" }],
+      ["cf", { kind: "text", text: "ŞTFNCU80A01H501U" }],
+      ["privacy", { kind: "state", state: "Yes" }],
+      ["provincia", { kind: "choice", values: ["BV"] }],
+      ["interessi", { kind: "choice", values: ["Sport", "Arte"] }],
+    ]);
+    const { s } = open(bytes);
+    const { report, bytes: out, again } = convert("form-filled", s);
+    expect(codes(report.removals)).toEqual(["javascriptx1"]);
+    const drawn = drawnFields(out);
+    expect(drawn.nome.text.replace(/ /g, "")).toBe("Città:Forlì–1.234,56€«ok»");
+    expect(drawn.cognome.text).toBe("Zażółć Ștefănescu");
+    expect(drawn.citta.text).toBe("東京 你好 – Καλημέρα");
+    expect(drawn.cf.text).toBe("ŞTFNCU80A01H501U");
+    expect(drawn.provincia.text).toBe("Brașov");
+    expect(drawn.interessi.text).toBe("SportMusicaArteCucina");
+    for (const [name, d] of Object.entries(drawn)) expect([name, d.outside, d.notdef]).toEqual([name, 0, 0]);
+    expect(appearance(out, "interessi")).toContain("0.6 0.757 0.855 rg"); // the selected rows' highlight
+    expect(appearance(out, "privacy")).toMatch(/Tj/); // the tick the app drew in a check box without states
+    // The unsigned signature field: an empty appearance, not MuPDF's orange "SIGN".
+    expect(appearance(out, "firma").trim()).toBe("");
+    expect(signPlaceholders(out)).toBe(0);
+    expectSameLook(s, again, 1);
+  });
+
+  it("an unsigned signature field gets an empty appearance, never MuPDF's SIGN, also with NeedAppearances", () => {
+    for (const needAppearances of [false, true]) {
+      const bytes = formPdf([{ FT: "Sig", T: "(firma)", Rect: [150, 400, 350, 450] }, { FT: "Tx", T: "(nome)", V: "(Mario)", Rect: [150, 500, 400, 517] }],
+        needAppearances ? { NeedAppearances: true } : {});
+      const { s } = open(bytes);
+      const { bytes: out } = convert(needAppearances ? "form-signature-needappearances" : "form-signature-unsigned", s);
+      expect(appearance(out, "firma").trim()).toBe("");
+      expect(signPlaceholders(out)).toBe(0);
+      expect(drawnFields(out).nome.text).toBe("Mario");
+    }
+  });
+
+  it("a NeedAppearances form with values outside WinAnsi set by another tool: drawn by the writer, inside the boxes", () => {
+    const bytes = makePdf((doc) => {
+      const helv = doc.addObject({ Type: "Font", Subtype: "Type1", BaseFont: "Helvetica", Encoding: "WinAnsiEncoding" });
+      doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, {}, ""));
+      const pageObj = doc.findPage(0);
+      const defs: Record<string, unknown>[] = [
+        { FT: "Tx", T: "(nome)", V: doc.newString("Zażółć gęślą jaźń"), Rect: [150, 780, 400, 797] },
+        { FT: "Tx", T: "(alto)", V: doc.newString("Ștefan Țara"), Rect: [150, 700, 400, 740] }, // MuPDF: 12 pt under the box
+        { FT: "Tx", T: "(auto)", V: doc.newString("Брашов"), DA: "(/Helv 0 Tf 0 g)", Rect: [150, 660, 400, 680] }, // MuPDF: size 0
+        { FT: "Tx", T: "(latino)", V: "(Forlì)", Rect: [150, 620, 400, 637] },
+        { FT: "Ch", T: "(lista)", V: "(Arte)", Rect: [150, 540, 300, 600], Opt: ["(Sport)", "(Arte)"] },
+      ];
+      const fields = defs.map((d) => doc.addObject({ Type: "Annot", Subtype: "Widget", F: PRINT, P: pageObj, DA: "(/Helv 10 Tf 0 g)", ...d }));
+      pageObj.put("Annots", fields);
+      doc.getTrailer().get("Root").put("AcroForm", doc.addObject({ Fields: fields, DR: { Font: { Helv: helv } }, NeedAppearances: true }));
+    });
+    const { s } = open(bytes);
+    const { bytes: out } = convert("form-needappearances", s);
+    const drawn = drawnFields(out);
+    expect(Object.fromEntries(Object.entries(drawn).map(([k, d]) => [k, d.text]))).toEqual({
+      nome: "Zażółć gęślą jaźń", alto: "Ștefan Țara", auto: "Брашов", latino: "Forlì", lista: "SportArte",
+    });
+    for (const [name, d] of Object.entries(drawn)) expect([name, d.outside, d.notdef]).toEqual([name, 0, 0]);
+    expect(appearance(out, "lista")).toContain("0.6 0.757 0.855 rg");
+    expect(inspect(out, (d) => d.getTrailer().get("Root", "AcroForm", "NeedAppearances").isNull())).toBe(true);
+    // Values as they were.
+    expect(inspect(out, (d) => d.findPage(0).get("Annots").get(0).get("V").asString())).toBe("Zażółć gęślą jaźń");
+  });
+
+  it("a field without an appearance, its value outside WinAnsi (no NeedAppearances): drawn by the writer", () => {
+    const bytes = formPdf([{ FT: "Tx", T: "(nome)", V: "(placeholder)", Rect: [150, 700, 400, 740] }]);
+    const withValue = inspect(bytes, (doc) => {
+      doc.findPage(0).get("Annots").get(0).put("V", doc.newString("Łukasz Ștefan"));
+      return saveBytes(doc, "encrypt=none");
+    });
+    const { s } = open(withValue);
+    const { bytes: out } = convert("form-no-appearance", s);
+    expect(drawnFields(out).nome).toEqual({ text: "Łukasz Ștefan", outside: 0, notdef: 0 });
+  });
+
+  it("characters no font has (emoji, Hebrew) are left out of the drawing: the file converts, the value stays", () => {
+    const bytes = filled(formPdf([{ FT: "Tx", T: "(nome)", Rect: [150, 700, 400, 717] }]), [["nome", { kind: "text", text: "OK 👍 שלום ż" }]]);
+    const { s } = open(bytes);
+    const { bytes: out } = convert("form-emoji", s);
+    expect(drawnFields(out).nome).toEqual({ text: "OK   ż", outside: 0, notdef: 0 });
+    expect(inspect(out, (d) => d.findPage(0).get("Annots").get(0).get("V").asString())).toBe("OK 👍 שלום ż");
+  });
+
+  it("reportlab-form filled in Greek, Cyrillic and CJK", () => {
+    const names = inspect(fixture("reportlab-form.pdf"), (doc) => {
+      const out: string[] = [];
+      const annots = doc.findPage(0).get("Annots");
+      for (let i = 0; i < annots.length; i++) if (annots.get(i).get("FT").isName() && annots.get(i).get("FT").asName() === "Tx") out.push(fullName(annots.get(i)));
+      return out;
+    });
+    expect(names.length).toBeGreaterThan(0);
+    const bytes = filled(fixture("reportlab-form.pdf"), [[names[0], { kind: "text", text: "Καλημέρα – Привет – 東京" }]]);
+    const { s } = open(bytes);
+    const { bytes: out, again } = convert("form-reportlab-scripts", s);
+    expect(drawnFields(out)[names[0]]).toEqual({ text: "Καλημέρα – Привет – 東京", outside: 0, notdef: 0 });
+    expectSameLook(s, again, 1);
+  });
+
+  /** Distinct baselines a widget's appearance draws text on (page space, rounded). */
+  function baselines(bytes: Uint8Array, name: string): number {
+    return inspect(bytes, (doc) => {
+      const page = doc.loadPage(0);
+      const widgets = [...page.getWidgets()];
+      const ys = new Set<number>();
+      try {
+        const w = widgets.find((x) => fullName(x.getObject()) === name)!;
+        const dev = new mupdf.Device({
+          fillText(t, ctm, cs) {
+            t.walk({
+              showGlyph(font, trm) {
+                ys.add(Math.round(mupdf.Matrix.concat(trm, ctm)[5]));
+                font.destroy();
+              },
+            });
+            t.destroy();
+            cs.destroy();
+          },
+        });
+        try {
+          w.run(dev, mupdf.Matrix.identity);
+          dev.close();
+        } finally {
+          dev.destroy();
+        }
+      } finally {
+        for (const w of widgets) w.destroy();
+        page.destroy();
+      }
+      return ys.size;
+    });
+  }
+
+  /** Dark pixels a session's render of page 1 shows in a page-space rectangle (y down). */
+  function darkIn(s: EngineSession, rect: number[]): number {
+    const r = s.render(0, 2);
+    let n = 0;
+    for (let y = Math.floor(rect[1] * 2); y < Math.ceil(rect[3] * 2); y++)
+      for (let x = Math.floor(rect[0] * 2); x < Math.ceil(rect[2] * 2); x++) {
+        const i = (y * r.width + x) * 4;
+        if (r.rgba[i] < 100 && r.rgba[i + 1] < 100 && r.rgba[i + 2] < 100) n++;
+      }
+    return n;
+  }
+
+  it("a password is never drawn: its frame only, with or without NeedAppearances; an appearance of its own is kept", () => {
+    for (const needAppearances of [false, true]) {
+      const bytes = formPdf([
+        { FT: "Tx", T: "(pin)", Ff: TX_PASSWORD, V: "(segreto123)", MK: { BC: [0, 0, 0.6] }, Rect: [150, 700, 350, 717] },
+        { FT: "Tx", T: "(nome)", V: "(Mario)", Rect: [150, 650, 350, 667] },
+      ], needAppearances ? { NeedAppearances: true } : {});
+      const { s } = open(bytes);
+      // On screen: the session gives it a frame-only appearance at open (MuPDF would draw the
+      // value in clear). With /NeedAppearances MuPDF still redraws every field for display, the
+      // password included, until the first field edit drops the flag (ARCHITECTURE.md): files
+      // never carry it either way.
+      const shown = darkIn(s, [152, 842 - 715, 348, 842 - 702]);
+      if (needAppearances) expect(shown).toBeGreaterThan(100);
+      else expect(shown).toBe(0);
+      const { bytes: out, again } = convert(needAppearances ? "form-password-needappearances" : "form-password", s);
+      expect(appearance(out, "pin")).not.toMatch(/Tj|segreto/);
+      expect(appearance(out, "pin")).toMatch(/re\ns\n/); // its border
+      expect(darkIn(again, [152, 842 - 715, 348, 842 - 702])).toBe(0);
+      expect(drawnFields(out).nome.text).toBe("Mario");
+    }
+    const own = inspect(formPdf([{ FT: "Tx", T: "(pin)", Ff: TX_PASSWORD, V: "(segreto123)", Rect: [150, 700, 350, 717] }], { NeedAppearances: true }), (doc) => {
+      doc.findPage(0).get("Annots").get(0).put("AP", { N: doc.addStream("0 g 10 5 4 4 re f\n", { Type: "XObject", Subtype: "Form", BBox: [0, 0, 200, 17] }) });
+      return saveBytes(doc, "encrypt=none");
+    });
+    const { bytes: out } = convert(null, open(own).s);
+    expect(appearance(out, "pin")).toBe("0 g 10 5 4 4 re f\n");
+  });
+
+  it("forms other tools filled: CR line breaks, a combo's export value, short multi-line boxes, radio buttons without appearances", () => {
+    for (const needAppearances of [false, true]) {
+      const bytes = makePdf((doc) => {
+        const helv = doc.addObject({ Type: "Font", Subtype: "Type1", BaseFont: "Helvetica", Encoding: "WinAnsiEncoding" });
+        doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, {}, ""));
+        const pageObj = doc.findPage(0);
+        const defs: Record<string, unknown>[] = [
+          { FT: "Tx", T: "(note)", Ff: TX_MULTI, V: doc.newString("Riga uno\rRiga due\r\nRiga tre"), Rect: [150, 700, 400, 780] },
+          { FT: "Tx", T: "(nota)", Ff: TX_MULTI, V: doc.newString("Łódź\rKraków"), Rect: [150, 600, 400, 680] },
+          { FT: "Ch", T: "(prov)", Ff: CH_COMBO, V: "(MI)", Opt: pairs(doc, [["MI", "Milano"], ["RM", "Roma"]]), Rect: [150, 560, 300, 577] },
+          { FT: "Tx", T: "(breve)", Ff: TX_MULTI, DA: "(/Helv 12 Tf 0 g)", V: doc.newString("Ștefan Țara Łódź"), Rect: [150, 520, 400, 534] },
+          { FT: "Ch", T: "(lista)", V: "(Arte)", Q: 1, Opt: ["(Sport)", "(Arte)"], Rect: [150, 440, 300, 500] },
+        ];
+        const fields = defs.map((d) => doc.addObject({ Type: "Annot", Subtype: "Widget", F: PRINT, P: pageObj, DA: "(/Helv 10 Tf 0 g)", ...d }));
+        // A radio group without appearance states, the second button on.
+        const radio = doc.addObject({ FT: "Btn", T: "(r)", Ff: BTN_RADIO, V: "B", Kids: [] });
+        const kids = ["Off", "B", "Off"].map((as, i) => {
+          const w = doc.addObject({ Type: "Annot", Subtype: "Widget", F: PRINT, P: pageObj, Parent: radio, DA: "(/ZaDb 0 Tf 0 g)", MK: { CA: "(l)" }, Rect: [150 + 40 * i, 400, 164 + 40 * i, 414] });
+          w.put("AS", doc.newName(as));
+          radio.get("Kids").push(w);
+          return w;
+        });
+        pageObj.put("Annots", [...fields, ...kids]);
+        doc.getTrailer().get("Root").put("AcroForm", doc.addObject({ Fields: [...fields, radio], DR: { Font: { Helv: helv } }, ...(needAppearances ? { NeedAppearances: true } : {}) }));
+      });
+      const { s } = open(bytes);
+      const { bytes: out, again } = convert(needAppearances ? "form-other-tools-needappearances" : "form-other-tools", s);
+      const drawn = drawnFields(out);
+      expect([baselines(out, "note"), baselines(out, "nota")]).toEqual([3, 2]);
+      expect(drawn.nota.text).toBe("ŁódźKraków");
+      expect(drawn.prov.text).toBe("Milano"); // the option's label, not its export value "MI"
+      expect(drawn.breve.text).toBe("Ștefan Țara Łódź");
+      for (const [name, d] of Object.entries(drawn)) expect([name, d.outside, d.notdef]).toEqual([name, 0, 0]);
+      // The values stay as the other tool wrote them.
+      expect(inspect(out, (d) => [d.findPage(0).get("Annots").get(0).get("V").asString(), d.findPage(0).get("Annots").get(2).get("V").asString()]))
+        .toEqual(["Riga uno\rRiga due\r\nRiga tre", "MI"]);
+      // The radio buttons: one state each, only the second drawn on.
+      const states = inspect(out, (d) => [5, 6, 7].map((i) => {
+        const a = d.findPage(0).get("Annots").get(i);
+        const keys: string[] = [];
+        a.get("AP", "N").forEach((_v, k) => keys.push(String(k)));
+        return [a.get("AS").asName(), keys.filter((k) => k !== "Off").join()];
+      }));
+      expect(states).toEqual([["Off", "0"], ["B", "B"], ["Off", "2"]]);
+      expect([150, 190, 230].map((x) => darkIn(again, [x + 3, 842 - 411, x + 11, 842 - 403]) > 0)).toEqual([false, true, false]);
+    }
+  });
+
+  it("a check box whose state name is Latin-1 (/S#EC, Sì): checked, converted, the name's bytes kept", () => {
+    const objects = [
+      "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [4 0 R] /Contents 7 0 R >>",
+      "<< /Type /Annot /Subtype /Widget /FT /Btn /T (cb) /F 4 /Rect [20 20 34 34] /V /Off /AS /Off /AP << /N << /S#EC 5 0 R /Off 6 0 R >> >> >>",
+      "<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Length 18 >>\nstream\n0 g 2 2 10 10 re f\nendstream",
+      "<< /Type /XObject /Subtype /Form /BBox [0 0 14 14] /Length 0 >>\nstream\n\nendstream",
+      "<< /Length 0 >>\nstream\n\nendstream",
+    ];
+    let pdf = "%PDF-1.7\n";
+    const offsets: number[] = [];
+    objects.forEach((o, i) => {
+      offsets.push(pdf.length);
+      pdf += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((at) => `${String(at).padStart(10, "0")} 00000 n \n`).join("")}`;
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    const { s } = open(filled(new TextEncoder().encode(pdf), [["cb", { kind: "state", state: "Sì" }]]));
+    const { bytes: out, again } = convert("form-latin1-state", s);
+    const raw = inspect(out, (d) => new TextDecoder("latin1").decode(saveBytes(d, "decompress")));
+    expect(raw).toMatch(/\/AS\s*\/S#EC\b/i);
+    expect(raw).toMatch(/\/V\s*\/S#EC\b/i);
+    expect(darkIn(again, [22, 200 - 32, 32, 200 - 22])).toBeGreaterThan(50); // the tick shows
+  });
+});
+
 describe("the engine's check", () => {
   it("catches what a conversion must have done", () => {
     const { bytes } = convert(null, open(helveticaPdf()).s);
@@ -1229,5 +1638,116 @@ describe("the engine's check", () => {
     } finally {
       doc.destroy();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Added content (release 3, "Compila e firma": agent Content). New text and pictures
+// (src/engine/newcontent.ts) are written through the session (addText, addImage), the app's own
+// path, then converted through the session, so veraPDF checks in CI (PDFA_OUT) what the app
+// writes: fonts subset as in a real download. (Not with newcontent's functions imported here
+// again: the ICC test above resets the modules, and a second copy of the engine keeps its own
+// fallback-font bookkeeping, which the session's save cannot see, so nothing would be subset.)
+
+describe("added text and pictures", () => {
+  const SANS = { size: 12, color: [0, 0, 0] as [number, number, number], family: "sans" as const, bold: false, italic: false };
+
+  /** The names of each Type0 font of a file (the app's fallback fonts are Type0): its BaseFont, its descendant's, its descriptor's FontName. */
+  function type0Fonts(bytes: Uint8Array): string[][] {
+    return inspect(bytes, (doc) =>
+      dictionaries(doc)
+        .filter((o) => nameOf(o, "Type") === "Font" && nameOf(o, "Subtype") === "Type0")
+        .map((f) => {
+          const d = f.get("DescendantFonts").get(0);
+          return [nameOf(f, "BaseFont") ?? "", nameOf(d, "BaseFont") ?? "", nameOf(d.get("FontDescriptor"), "FontName") ?? ""];
+        }));
+  }
+
+  /**
+   * Every Type0 font of the file is a subset (a six-letter tag on each of its names), and the
+   * file is not much larger than `original` (the CJK font alone is 1.7 MB whole); returns the
+   * faces, without the tag.
+   */
+  function expectSubset(bytes: Uint8Array, original: Uint8Array): string[] {
+    const fonts = type0Fonts(bytes);
+    for (const names of fonts) for (const n of names) expect(n, names.join(" / ")).toMatch(/^[A-Z]{6}\+/);
+    expect(bytes.length).toBeLessThan(original.length + 300_000);
+    return fonts.map((names) => names[0].replace(/^[A-Z]{6}\+/, ""));
+  }
+
+  /** A drawn signature: a dark stroke on transparent pixels (PNG), or a photo (JPEG). */
+  function signature(kind: "png" | "jpeg", w = 300, h = 100): Uint8Array {
+    const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, w, h], kind === "png");
+    try {
+      const px = pix.getPixels(), n = kind === "png" ? 4 : 3, stride = pix.getStride();
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const o = y * stride + x * n, on = Math.abs(y - h / 2 - 20 * Math.sin(x / 15)) < 4;
+          if (kind === "png") px.set(on ? [20, 30, 120, 255] : [0, 0, 0, 0], o);
+          else px.set([(x * 255) / w, (y * 255) / h, 128], o);
+        }
+      return (kind === "png" ? pix.asPNG() : pix.asJPEG(85)).slice();
+    } finally {
+      pix.destroy();
+    }
+  }
+
+  /** A phone photo: a JPEG with an EXIF block (orientation 6 and a GPS note) before its pixels. */
+  function photoWithExif(): Uint8Array {
+    const jpeg = signature("jpeg", 200, 100);
+    const body = [..."Exif\0\0MM\0*"].map((c) => c.charCodeAt(0)).concat([0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0],
+      [..."GPS 44.2225 N 12.0408 E"].map((c) => c.charCodeAt(0)));
+    return new Uint8Array([...jpeg.subarray(0, 2), 0xff, 0xe1, (body.length + 2) >> 8, (body.length + 2) & 255, ...body, ...jpeg.subarray(2)]);
+  }
+
+  /** Latin, ✓ ✗, CJK in serif (Nimbus Sans, ZapfDingbats, the CJK font, Nimbus Roman), a drawn signature and a phone photo, through the session. */
+  function addContent(s: EngineSession) {
+    s.addText(0, [40, 420], "Città € «ok» ✓ ✗ Zażółć Ελλ Кир", SANS);
+    s.addText(0, [40, 440], "中文 日本語", { ...SANS, family: "serif" });
+    s.addText(0, [40, 460], "✓", { ...SANS, size: 16, color: [0.12, 0.23, 0.58] });
+    s.addImage(signature("png"), [{ pageIndex: 0, matrix: [150, 0, 0, 50, 300, 450] }], "Firma: Mario Rossi");
+    s.addImage(photoWithExif(), [{ pageIndex: 0, matrix: [50, 0, 0, 100, 100, 470] }], null);
+  }
+
+  for (const name of ["chrome-subset.pdf", "word-winansi.pdf", "chrome-rotate90-crop.pdf"]) {
+    it(`converts new text (Latin, ✓ ✗, CJK) and pictures (PNG with transparency, JPEG), its fonts subset: ${name}`, () => {
+      const { s } = open(fixture(name));
+      addContent(s);
+      const shown = s.render(0, 0.5);
+      const { report, bytes, again } = convert(`added-${name.replace(/\.pdf$/, "")}`, s);
+      expect(report).toMatchObject({ blockers: [], removals: [] });
+      expect(changedPixels(shown, again.render(0, 0.5))).toBe(0);
+      const texts = again.lines(0).map((l) => l.text.trim());
+      for (const t of ["Città € «ok» ✓ ✗ Zażółć Ελλ Кир", "中文 日本語", "✓"]) expect(texts).toContain(t);
+      expect(Buffer.from(bytes).includes(Buffer.from("Exif\0\0", "latin1"))).toBe(false);
+      // what a real download carries: the fallback fonts subset (the CJK font alone is 1.7 MB whole)
+      const faces = expectSubset(bytes, fixture(name));
+      for (const face of ["Helvetica", "ZapfDingbats", "Times-Roman"]) expect(faces).toContain(face);
+      expect(faces.some((f) => f.startsWith("Droid"))).toBe(true);
+    });
+  }
+
+  it("a normal download subsets the fonts of added text (serif, CJK) and of a field filled outside WinAnsi", () => {
+    const { s } = open(fixture("reportlab-form.pdf"));
+    addContent(s);
+    const field = s.fields(0).find((f) => f.type === "text" && !f.locked)!;
+    s.setField(field.name, { kind: "text", text: "Καλημέρα – 東京 – Zażółć" });
+    const bytes = new Uint8Array(s.save().bytes);
+    const faces = expectSubset(bytes, fixture("reportlab-form.pdf"));
+    for (const face of ["Helvetica", "ZapfDingbats", "Times-Roman"]) expect(faces).toContain(face);
+    expect(faces.some((f) => f.startsWith("Droid"))).toBe(true);
+    const again = open(bytes).s;
+    expect(again.fields(0).find((f) => f.name === field.name)!.value).toBe("Καλημέρα – 東京 – Zażółć");
+    expect(again.addedTexts(0).map((t) => t.text)).toEqual(["Città € «ok» ✓ ✗ Zażółć Ελλ Кир", "中文 日本語", "✓"]);
+  });
+
+  it("converts initials on every page of a form, and 40 lines added to one page", () => {
+    const { s, info } = open(fixture("reportlab-form.pdf"));
+    s.addImage(signature("png", 120, 60), info.pages.map((p) => ({ pageIndex: p.index, matrix: [40, 0, 0, 20, p.bounds[2] - 60, p.bounds[3] - 40] as Matrix })), null);
+    for (let k = 0; k < 40; k++) s.addText(0, [40, 60 + k * 15], `Campo ${k}: valore ✓`, { ...SANS, size: 9 });
+    const { report, bytes, again } = convert("added-reportlab-form", s);
+    expect(report.blockers).toEqual([]);
+    expect(again.lines(0).map((l) => l.text.trim())).toContain("Campo 39: valore ✓");
+    expect(expectSubset(bytes, fixture("reportlab-form.pdf"))).toContain("Helvetica");
   });
 });

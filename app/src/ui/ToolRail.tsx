@@ -1,12 +1,13 @@
-// Desktop tool rail (left, from 640 px, document open): the editing tools (Browse, Edit text)
-// and the view toggles (thumbnails, details panel). Each button shows its icon with a short
-// label under it; the tooltip says what it does. Edit mode always goes through setEditMode,
-// so text still typed in the line editor is written before leaving it.
+// Desktop tool rail (left, from 640 px, document open): the editing tools (Browse, Edit, Fill &
+// sign) and the view toggles (thumbnails, details panel). Each button shows its icon with a short
+// label under it ("Compila e firma" wraps to two lines); the tooltip says what it does. The tools
+// are exclusive and always go through setTool, so text still typed in the line editor or a writer
+// is written before leaving it. Browse stays on the rail (on phones no tool lit is browsing).
 import type { ComponentChildren } from "preact";
 import { t } from "../i18n";
-import { editingStopped, editMode } from "../state";
-import { setEditMode } from "./actions";
-import { IconDetails, IconEditText, IconPages, IconPointer } from "./icons";
+import { editingStopped, tool } from "../state";
+import { setTool } from "./actions";
+import { IconDetails, IconEditText, IconPages, IconPointer, IconSign } from "./icons";
 import { detailsPanelAvailable, detailsPanelOpen, pagesPanelOpen, toggleDetailsPanel, togglePagesPanel } from "./panels";
 
 interface RailButtonProps {
@@ -37,7 +38,8 @@ function RailButton(p: RailButtonProps) {
 }
 
 export function ToolRail() {
-  const editing = editMode.value;
+  const current = tool.value;
+  const stopped = editingStopped.value;
   const pagesOpen = pagesPanelOpen.value;
   const detailsOpen = detailsPanelOpen.value;
 
@@ -49,16 +51,24 @@ export function ToolRail() {
           icon={<IconPointer />}
           label={t("tools.browse")}
           tip={t("tools.browseTip", { key: t("key.esc") })}
-          pressed={!editing}
-          onClick={() => void setEditMode(false)}
+          pressed={current === null}
+          onClick={() => void setTool(null)}
         />
         <RailButton
           icon={<IconEditText />}
           label={t("tools.editText")}
           tip={t("tools.editTextTip")}
-          pressed={editing}
-          disabled={editingStopped.value}
-          onClick={() => void setEditMode(true)}
+          pressed={current === "edit"}
+          disabled={stopped}
+          onClick={() => void setTool("edit")}
+        />
+        <RailButton
+          icon={<IconSign />}
+          label={t("tools.fill")}
+          tip={t("tools.fillTip")}
+          pressed={current === "fill"}
+          disabled={stopped}
+          onClick={() => void setTool("fill")}
         />
       </div>
       <span class="rail-sep" aria-hidden="true" />

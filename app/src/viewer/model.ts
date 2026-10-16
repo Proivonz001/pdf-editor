@@ -1,7 +1,7 @@
 // The viewer's model of an open document: one PageModel per page, with small signals so that
 // a page component re-renders only when something about *that* page changes.
 import { signal, type Signal } from "@preact/signals";
-import type { DocInfo, ImageInfo, LineInfo, Rect } from "../engine/protocol";
+import type { AddedText, DocInfo, FieldWidget, ImageInfo, LineInfo, Rect } from "../engine/protocol";
 
 /** Text lines of a page, tagged with the page revision they were read at. */
 export interface PageLines {
@@ -16,6 +16,22 @@ export interface PageImages {
   rev: number;
   images: ImageInfo[];
   /** Reading the images failed: nothing to show, and no retry until the page changes. */
+  failed?: boolean;
+}
+
+/** Form field widgets of a page (in its tab order), tagged with the page revision they were read at. */
+export interface PageFields {
+  rev: number;
+  fields: FieldWidget[];
+  /** Reading the fields failed: nothing to show, and no retry until the page changes. */
+  failed?: boolean;
+}
+
+/** Texts the app wrote on a page (addText), tagged with the page revision they were read at. */
+export interface PageAdded {
+  rev: number;
+  texts: AddedText[];
+  /** Reading them failed: nothing to show, and no retry until the page changes. */
   failed?: boolean;
 }
 
@@ -34,8 +50,12 @@ export interface PageModel {
   rev: Signal<number>;
   /** Cached text lines (edit mode). Null = not read yet or dropped after a change. */
   lines: Signal<PageLines | null>;
-  /** Cached images (edit mode). Null = not read yet or dropped after a change. */
+  /** Cached images (edit mode; the added ones in fill mode). Null = not read yet or dropped after a change. */
   images: Signal<PageImages | null>;
+  /** Cached form field widgets (fill and browse modes). Null = not read yet or dropped after a change. */
+  fields: Signal<PageFields | null>;
+  /** Cached texts the app wrote (fill mode). Null = not read yet or dropped after a change. */
+  added: Signal<PageAdded | null>;
 }
 
 export interface OpenDoc {
@@ -57,5 +77,7 @@ export function createPages(info: DocInfo): PageModel[] {
     rev: signal(0),
     lines: signal<PageLines | null>(null),
     images: signal<PageImages | null>(null),
+    fields: signal<PageFields | null>(null),
+    added: signal<PageAdded | null>(null),
   }));
 }

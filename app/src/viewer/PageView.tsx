@@ -1,5 +1,10 @@
 // One page: a box sized from the page bounds × zoom, a canvas while the page is near the
-// viewport, and in edit mode the overlays of its text lines and of its images.
+// viewport, and the overlays of the tool that is on: in Modifica its text lines and its images;
+// in Compila e firma its form fields, the fill layer (taps, the text writer, what the user wrote)
+// and the pictures the user added; with no tool on (browse), its form fields alone. Overlays are
+// mounted for near pages, and also for a page far away that holds what is open or focused, what
+// the app asks to focus (focusRequest), or, for its form fields, the next or previous page with
+// fields from the field focused last (so Tab and Shift+Tab reach them: fields.ts).
 //
 // Rendering: at zoom × devicePixelRatio (capped in pixels on touch devices), through the shared
 // render queue. On a zoom change the old bitmap stays, stretched by CSS, and the new one is
@@ -7,7 +12,12 @@
 // page is re-rendered at once.
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
-import { devicePixelRatio, editingLine, editMode, selectedImage } from "../state";
+import {
+  devicePixelRatio, editingLine, editingStopped, focusedField, focusRequest, openWriter, selectedImage, tool,
+} from "../state";
+import { nextToFieldFocus, pageHasFields } from "./fields";
+import { everyPageAction, FillLayer } from "./FillLayer";
+import { FormLayer } from "./FormLayer";
 import { ImageLayer } from "./ImageLayer";
 import { LineLayer } from "./LineLayer";
 import type { PageModel } from "./model";
@@ -50,18 +60,32 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
   /** What the canvas currently shows. */
   const drawn = useRef<{ scale: number; rev: number } | null>(null);
   const [ready, setReady] = useState(false);
-  /** The page revision the canvas shows (the image overlay keeps a moved picture's preview until then). */
+  /** The page revision the canvas shows (the overlays keep what was just written drawn until then). */
   const [shownRev, setShownRev] = useState(-1);
 
   const near = page.near.value;
   const keep = page.keep.value || near;
   const rev = page.rev.value;
   const ratio = devicePixelRatio.value;
-  // Line and image overlays: near pages in edit mode, and the page whose line editor is open or
-  // that holds the selected image even if it scrolled away (unmounting the editor would lose
-  // what was typed, and the selection what is about to be written).
-  const showOverlays = editMode.value &&
-    (near || editingLine.value?.pageIndex === page.index || selectedImage.value?.pageIndex === page.index);
+  const on = tool.value;
+  const stopped = editingStopped.value;
+  /** What is open on this page: kept mounted even if the page scrolled away (unmounting would lose it). */
+  const here = (x: { pageIndex: number } | null) => x?.pageIndex === page.index;
+  const sel = selectedImage.value;
+  const request = focusRequest.value;
+  const asked = here(request);
+  // Modifica: near pages, and the page whose line editor is open or that holds the selected image
+  // (or an image the app asks to focus).
+  const editOverlays = on === "edit" && (near || here(editingLine.value) || here(sel) || (asked && request?.kind === "image"));
+  // Compila e firma: near pages, and the page with the writer, the selected picture, the focused
+  // field, or a text or picture the app asks to focus.
+  const fillOverlays = on === "fill" && !stopped &&
+    (near || here(openWriter.value) || here(sel) || here(focusedField.value) || (asked && request?.kind !== "field"));
+  // Form fields: in Compila e firma and in browse mode, never in Modifica; also the page whose
+  // field has (or is asked to get) the focus, and the pages with fields just before and after the
+  // one whose field had it last (Tab and Shift+Tab go on to them).
+  const formOverlay = on !== "edit" && !stopped && pageHasFields(page.index) &&
+    (near || here(focusedField.value) || (asked && request?.kind === "field") || nextToFieldFocus(page.index));
 
   useEffect(() => {
     const node = el.current!;
@@ -127,8 +151,22 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
     >
       {keep && <canvas ref={canvas} class="page-canvas" aria-hidden="true" />}
       {/* Lines first, so Tab reaches them before the images; the images stack below them (viewer.css). */}
-      {showOverlays && <LineLayer page={page} zoom={zoom} />}
-      {showOverlays && <ImageLayer page={page} zoom={zoom} canvasRev={shownRev} />}
+      {editOverlays && <LineLayer key="lines" page={page} zoom={zoom} />}
+      {editOverlays && <ImageLayer key="images" page={page} zoom={zoom} canvasRev={shownRev} />}
+      {/* Fields first, then what the user wrote, then the pictures they added (Tab order); the
+          fill layer's tap catcher stacks below them all (viewer.css). */}
+      {formOverlay && <FormLayer key="fields" page={page} zoom={zoom} canvasRev={shownRev} />}
+      {fillOverlays && <FillLayer key="fill" page={page} zoom={zoom} canvasRev={shownRev} />}
+      {fillOverlays && (
+        <ImageLayer
+          key="added-images"
+          page={page}
+          zoom={zoom}
+          canvasRev={shownRev}
+          only="added"
+          extraAction={(image) => everyPageAction(page, image)}
+        />
+      )}
     </div>
   );
 }

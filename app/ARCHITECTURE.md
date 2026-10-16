@@ -18,7 +18,9 @@ repository root keeps working; it replaces it once it does everything the old on
   `core.js` + `tables.js` come from the validated prototype (`prototypes/mupdf-text/`, 39 test
   cases in Node and Chrome, cross-checked with pdfium). `session.ts` holds one open document and
   the edit history and is plain TypeScript, so the tests run it in Node. `images.ts` finds the
-  pictures of a page and edits one placement at a time (see "Images"). `pdfa.ts` converts a
+  pictures of a page and edits one placement at a time (see "Images"). `forms.ts` lists and
+  fills form fields, `newcontent.ts` writes new text and new pictures on a page (see "Fill and
+  sign"). `pdfa.ts` converts a
   copy to PDF/A and checks the result, with our own colour profile from `icc.ts` (see "PDF/A").
   `worker.ts` only turns messages into `EngineSession` calls. `protocol.ts` is the contract;
   `client.ts` is the main-thread side.
@@ -70,6 +72,13 @@ repository root keeps working; it replaces it once it does everything the old on
    300 dpi full-page JPEG at scale 2), a cost paid once per such edit, accepted for correctness.
    New code that changes an already-loaded resource in place must do the same, or write a new
    object instead.
+7. **What the app adds stays its own** (release 3): every line of text and every picture it
+   writes is a marked block of its own (`/PEText`, `/PEImage`), appended with
+   `newcontent.appendSafely`, never `core.appendContent`, and changed by rewriting that block,
+   never by redaction, which would take whatever lies under it.
+8. **Form fields are filled by the app's rules, not MuPDF's setters alone**: MuPDF.js checks
+   nothing (read-only, MaxLen, options), draws only WinAnsi text right, and its `toggle()` turns
+   on every radio button of a group. See "Fill and sign".
 
 ## Undo and save
 
@@ -78,11 +87,16 @@ document serialized after every 8 edits, at most 12 and 256 MB in total, thinned
 stay spread over the whole session). Undo re-opens the nearest checkpoint at or below the target
 and replays the edits after it (at most 7 within the last few dozen edits, a few more further
 back), so its cost does not grow with the length of the session; a failed edit is rolled back
-the same way. If even that fails,
-the session is marked broken and the UI stops editing.
+the same way. If even that fails, the session is marked broken and the UI stops editing.
+Snapshots are written with `compress-images=yes`, which keeps object numbers: pictures MuPDF
+holds decoded (a PNG signature, a replacement photo) would otherwise make every checkpoint many
+times the size of the file. After each snapshot (a checkpoint, a save, a PDF/A check) the session
+carries on with the snapshot re-opened, as undo carries on after a rebuild, so each picture is
+compressed once, by the first snapshot after it was placed, not again at every later one.
 
 Save never replays: it serializes the working document, re-opens the copy, subsets only the
-fallback fonts there and writes it, leaving the working document untouched. (When the session
+fallback fonts there and writes it, leaving what the working document holds untouched (it may
+now be that serialization re-opened: see above). (When the session
 is broken, the copy is the last good state rebuilt from the log.) What is written depends on
 the download's `SaveOptions`:
 
@@ -212,8 +226,10 @@ around the new picture, the path's points mapped into the user space there. A mi
 picture (negative determinant: stored bottom-up, or flipped for display) is read as the more
 upright of its two readings, and the new one is drawn at that angle, not mirrored, over the same
 box. The XObject goes in the page's own /Resources as `PEImg<n>`; a JPEG is embedded as it is
-(DCTDecode); the same bytes put in several places in one session are embedded once (a map per
-working document, by the bytes; a replay from a checkpoint may add a copy); the new XObject gets
+(DCTDecode; without its metadata, and turned by its EXIF orientation: see "Fill and sign"); the
+same bytes put in several places in one session are embedded once, whatever path the history
+took (the session notes which object holds each picture the app embedded, with the checkpoints,
+and points a copy a replay adds back at the first one); the new XObject gets
 the /OC of the old picture and of the forms it was drawn in (several: one membership dictionary
 with /P /AllOn, which MuPDF 1.27 itself does not apply, other readers do). MuPDF backs a picture
 without a colour profile with its own (Artifex's) profiles, which the app does not ship (see
@@ -296,6 +312,127 @@ picture's /BBox layout attribute, when a tagged file has one, is not updated. Re
 placement drops what the form set besides clips (a soft mask or marked content inside it). A
 picture also listed in the form fields' default resources, or reached only from outside the
 pages' resources (a structure element's object reference), stays in the file.
+
+## Fill and sign ("Compila e firma")
+
+Release 3 fills in form fields and writes new text and new pictures (signatures, initials,
+photos) on the page. All three are logged edits like line and image edits (`session.ts`): plain
+data, replayed by undo, redo, checkpoints and rollback, mixed freely with the others in one
+history. New text and pictures are real page content, not annotations, so every reader shows,
+prints and searches them the same, and nothing is left to flatten.
+
+**Form fields** (`forms.ts`; `EngineSession.fields`, `setField`; `DocInfo.form`). MuPDF.js 1.27
+reads every field type correctly but checks nothing when a value is set: it ignores ReadOnly and
+MaxLen, takes any combo value and writes `/V` even on push buttons and signature fields. So
+`planFieldEdit` checks the value first (the field's options and states, MaxLen, MAX_FIELD_CHARS,
+controls removed, line breaks only in multi-line fields) and refuses locked fields
+(`FieldWidget.locked`: read-only, password, file select, push button, signature, no name, or
+same-named fields of different types); a value every dictionary with that name holds already is
+a no-op. Then `applyFieldEdit`, shared by the first application and every replay:
+
+- **Identity is the full name** ("a.b.c"): every field dictionary with that name, and all their
+  widgets on every page, get the value, as readers group same-named fields. The log keeps the
+  name and the type the field must still have; a replay that finds neither fails ("edit-failed").
+  Object numbers would not do: downloads renumber them, and merging files (release 4) would too.
+- **Appearances.** A value that is all WinAnsi goes through MuPDF's setters and `update()`, the
+  one case MuPDF draws right. Anything else (Polish, Romanian, Greek, CJK...) MuPDF puts under
+  the box's bottom edge, sizes to 0 pt when automatic, or draws with fonts it does not embed:
+  the app's writer draws it instead, inside the frame MuPDF drew for an empty value (background,
+  border, clip, /Matrix), with core.js's embedded fallback fonts (`encodeWithFallbacks`, shared
+  with line edits and new text, one copy per document), laid out as MuPDF lays out WinAnsi text
+  (to within 0.01 pt; tests compare). List boxes always go through the writer: MuPDF draws no
+  highlight for the selected rows. Characters no font has stay in the value, are left out of the
+  drawing and reported (`missingChars`); text that does not fit says so (`overflow`).
+- **Check boxes and radio buttons: never `toggle()`**, which in 1.27 sets the new state into
+  `/AS` of every widget of the group (all radios drawn on, and NoToggleToOff then refusing any
+  other choice). The field's `/V` and each widget's `/AS` (its on state or Off) are set here; a
+  check box without appearance states gets a pair drawn with ZapfDingbats.
+- **Scripts never run** (MuPDF.js has no JavaScript here): keystroke, format, validate and
+  calculate scripts are reported (`FieldWidget.scripted`, `FormInfo.scripts`), a format script's
+  date or number pattern read as a hint for the UI, totals never recalculated.
+- **XFA and NeedAppearances.** A static XFA part would keep the old data beside the new values:
+  the first field edit removes it (the UI says so first). A dynamic XFA form has no fields to
+  fill. A form with `/NeedAppearances` gets real appearances for all its fields on the first
+  edit and loses the flag, or MuPDF would redraw every field on every page load with its own
+  drawing.
+- **Passwords are never drawn.** MuPDF draws a password field's value in clear when it makes the
+  field's appearance. A password widget without an appearance gets one with only its frame
+  (`hidePasswords`) when the file is opened, and on every field edit and PDF/A conversion; the
+  app never fills password fields (they are locked). One exception, on screen only: in a form
+  with /NeedAppearances MuPDF redraws every field for display, the stored password too, until
+  the first field edit drops the flag. No file the app writes carries it.
+- **Saving.** `subsetFallbackFonts` also points annotation appearances at the subset fonts. The
+  PDF/A conversion draws with the writer what MuPDF would draw wrongly, and gives an unsigned
+  signature field an empty appearance: MuPDF's own is an orange "SIGN" tag, which would be
+  written into the file.
+
+**New text** (`newcontent.ts`; `EngineSession.addText`, `addedTexts`, `editAddedText`;
+`LineInfo.added`). A line of real text in the app's embedded fonts: the Nimbus face of the style,
+ZapfDingbats for ✓ ✗ ✔ ✘ (core's fallback chain has it before the CJK font, which lacks ✗ ✔ ✘),
+the CJK font; Identity-H with a complete /ToUnicode, so it searches and extracts exactly. Its
+baseline starts at the origin given in page space and it is horizontal as seen, whatever the
+/Rotate and CropBox. The session checks the origin (on the page), the text (made one line,
+controls dropped, 1 to MAX_TEXT_CHARS characters, something drawable: characters beyond U+FFFF
+are always left out, since MuPDF.js reads them back truncated) and the style (size, sRGB colour,
+family, bold, italic), and refuses anything else ("bad-request") before logging.
+
+- **Each line is a marked block of its own**: `/P <</MCID n /PEText id>> BDC q BT … ET Q EMC` on
+  a tagged page, `/Span <</PEText id>>` otherwise. The id (one more than the page's largest,
+  1 to 2^31 - 1; past the largest, the smallest free one) is stable across edits, undo and redo (a replay that gives another id fails), and the block is
+  found again after a redaction rewrote the page, in a later session and after save and
+  re-open. On a tagged page the line becomes a /P at the end of the document's top structure
+  element, registered under a new MCID (a page without /StructParents gets a key); it is read
+  last, after the page's own text.
+- **Appending** (`appendSafely`): new content is drawn from the page's initial graphics state.
+  When the content does not end clean (q and Q unbalanced, a state changed outside any q, a text
+  object, marked sequence or path left open, operands no operator takes), it is wrapped once in
+  q..Q, what it left open
+  closed first, and later additions go after it without nesting deeper (`core.appendContent`
+  nests one level per call: harmless after a redaction, which flattens the content, but
+  additions are never redacted). Content that ends inside a string, an array, a dictionary or an
+  inline image would swallow what follows, and content that restores more states than it saves
+  would draw differently once wrapped: both are refused ("not-editable").
+- **Editing what the app wrote never redacts.** Redaction is geometric: it removes whatever lies
+  under the line's characters, so correcting a name written on a form's underscores would take
+  the underscores, and removing a ✓ the box. `editAddedText` rewrites the block in place (text,
+  origin, style; an empty text removes it and its /P), and `replaceLine` routes a line made only
+  of added blocks (`newcontent.addedLineIds`) the same way: two blocks MuPDF reads as one line
+  (written one after the other on one baseline) are rewritten as the first, the others absorbed.
+  The other way round, a normal line edit first notes the page's added lines and, after the
+  redaction, writes back as they were those it damaged (`protectAdded`). MuPDF reads text
+  written just after a printed label ("Data di nascita:") as one line with it: such a line is
+  edited part by part (`kind: "mixed"`): the printed part by redaction, each added part rewritten
+  in its own block and style, and added parts after a printed part that grew moved right by as
+  much; a change that would rewrite two printed parts is refused ("not-editable"). All of this
+  is part of the logged edit, so every replay does the same.
+- A line edit's `fallbackChars` leaves out a fallback in the very face the line was drawn with
+  (core's segments carry the face, `program`): a line the app wrote is all fallback fonts, and
+  writing more of it changes nothing the user could see.
+
+**New pictures** (`newcontent.addImage`; `EngineSession.addImage`; `ImageInfo.added`). A picture
+at one or more targets (ImageInfo.matrix convention), one per page, each checked as a move is
+(sides 1..14,400 pt, centre on the page): one edit, the picture embedded once (initials on every
+page share one XObject). Each placement is a block of its own after everything else on the page,
+`/Figure <</MCID n /PEImage id>>` with the description as /Alt on a tagged page ("Firma: Mario
+Rossi"), or `/Artifact <</PEImage id>>` when it has none or the page is not tagged.
+`findPlacements` lists it as the page's last placement, movable, so release 2's move, resize,
+rotate, replace and delete work on it; `placed` gives its index (null when the page's images are
+locked). **Picture files** (`images.checkPicture`, for `replaceImage` too): a JPEG loses,
+losslessly, what describes the photo rather than draws it (EXIF with the GPS position and a
+thumbnail, XMP, comments, JFXX thumbnails, stray bytes between segments, anything after its
+end), keeping JFIF, its colour profile and Adobe's segment; its EXIF orientation, which MuPDF and PDF readers ignore, turns the placement instead,
+so a phone photo stored sideways shows upright (recorded as /PEOrientation on the app's image
+object, so a later replacement fits the picture as it is seen).
+
+**History.** Undo and redo report every page an edit touched (`pagesOf`: a field's pages, the
+pages of a picture's targets). `edits()` copies every kind. A refusal from newcontent.ts found
+only while applying (the content cannot take an addition) rolls the document back like any
+failed edit and keeps its own code.
+
+**Not in this release**: digital signatures (a signature field is "signed" by placing a picture
+in its box; it stays unsigned), flattening the form, running a form's scripts, right-to-left and
+complex scripts (no font of the app draws them), placing new text and pictures in the reading
+order next to the nearest label (they are read last).
 
 ## PDF/A ("PDF/A per l'archivio")
 

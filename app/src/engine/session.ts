@@ -16,7 +16,27 @@
 // offsets in the content are not stable, since a text edit rewrites the stream.
 //
 // A snapshot is written unencrypted and without garbage collection, so every object keeps its
-// number and core.restoreFallbackFonts finds the fallback fonts again in the re-opened copy.
+// number and core.restoreFallbackFonts finds the fallback fonts again in the re-opened copy. Its
+// uncompressed pictures are compressed (MuPDF stores a PNG's pixels raw: a 2000×1500 photo would
+// make every checkpoint 9 MB on a form of a few KB). Compressing is slow, so it is done once per
+// picture: after every snapshot (a checkpoint, a save, the PDF/A check) the session carries on
+// with that snapshot re-opened (continueOn), as undo carries on with a rebuilt document, and the
+// next snapshots copy the compressed pictures as they are.
+//
+// forms.ts keeps the document's field index between calls; the session tells it whenever the
+// document changes or is replaced (forms.formChanged).
+//
+// Fill and sign (release 3, ARCHITECTURE.md "Fill and sign") adds four kinds of logged edit, all
+// plain data and replayed like the others: a form field filled in (forms.ts, identified by its
+// full name and the type it must still have), a new line of text, a change to a line the app
+// wrote, and a new picture on one or more pages (newcontent.ts). Lines and pictures the app
+// writes sit in marked blocks of their own: an edit of such a line rewrites its block instead of
+// redacting (replaceLine routes it), and a normal line edit puts back any added line its
+// redaction damaged (protectAdded), so both are part of the logged edit and every replay does the
+// same. A line MuPDF reads as printed text and added text together (a date written just after its
+// label) is edited part by part: the printed part by redaction, each added line in its block and
+// its own style. A picture the app embeds is kept once per document also across checkpoints
+// (sharePicture).
 import type * as MuPDF from "mupdf";
 import {
   captureGlyphs,
@@ -32,10 +52,13 @@ import {
   restoreFallbackFonts,
   subsetFallbackFonts,
 } from "./core.js";
+import { FieldError, applyFieldEdit, formChanged, formInfo, hidePasswords, pageFields, planFieldEdit, type FieldEdit } from "./forms";
 import {
+  BadPicture,
   DevicePassError,
   MAX_SPRITE_CLIP_BYTES,
   SpriteClipBudget,
+  checkPicture as readPicture,
   deletePlacement,
   findPlacements,
   nearlyEqual,
@@ -44,18 +67,39 @@ import {
   replacePlacement,
   straightRGBA,
   transformPlacement,
+  turnOf,
   type PagePlacements,
+  type Picture,
   type Placement,
 } from "./images";
+import {
+  ContentError,
+  addImage as addPicture,
+  addText as addLine,
+  addedBlocks,
+  addedLineIds,
+  addedTexts,
+  missingChars,
+  protectAdded,
+  rewriteAdded,
+} from "./newcontent";
 import { checkPdfA, convertToPdfA, countSignatures, dropPdfaClaim, pdfaClaim } from "./pdfa";
-import { MAX_IMAGE_BYTES, MAX_IMAGE_SIDE, MIN_IMAGE_SIDE, passwordProblem } from "./protocol";
+import { MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_TEXT_CHARS, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE, passwordProblem } from "./protocol";
 import type {
+  AddImageResult,
+  AddTextResult,
+  AddedText,
   DocInfo,
   EditResult,
   EditSegment,
+  FieldEditResult,
+  FieldValue,
+  FieldWidget,
+  FormInfo,
   HistoryState,
   ImageEditResult,
   ImageInfo,
+  ImageTarget,
   LineInfo,
   Matrix,
   OpenResult,
@@ -65,7 +109,10 @@ import type {
   SaveOptions,
   SaveResult,
   SegmentSource,
+  TextStyle,
 } from "./protocol";
+
+export type { FieldEdit } from "./forms";
 
 export type MuPDFModule = typeof MuPDF;
 
@@ -99,8 +146,17 @@ const MAX_CHECKPOINT_BYTES = 256 * 1024 * 1024;
  * How a snapshot is written: unencrypted (it re-opens without the password) and without garbage
  * collection, so object numbers stay the same. MuPDF drops /Encrypt from the trailer of the
  * document it writes this way; the working document still decrypts with the key it opened with.
+ * Image streams without a filter are compressed (Flate; numbers stay the same): MuPDF embeds a
+ * PNG as raw pixels, about seven times the file, which every checkpoint would otherwise hold in
+ * the worker's memory (a 1200×400 signature on a small form: 1.5 MB a checkpoint instead of 70
+ * KB). Streams that have a filter already (JPEG, Flate...) are copied as they are, which is quick;
+ * compressing is not: in Node, about 10 ms for that signature and 50 to 300 ms for a 2000×1500
+ * PNG with transparency (12 MB of pixels; the more detail, the slower), several times that on a
+ * phone. So the session carries on with every snapshot it takes re-opened (continueOn): each
+ * picture is compressed once, by the first snapshot after it was embedded, and never again (four
+ * such photos: the first checkpoint after them takes about 1 s, the next ones under 20 ms).
  */
-const SNAPSHOT_OPTIONS = "encrypt=none";
+const SNAPSHOT_OPTIONS = "encrypt=none,compress-images=yes";
 
 /**
  * How a download is written (rule 4): garbage collected and compressed, unencrypted. PDF/A uses
@@ -125,6 +181,21 @@ interface Checkpoint {
   bytes: Uint8Array;
   /** core.fallbackFontState of the document it was taken from. */
   fonts: ReturnType<typeof fallbackFontState>;
+  /** The pictures the app had embedded in it (sharePicture). */
+  pictures: readonly EmbeddedPicture[];
+}
+
+/**
+ * A picture the app embedded (addImage, a replace) and the image XObject that holds it: what
+ * sharePicture needs to keep one copy of a picture per document. Object numbers survive a
+ * snapshot (no garbage collection), so the list goes with the checkpoints as it is.
+ */
+interface EmbeddedPicture {
+  /** The picture file's bytes (Picture.bytes: what images.pictureObject compares). */
+  bytes: Uint8Array;
+  num: number;
+  /** Its /OC: 0 for none, else the layer's object number (a replacement keeps the old picture's layer). */
+  layer: number;
 }
 
 /** What render() returns in the session; the worker turns `rgba` into a transferable ImageBitmap. */
@@ -138,13 +209,16 @@ export interface RenderPixels {
 }
 
 /** One applied edit, as replayed by undo. Plain data, so it can be stored later. */
-export type LoggedEdit = TextEdit | ImageEdit;
+export type LoggedEdit = TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit;
 
 /** One whole line of text replaced (deleted when `replacement` is empty). */
 export interface TextEdit {
   kind: "text";
   pageIndex: number;
-  /** The text the edit replaced (one whole line, without its leading/trailing whitespace). */
+  /**
+   * The text the edit replaced (one whole line, without its leading/trailing whitespace; or the
+   * printed part of a line that holds text the app wrote too: see MixedLineEdit).
+   */
   find: string;
   /** Which match of `find` on the page, counted the way core.findInLines counts. */
   occurrence: number;
@@ -160,9 +234,85 @@ export type ImageEdit = { kind: "image"; pageIndex: number; imageIndex: number; 
   /** Drawn at `matrix` instead (ImageInfo.matrix convention). */
   | { op: "transform"; matrix: Matrix }
   | { op: "delete" }
-  /** Replaced with this picture (the file's bytes, a private copy: undo replays it). */
-  | { op: "replace"; bytes: Uint8Array }
+  /**
+   * Replaced with this picture (images.checkPicture: the file's bytes, a JPEG without its
+   * metadata, a private copy undo replays; its EXIF orientation turns it upright).
+   */
+  | { op: "replace"; picture: Picture }
 );
+
+/**
+ * A new line of text (newcontent.addText): `text` already checked and made one line, its baseline
+ * starting at `origin` (page space). `id` is the one the line got (its marked block's /PEText):
+ * a replay that gives another one no longer fits the log, since later edits of the line name it.
+ */
+export interface AddTextEdit {
+  kind: "addText";
+  pageIndex: number;
+  origin: [number, number];
+  text: string;
+  style: TextStyle;
+  id: number;
+}
+
+/**
+ * A line the app wrote (AddedText.id) rewritten in its own block (newcontent.rewriteAdded): what
+ * is given changes, the rest stays; an empty `text` deletes it. Made by editAddedText, and by
+ * replaceLine for a line made only of added text: there `absorb` lists the other added lines
+ * MuPDF reads as part of the same line (written one after the other on one baseline), which go,
+ * their text being in `text`. replaceLine also makes one (alone or in a MixedLineEdit) for the
+ * added part of a line that has printed text too.
+ */
+export interface AddedTextEdit {
+  kind: "editAdded";
+  pageIndex: number;
+  id: number;
+  text?: string;
+  origin?: [number, number];
+  style?: TextStyle;
+  absorb?: number[];
+}
+
+/**
+ * One line edit of a line MuPDF reads as printed text and text the app wrote together (a label
+ * and the date written just after it, on its baseline), made by replaceLine when more than one
+ * part of it changes, or when its printed part changes and added lines follow it (which move
+ * right when it grows): the printed part by redaction (at most one TextEdit, first: its
+ * occurrence is counted on the page as it was) and each added line in its own block
+ * (AddedTextEdits: text, place), so the user's text keeps its style and stays theirs. Applied in
+ * order.
+ */
+export interface MixedLineEdit {
+  kind: "mixed";
+  pageIndex: number;
+  edits: (TextEdit | AddedTextEdit)[];
+}
+
+/**
+ * A new picture (newcontent.addImage) at each target, one per page: one edit, the picture
+ * embedded once (initials on every page). `picture` is a private copy, as for a replace.
+ */
+export interface AddImageEdit {
+  kind: "addImage";
+  /** The first target's page (code that reads LoggedEdit.pageIndex); pagesOf gives them all. */
+  pageIndex: number;
+  picture: Picture;
+  targets: ImageTarget[];
+  /** The description on tagged pages (a Figure's /Alt), null for decoration (an Artifact). */
+  alt: string | null;
+}
+
+/** The pages an edit changes, ascending: what undo and redo report as changedPages. */
+export function pagesOf(e: LoggedEdit): number[] {
+  switch (e.kind) {
+    case "field":
+      return [...e.pages];
+    case "addImage":
+      return [...new Set(e.targets.map((t) => t.pageIndex))].sort((a, b) => a - b);
+    default:
+      return [e.pageIndex];
+  }
+}
 
 export type SessionErrorCode =
   /** No document is open. */
@@ -176,8 +326,9 @@ export type SessionErrorCode =
    */
   | "edit-failed"
   /**
-   * The line has characters the engine cannot rewrite safely (LineInfo.editable is false), or the
-   * image is locked (ImageInfo.movable is false).
+   * The line has characters the engine cannot rewrite safely (LineInfo.editable is false), the
+   * image is locked (ImageInfo.movable is false), the form field is locked (FieldWidget.locked),
+   * or the page's content cannot take new text or a new picture safely (newcontent.ts).
    */
   | "not-editable"
   /** An edit failed and the document could not be restored: only close and open still work. */
@@ -204,6 +355,21 @@ const normalizeLineText = (text: string) => text.replace(/[\r\n\t\u2028\u2029]+/
 /** Lines made only of whitespace (often spaces MuPDF synthesized from gaps) are not editable. */
 const isBlank = (text: string) => text.trim() === "";
 
+/** Control characters and lone surrogates: they draw nothing, and no font has them. */
+const UNDRAWN = /[\u0000-\u001f\u007f-\u009f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
+
+/**
+ * Text from the main thread for a line the app writes (addText, editAddedText), checked as
+ * untrusted: a string ("bad-request" otherwise), made one line (normalizeLineText), without the
+ * characters that draw nothing, at most MAX_TEXT_CHARS characters. May be empty.
+ */
+function lineFrom(text: unknown): string {
+  if (typeof text !== "string") throw new SessionError("The text must be a string", "bad-request");
+  const line = normalizeLineText(text).replace(UNDRAWN, "").trim();
+  if ([...line].length > MAX_TEXT_CHARS) throw new SessionError(`A line holds at most ${MAX_TEXT_CHARS} characters`, "bad-request");
+  return line;
+}
+
 export class EngineSession {
   private doc: MuPDF.PDFDocument | null = null;
   private original: Uint8Array | null = null;
@@ -222,6 +388,8 @@ export class EngineSession {
   /** Ascending editCount. After undo some lie beyond the log: redo reaches them again. */
   private checkpoints: Checkpoint[] = [];
   private broken = false;
+  /** The pictures the app embedded in each document, the working one and those being rebuilt (sharePicture; never changed in place). */
+  private pictures = new WeakMap<MuPDF.PDFDocument, readonly EmbeddedPicture[]>();
 
   constructor(private readonly mupdf: MuPDFModule) {}
 
@@ -261,6 +429,10 @@ export class EngineSession {
         neededPassword = true;
         ownerPasswordOnly = (auth & 2) === 0;
       }
+      // A stored password value is never drawn in clear on screen (forms.hidePasswords): the
+      // original is given the same frame-only appearance at every open, so every base a replay
+      // starts from (this, openOriginal, checkpoints taken from it) is the same.
+      hidePasswords(this.mupdf, doc);
       const info = this.describe(doc, neededPassword, password ?? "", ownerPasswordOnly);
       if (info.pageCount === 0) {
         this.dispose(doc);
@@ -320,6 +492,7 @@ export class EngineSession {
       canKeepPassword: neededPassword && !ownerPasswordOnly && passwordProblem(password) === null,
       pdfa: pdfaClaim(doc),
       signatures: countSignatures(doc),
+      form: readForm(this.mupdf, doc),
       title: title || null,
     };
   }
@@ -346,7 +519,11 @@ export class EngineSession {
     }
   }
 
-  /** The page's text lines, in MuPDF's reading order; whitespace-only lines are left out. */
+  /**
+   * The page's text lines, in MuPDF's reading order; whitespace-only lines are left out. Form
+   * field values are not lines (MuPDF leaves widget appearances out); a line the app wrote is
+   * marked `added`.
+   */
   lines(pageIndex: number): LineInfo[] {
     const doc = this.requireDoc();
     this.checkPage(doc, pageIndex);
@@ -356,6 +533,7 @@ export class EngineSession {
       raw = extractLines(page);
       glyphs = captureGlyphs(this.mupdf, page);
       const locked = linesBeyondBMP(raw, glyphs);
+      const blocks = addedBlocks(page); // (nothing is read on a page the app wrote no text on)
       const out: LineInfo[] = [];
       for (const line of raw) {
         if (isBlank(line.text)) continue;
@@ -374,6 +552,7 @@ export class EngineSession {
           vertical: line.wmode === 1,
           dir: [line.dir[0], line.dir[1]],
           editable: !locked.has(line),
+          added: blocks.length > 0 && addedLineIds(this.mupdf, doc, pageIndex, line, blocks) !== null,
         });
       }
       return out;
@@ -392,45 +571,75 @@ export class EngineSession {
    *   logged, the redo stack is kept and changedPages is empty.
    * - Empty or whitespace-only text deletes the line: it is redacted and nothing is written.
    * - A line that is not editable (LineInfo.editable) is refused ("not-editable"), unchanged.
+   * - A line made only of text the app wrote (LineInfo.added) is rewritten in its own marked
+   *   blocks, never redacted, so what lies under it (a form's underscores, a box) stays: logged
+   *   as an AddedTextEdit, in the app's fonts of its first block (no segments, no fallbackChars).
+   * - A line MuPDF reads as printed text and text the app wrote together (written just after a
+   *   label, on its baseline: LineInfo.added is false) is edited part by part (splitLine): only
+   *   the parts that change, the printed one by redaction, each added line in its own block and
+   *   style (a TextEdit or an AddedTextEdit, or a MixedLineEdit of them). A change of nothing but
+   *   the space between the parts is a no-op; one that would rewrite two printed parts is
+   *   refused ("not-editable"). When the printed part ends further right than before, the
+   *   added lines after it move right as much.
+   * - Any other line is redacted and written again (core.replaceText); the lines the app wrote
+   *   over or under it that the redaction damaged are written back as they were (protectAdded).
    */
   replaceLine(pageIndex: number, lineIndex: number, text: string): EditResult {
     const doc = this.requireDoc();
     this.checkPage(doc, pageIndex);
     const replacement = normalizeLineText(text);
-    const { find, occurrence } = this.locateLine(doc, pageIndex, lineIndex);
+    const { find, occurrence, added, parts } = this.locateLine(doc, pageIndex, lineIndex);
+    const unchanged: EditResult = {
+      ...this.history([]),
+      pageIndex,
+      before: find,
+      after: find,
+      segments: [],
+      fallbackChars: [],
+      missingChars: [],
+    };
+    if (replacement === find) return unchanged;
 
-    if (replacement === find) {
+    if (parts) {
+      const { edits, printed } = mixedLineEdits(pageIndex, find, replacement, parts);
+      for (const e of edits) if (e.kind === "editAdded" && e.text) this.checkDrawable(e.text, parts.find((p) => p.id === e.id)!.style!);
+      if (!edits.length) return unchanged;
+      // The added lines after a printed part that changes move with its end (applyLine).
+      const followers = printed ? parts.filter((p) => p.id && p.start >= printed.end) : [];
+      const flow: LineFlow | null = printed && followers.length
+        ? { start: printed.origin, right: printed.right, maxX: this.boundsOf(doc, pageIndex)[2], followers: followers.map((p) => ({ id: p.id, origin: p.origin })) }
+        : null;
+      const edit: LineEdit = edits.length === 1 && !flow ? edits[0] : { kind: "mixed", pageIndex, edits };
+      const r = this.commit(doc, edit, () => this.applyLine(doc, edit, flow), "Could not edit the line");
+      const told = r.text ? textOutcome(r.text) : { segments: [], fallbackChars: [], missingChars: [] };
       return {
-        ...this.history([]),
+        ...this.history([pageIndex]),
         pageIndex,
         before: find,
-        after: find,
+        after: replacement,
+        ...told,
+        missingChars: visibleChars([...told.missingChars, ...r.missing]),
+      };
+    }
+
+    if (added) {
+      const edit: AddedTextEdit = { kind: "editAdded", pageIndex, id: added[0], text: replacement };
+      if (added.length > 1) edit.absorb = added.slice(1);
+      const r = this.commit(doc, edit, () => this.applyAdded(doc, edit), "Could not edit the line");
+      return {
+        ...this.history([pageIndex]),
+        pageIndex,
+        before: find,
+        after: replacement,
         segments: [],
         fallbackChars: [],
-        missingChars: [],
+        missingChars: visibleChars(r.missing),
       };
     }
 
     const edit: TextEdit = { kind: "text", pageIndex, find, occurrence, replacement };
     const result = this.commit(doc, edit, () => this.applyText(doc, edit), "Could not edit the line");
-
-    // core's segment kinds are exactly the protocol's SegmentSource values.
-    const segments: EditSegment[] = result.segments.map((s) => ({
-      text: String(s.text),
-      source: s.source as SegmentSource,
-      fontName: untag(String(s.fontName)),
-    }));
-    // Spaces are left out: a space from a fallback font looks the same (Type3 fonts often lack one).
-    const fallbackChars = visibleChars(segments.filter((s) => s.source === "fallback").flatMap((s) => [...s.text]));
-    return {
-      ...this.history([pageIndex]),
-      pageIndex,
-      before: find,
-      after: replacement,
-      segments,
-      fallbackChars,
-      missingChars: visibleChars(result.missing as string[]),
-    };
+    return { ...this.history([pageIndex]), pageIndex, before: find, after: replacement, ...textOutcome(result) };
   }
 
   // ------------------------------------------------------------------ images
@@ -490,18 +699,20 @@ export class EngineSession {
   /**
    * Replaces one image placement with another picture (file bytes MuPDF can read: JPEG, PNG...),
    * fitted inside the part of the old one that showed, keeping its own proportions, centred, with
-   * the same rotation, never mirrored (images.replacePlacement); a JPEG is embedded as it is, the
-   * same bytes once however many places they go, in the old picture's layer (/OC). Other
-   * placements of the old picture stay. More than MAX_IMAGE_BYTES, or bytes that are not a
-   * picture, are refused ("bad-request") before anything is done. `bytes` is copied, unless
-   * `transfer` is set (as for open()).
+   * the same rotation, never mirrored (images.replacePlacement); a JPEG is embedded as it is
+   * (without the metadata that describes the photo: EXIF, GPS, XMP, comments; its EXIF
+   * orientation turns the placement, so a photo stored sideways shows upright), the same bytes
+   * once however many places they go, in the old picture's layer (/OC). Other placements of the
+   * old picture stay. More than MAX_IMAGE_BYTES, or bytes that are not a picture, are refused
+   * ("bad-request") before anything is done. `bytes` is copied, unless `transfer` is set (as for
+   * open()).
    */
   replaceImage(pageIndex: number, imageIndex: number, bytes: ArrayBuffer | Uint8Array, { transfer = false } = {}): ImageEditResult {
     const doc = this.requireDoc();
     this.checkPage(doc, pageIndex);
     const picture = this.checkPicture(bytes, transfer);
     this.editImage(doc, pageIndex, imageIndex, "Could not replace the image", (p) =>
-      ({ kind: "image", pageIndex, imageIndex, expect: p.matrix, op: "replace", bytes: picture }));
+      ({ kind: "image", pageIndex, imageIndex, expect: p.matrix, op: "replace", picture }));
     return { ...this.history([pageIndex]), pageIndex, imageIndex };
   }
 
@@ -565,32 +776,164 @@ export class EngineSession {
         throw new SessionError(`Image ${imageIndex} on page ${pageIndex + 1} cannot be changed (${p.reason})`, "not-editable");
       const edit = plan(p, page);
       if (!edit) return false;
-      this.commit(doc, edit, () => applyImageEdit(this.mupdf, doc, page, found, p, edit), failure);
+      this.commit(doc, edit, () => this.applyPlacementEdit(doc, page, found, p, edit), failure);
       return true;
     } finally {
-      page.destroy(); // after a failed edit its document may be gone already: the page kept it alive until here
+      page.destroy(); // its document may be gone already (a rollback, or a checkpoint's continueOn): the page kept it alive until here
     }
   }
 
-  /** The picture's bytes for a replace, checked as untrusted ("bad-request"), as a private copy unless transferred. */
-  private checkPicture(bytes: ArrayBuffer | Uint8Array, transfer: boolean): Uint8Array {
+  /**
+   * A picture file for a replace or an addition, checked as untrusted (images.checkPicture: at
+   * most MAX_IMAGE_BYTES, readable, a JPEG without its metadata, its orientation read;
+   * "bad-request" otherwise), its bytes a private copy unless transferred.
+   */
+  private checkPicture(bytes: ArrayBuffer | Uint8Array, transfer: boolean): Picture {
     if (!(bytes instanceof ArrayBuffer) && !(bytes instanceof Uint8Array)) throw new SessionError("No picture given", "bad-request");
     const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    if (view.byteLength === 0) throw new SessionError("The picture is empty", "bad-request");
-    if (view.byteLength > MAX_IMAGE_BYTES)
-      throw new SessionError(`The picture is larger than ${MAX_IMAGE_BYTES} bytes`, "bad-request");
-    let image: MuPDF.Image;
+    let picture: Picture;
     try {
-      image = openImage(this.mupdf, view);
+      picture = readPicture(this.mupdf, view);
     } catch (err) {
-      throw new SessionError(`The picture cannot be read: ${errorMessage(err)}`, "bad-request");
+      throw err instanceof BadPicture ? new SessionError(err.message, "bad-request") : err;
     }
+    // (checkPicture gives the caller's own bytes back when it had nothing to take out)
+    return picture.bytes === view && !transfer ? { ...picture, bytes: view.slice() } : picture;
+  }
+
+  // ------------------------------------------------------------------ fill and sign
+
+  /**
+   * The page's form field widgets (FieldWidget), in its tab order: hidden, NoView and zero-area
+   * widgets left out, each with what the overlay needs and why the app does not fill it (locked).
+   */
+  fields(pageIndex: number): FieldWidget[] {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    return pageFields(this.mupdf, doc, pageIndex);
+  }
+
+  /**
+   * Fills in the field named `name` (its full name): every field dictionary with that name and
+   * all their widgets, on every page, one edit (forms.ts: MuPDF's drawing for WinAnsi text, the
+   * app's writer for anything else and for list boxes; never MuPDF's toggle() for buttons; a
+   * static XFA part goes on the first field edit). changedPages lists every page with a widget of
+   * the field (all pages with widgets when the form had /NeedAppearances: the first edit gives
+   * every field its appearance).
+   *
+   * - A value the field holds already (every dictionary with the name) is a no-op: nothing is
+   *   logged, the redo stack is kept and changedPages is empty.
+   * - An unknown name, or a value the field cannot take (a choice it does not offer, more
+   *   characters than MaxLen or MAX_FIELD_CHARS, a state it does not have), is refused
+   *   ("bad-request"); a locked field (FieldWidget.locked) too ("not-editable"); nothing is done.
+   * - Characters no font of the app has stay in the value and are left out of the drawing
+   *   (missingChars); `overflow` says the text does not fit the box.
+   */
+  setField(name: string, value: FieldValue): FieldEditResult {
+    const doc = this.requireDoc();
+    let edit: FieldEdit | null;
     try {
-      if (!(image.getWidth() > 0 && image.getHeight() > 0)) throw new SessionError("The picture has no pixels", "bad-request");
-    } finally {
-      image.destroy();
+      edit = planFieldEdit(this.mupdf, doc, name, value);
+    } catch (err) {
+      throw err instanceof FieldError ? new SessionError(err.message, err.code) : err;
     }
-    return transfer ? view : view.slice();
+    if (!edit) return { ...this.history([]), name, missingChars: [], overflow: false };
+    const planned = edit;
+    const r = this.commit(doc, planned, () => applyFieldEdit(this.mupdf, doc, planned), "Could not fill in the field");
+    return { ...this.history(pagesOf(planned)), name: planned.name, missingChars: visibleChars(r.missingChars), overflow: r.overflow };
+  }
+
+  /**
+   * Writes a new line of real text on the page (newcontent.addText): `text` made one line (line
+   * breaks and tabs become spaces, leading and trailing whitespace and characters that draw
+   * nothing dropped), its baseline starting at `origin` (page space), horizontal as seen, in the
+   * app's embedded fonts of `style`, over the page's content, in a marked block of its own.
+   * Characters no font of the app has (emoji, beyond U+FFFF) are left out and listed in
+   * missingChars. Refused, with nothing done: an origin off the page, an empty text or one longer
+   * than MAX_TEXT_CHARS, a style out of range, a text with nothing that can be drawn
+   * ("bad-request"); a page whose content cannot take an addition ("not-editable").
+   */
+  addText(pageIndex: number, origin: [number, number], text: string, style: TextStyle): AddTextResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const at = this.pointOnPage(doc, pageIndex, origin);
+    const line = lineFrom(text);
+    if (!line) throw new SessionError("The text is empty", "bad-request");
+    const st = styleFrom(style);
+    this.checkDrawable(line, st);
+    const edit: AddTextEdit = { kind: "addText", pageIndex, origin: at, text: line, style: st, id: 0 };
+    const r = this.commit(doc, edit, () => {
+      const out = addLine(this.mupdf, doc, pageIndex, at, line, st);
+      edit.id = out.id; // logged right after this: replays must give the line the same id
+      return out;
+    }, "Could not add the text");
+    return { ...this.history([pageIndex]), pageIndex, id: r.id, missingChars: visibleChars(r.missing) };
+  }
+
+  /** The page's texts written by the app (AddedText), in content order, each with its id to edit it. */
+  addedTexts(pageIndex: number): AddedText[] {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    return addedTexts(this.mupdf, doc, pageIndex);
+  }
+
+  /**
+   * Changes the text the app wrote with id `id` (AddedText.id) in place, in its own block: its
+   * text (checked as addText checks it; empty deletes it), its baseline start (on the page) and
+   * its style, each when given. The id stays (null after a delete). Nothing new is a no-op
+   * (nothing logged, changedPages empty). Refused ("bad-request"): no such text on the page, a
+   * patch out of range, a text with nothing that can be drawn.
+   */
+  editAddedText(pageIndex: number, id: number, patch: { text?: string; origin?: [number, number]; style?: TextStyle } = {}): AddTextResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    if (!Number.isInteger(id) || id < 1) throw new SessionError(`No text ${id} written by the app on page ${pageIndex + 1}`, "bad-request");
+    const current = addedTexts(this.mupdf, doc, pageIndex).find((t) => t.id === id);
+    if (!current) throw new SessionError(`No text ${id} written by the app on page ${pageIndex + 1}`, "bad-request");
+    const change = (patch ?? {}) as { text?: unknown; origin?: unknown; style?: unknown };
+    const edit: AddedTextEdit = { kind: "editAdded", pageIndex, id };
+    if (change.text !== undefined) edit.text = lineFrom(change.text);
+    if (change.origin !== undefined) edit.origin = this.pointOnPage(doc, pageIndex, change.origin);
+    if (change.style !== undefined) edit.style = styleFrom(change.style);
+    const unchanged =
+      (edit.text === undefined || edit.text === current.text) &&
+      (edit.origin === undefined || Math.hypot(edit.origin[0] - current.origin[0], edit.origin[1] - current.origin[1]) < 0.001) &&
+      (edit.style === undefined || sameStyle(edit.style, current.style));
+    if (unchanged) return { ...this.history([]), pageIndex, id, missingChars: [] };
+    if (edit.text) this.checkDrawable(edit.text, edit.style ?? current.style);
+    const r = this.commit(doc, edit, () => this.applyAdded(doc, edit), "Could not change the text");
+    return { ...this.history([pageIndex]), pageIndex, id: r.id, missingChars: visibleChars(r.missing) };
+  }
+
+  /**
+   * Draws a new picture (file bytes MuPDF can read: JPEG, PNG...; a JPEG without its metadata and
+   * turned upright by its EXIF orientation) at each target (ImageInfo.matrix convention), over the
+   * page's content, in a marked block of its own: one edit, the picture embedded once (initials on
+   * every page). On a tagged page it is a Figure described by `alt` (at most MAX_ALT_CHARS), or an
+   * Artifact when `alt` is null. `placed` gives each new placement's index in its page's images
+   * (null when that page's images are locked). Refused, with nothing done ("bad-request"): no
+   * target or more than one per page, a matrix checked as transformImage checks a move (each side
+   * within MIN_IMAGE_SIDE..MAX_IMAGE_SIDE, the centre on the page), a bad description, bytes that
+   * are not a picture or more than MAX_IMAGE_BYTES; a page whose content cannot take an addition
+   * ("not-editable"). `bytes` is copied, unless `transfer` is set (as for open()).
+   */
+  addImage(bytes: ArrayBuffer | Uint8Array, targets: ImageTarget[], alt: string | null, { transfer = false } = {}): AddImageResult {
+    const doc = this.requireDoc();
+    if (!Array.isArray(targets) || targets.length === 0) throw new SessionError("A picture needs at least one target", "bad-request");
+    const checked: ImageTarget[] = [];
+    for (const t of targets as unknown[]) {
+      const pageIndex = (t as Partial<ImageTarget> | null)?.pageIndex as number;
+      this.checkPage(doc, pageIndex);
+      if (checked.some((c) => c.pageIndex === pageIndex)) throw new SessionError(`Two targets on page ${pageIndex + 1}`, "bad-request");
+      const matrix = matrixFrom((t as Partial<ImageTarget>).matrix);
+      checkTarget(matrix, this.boundsOf(doc, pageIndex), UNIT_SQUARE);
+      checked.push({ pageIndex, matrix });
+    }
+    const description = altFrom(alt);
+    const picture = this.checkPicture(bytes, transfer);
+    const edit: AddImageEdit = { kind: "addImage", pageIndex: checked[0].pageIndex, picture, targets: checked, alt: description };
+    const placed = this.commit(doc, edit, () => this.applyAddImage(doc, edit, true), "Could not add the picture");
+    return { ...this.history(pagesOf(edit)), placed };
   }
 
   /** Undoes the last edit: re-opens the nearest checkpoint (or the original) and replays from there. */
@@ -602,7 +945,7 @@ export class EngineSession {
     this.replaceDoc(fresh);
     this.log.pop();
     this.redoStack.push(last);
-    return this.history([last.pageIndex]);
+    return this.history(pagesOf(last));
   }
 
   /** Re-applies the last undone edit. */
@@ -618,7 +961,7 @@ export class EngineSession {
     this.redoStack.pop();
     this.log.push(next);
     this.checkpoint(doc);
-    return this.history([next.pageIndex]);
+    return this.history(pagesOf(next));
   }
 
   /** The edits currently applied, oldest first (a copy). */
@@ -714,7 +1057,8 @@ export class EngineSession {
 
   /**
    * A scratch copy of the current state, with its fallback-font bookkeeping: a snapshot of the
-   * working document, or, when the session is broken (the working document may be half-edited),
+   * working document (re-opened twice: as the copy, and as the working document from now on,
+   * continueOn), or, when the session is broken (the working document may be half-edited),
    * the last good state rebuilt from the log (that failed once already, so it can fail again:
    * then still "broken").
    */
@@ -727,18 +1071,22 @@ export class EngineSession {
         throw new SessionError(`The document could not be rebuilt: ${errorMessage(err)}`, "broken");
       }
     }
+    const fonts = fallbackFontState(doc);
     const snapshot = doc.saveToBuffer(SNAPSHOT_OPTIONS);
     let scratch: MuPDF.PDFDocument;
     try {
       scratch = this.openSnapshot(snapshot); // the document keeps its own reference to the buffer
+      try {
+        restoreFallbackFonts(scratch, fonts);
+      } catch (err) {
+        this.dispose(scratch);
+        throw err;
+      }
+      // The snapshot compressed the pictures embedded since the last one: the next one (save after
+      // the PDF/A check, a checkpoint) need not do it again.
+      this.continueOn(doc, snapshot, fonts);
     } finally {
       snapshot.destroy();
-    }
-    try {
-      restoreFallbackFonts(scratch, fallbackFontState(doc));
-    } catch (err) {
-      this.dispose(scratch);
-      throw err;
     }
     return scratch;
   }
@@ -765,12 +1113,41 @@ export class EngineSession {
       throw new SessionError(`No page ${pageIndex}`, "bad-request");
   }
 
+  /** The page's bounds (page space). */
+  private boundsOf(doc: MuPDF.PDFDocument, pageIndex: number): Rect {
+    const page = doc.loadPage(pageIndex);
+    try {
+      return toRect(page.getBounds());
+    } finally {
+      page.destroy();
+    }
+  }
+
+  /** A point from the main thread, checked as untrusted: two finite numbers on the page ("bad-request" otherwise). */
+  private pointOnPage(doc: MuPDF.PDFDocument, pageIndex: number, p: unknown): [number, number] {
+    if (!Array.isArray(p) || p.length !== 2 || !p.every((v) => typeof v === "number" && Number.isFinite(v)))
+      throw new SessionError("A point is two finite numbers", "bad-request");
+    const [x0, y0, x1, y1] = this.boundsOf(doc, pageIndex);
+    if (!(p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1)) throw new SessionError("The point is off the page", "bad-request");
+    return [p[0], p[1]];
+  }
+
+  /** Refuses ("bad-request") a text none of whose characters a font of the app can draw in `style`. */
+  private checkDrawable(text: string, style: TextStyle) {
+    const missing = missingChars(this.mupdf, text, style);
+    if ([...text].every((c) => c.trim() === "" || missing.includes(c)))
+      throw new SessionError("No character of the text can be drawn", "bad-request");
+  }
+
   /**
-   * The text an edit of this line must find, and which occurrence on the page is this line.
-   * core.findInLines counts every match in line order, including matches inside other lines
-   * (a line "Note" also matches inside an earlier "Note bene"), so the occurrence is the number
-   * of matches in the lines before this one. Within the line itself the trimmed text can only
-   * match at its own start: what precedes it is whitespace.
+   * The text an edit of this line must find, which occurrence on the page is this line, the ids
+   * of the app's added blocks it consists of (null: it is not made only of added text, the usual
+   * case), and its parts when it holds both printed text and text the app wrote (lineParts; null
+   * otherwise), each printed part with its own occurrence. core.findInLines counts every match in
+   * line order, including matches inside other lines (a line "Note" also matches inside an earlier
+   * "Note bene"), so the occurrence is the number of matches in the lines before this one. Within
+   * the line itself the trimmed text can only match at its own start: what precedes it is
+   * whitespace (a part counts the matches before it in the line too).
    */
   private locateLine(doc: MuPDF.PDFDocument, pageIndex: number, lineIndex: number) {
     const page = doc.loadPage(pageIndex);
@@ -792,7 +1169,22 @@ export class EngineSession {
       // Belt and braces: the edit must land on exactly this line.
       const hit = findInLines(raw, find, occurrence);
       if (!hit || hit.line !== target) throw new Error("line lookup mismatch");
-      return { find, occurrence };
+      const blocks = addedBlocks(page);
+      const added = blocks.length ? addedLineIds(this.mupdf, doc, pageIndex, target, blocks) : null;
+      let parts: LinePart[] | null = null;
+      if (blocks.length && !added && target.wmode !== 1) {
+        parts = lineParts(target, addedTexts(this.mupdf, doc, pageIndex));
+        const lead = target.text.length - target.text.trimStart().length;
+        for (const p of parts ?? []) {
+          if (p.id) continue;
+          const at = lead + p.start;
+          p.occurrence = raw.slice(0, raw.indexOf(target)).reduce((n, l) => n + countOccurrences(l.text, p.text), 0);
+          for (let i = target.text.indexOf(p.text); i >= 0 && i < at; i = target.text.indexOf(p.text, i + 1)) p.occurrence++;
+          const part = findInLines(raw, p.text, p.occurrence);
+          if (!part || part.line !== target || part.start !== at) throw new Error("line lookup mismatch");
+        }
+      }
+      return { find, occurrence, added, parts };
     } finally {
       releasePage(page, raw, glyphs);
     }
@@ -801,15 +1193,20 @@ export class EngineSession {
   /**
    * Applies a new edit through `run` and records it: if it fails the document is rolled back
    * (recover, "edit-failed"); if not, the edit is logged, the redo stack cleared and a checkpoint
-   * taken when due.
+   * taken when due (after which `doc` is no longer the working document: continueOn). A refusal
+   * of newcontent.ts (the page's content cannot take an addition, nothing of a text can be drawn)
+   * keeps its own code after the rollback.
    */
   private commit<T>(doc: MuPDF.PDFDocument, edit: LoggedEdit, run: () => T, failure: string): T {
     let result: T;
     try {
       result = run();
     } catch (err) {
-      throw this.recover(`${failure}: ${errorMessage(err)}`);
+      const recovered = this.recover(`${failure}: ${errorMessage(err)}`);
+      if (recovered.code === "edit-failed" && err instanceof ContentError) throw new SessionError(err.message, err.code);
+      throw recovered;
     }
+    formChanged(doc);
     // Checkpoints beyond this point hold undone edits, which this one replaces for good.
     this.checkpoints = this.checkpoints.filter((c) => c.editCount <= this.log.length);
     this.log.push(edit);
@@ -818,14 +1215,145 @@ export class EngineSession {
     return result;
   }
 
-  /** Applies a logged edit again (redo, rebuild). */
+  /**
+   * Applies a logged edit again (redo, rebuild), and tells forms.ts the document changed. Throws
+   * when the document no longer fits it (the caller then drops the document).
+   */
   private apply(doc: MuPDF.PDFDocument, edit: LoggedEdit) {
-    if (edit.kind === "image") this.applyImage(doc, edit);
-    else this.applyText(doc, edit);
+    switch (edit.kind) {
+      case "text":
+        this.applyText(doc, edit);
+        break;
+      case "image":
+        this.applyImage(doc, edit);
+        break;
+      case "field":
+        applyFieldEdit(this.mupdf, doc, edit);
+        break;
+      case "addText": {
+        const { id } = addLine(this.mupdf, doc, edit.pageIndex, edit.origin, edit.text, edit.style);
+        if (id !== edit.id) throw new Error(`The new text on page ${edit.pageIndex + 1} got id ${id}, the log has ${edit.id}`);
+        break;
+      }
+      case "editAdded":
+        this.applyAdded(doc, edit);
+        break;
+      case "mixed":
+        this.applyLine(doc, edit);
+        break;
+      case "addImage":
+        this.applyAddImage(doc, edit, false);
+        break;
+      default: {
+        const unknown: never = edit;
+        throw new Error(`Unknown edit ${JSON.stringify(unknown)}`);
+      }
+    }
+    formChanged(doc);
   }
 
+  /**
+   * A line edit (core.replaceText). Its redaction is geometric: it removes whatever lies under
+   * the line's characters, the lines the app wrote there included (a name written over a form's
+   * line, a check mark over a box). protectAdded notes them first and writes back, as they were,
+   * those the redaction damaged: all of the page's, since a TextEdit never covers text the app
+   * wrote (replaceLine routes a line holding some to its blocks, or edits only its printed part).
+   * Part of the edit: every replay does it.
+   */
   private applyText(doc: MuPDF.PDFDocument, edit: TextEdit) {
-    return replaceText(this.mupdf, doc, edit.pageIndex, edit.find, edit.replacement, { occurrence: edit.occurrence });
+    const restore = protectAdded(this.mupdf, doc, edit.pageIndex);
+    const result = replaceText(this.mupdf, doc, edit.pageIndex, edit.find, edit.replacement, { occurrence: edit.occurrence });
+    restore();
+    return result;
+  }
+
+  /** Rewrites a line the app wrote in its own block, and removes the blocks it absorbs (AddedTextEdit). */
+  private applyAdded(doc: MuPDF.PDFDocument, edit: AddedTextEdit) {
+    const r = rewriteAdded(this.mupdf, doc, edit.pageIndex, edit.id, { text: edit.text, origin: edit.origin, style: edit.style });
+    for (const id of edit.absorb ?? []) rewriteAdded(this.mupdf, doc, edit.pageIndex, id, { text: "" });
+    return r;
+  }
+
+  /**
+   * Applies the edit replaceLine made of a line with printed and added parts, in order. Returns
+   * the printed part's core.replaceText result (null when it did not change) and the characters
+   * the added lines left out. With `flow` (the edit is new, not a replay), once the printed part
+   * is written: if it now ends further right than it did, the added lines after it on the line
+   * move right as much, so that the line does not run into itself ("Data:" made "Data di
+   * nascita:" before a date written after it). The moves join the edit's AddedTextEdits, so
+   * replays make them as they are logged.
+   */
+  private applyLine(doc: MuPDF.PDFDocument, edit: LineEdit, flow: LineFlow | null = null): { text: ReturnType<typeof replaceText> | null; missing: string[] } {
+    let text: ReturnType<typeof replaceText> | null = null;
+    const missing: string[] = [];
+    const list = edit.kind === "mixed" ? edit.edits : [edit];
+    for (let k = 0; k < list.length; k++) { // (the flow below may add to the list)
+      const e = list[k];
+      if (e.kind === "editAdded") {
+        missing.push(...this.applyAdded(doc, e).missing);
+        continue;
+      }
+      text = this.applyText(doc, e);
+      const right = flow && e.replacement ? printedRight(doc, e.pageIndex, flow.start, e.replacement) : null;
+      const shift = right === null ? 0 : right - flow!.right;
+      if (!(shift > 0.01)) continue;
+      for (const f of flow!.followers) {
+        const x = f.origin[0] + shift;
+        if (x > flow!.maxX) continue; // (the origin must stay on the page)
+        const planned = list.find((d): d is AddedTextEdit => d.kind === "editAdded" && d.id === f.id);
+        if (!planned) list.push({ kind: "editAdded", pageIndex: e.pageIndex, id: f.id, origin: [x, f.origin[1]] });
+        else if (planned.text !== "") planned.origin = [x, f.origin[1]];
+      }
+    }
+    return { text, missing };
+  }
+
+  /** A new picture (newcontent.addImage), its copy shared (sharePicture); `locate`: find the new placements (not needed by a replay). */
+  private applyAddImage(doc: MuPDF.PDFDocument, edit: AddImageEdit, locate: boolean) {
+    return this.sharePicture(doc, pagesOf(edit), edit.picture, () =>
+      addPicture(this.mupdf, doc, edit.picture, edit.targets, edit.alt, { locate }));
+  }
+
+  /** Does what a logged image edit says to placement `p` (found on `page` just before); a replacement picture's copy is shared (sharePicture). */
+  private applyPlacementEdit(doc: MuPDF.PDFDocument, page: MuPDF.PDFPage, found: PagePlacements, p: Placement, edit: ImageEdit) {
+    if (edit.op !== "replace") return applyImageEdit(this.mupdf, doc, page, found, p, edit);
+    return this.sharePicture(doc, [edit.pageIndex], edit.picture, () => applyImageEdit(this.mupdf, doc, page, found, p, edit));
+  }
+
+  /**
+   * Runs `embed`, an edit that draws `picture` on `pages`, so that the document holds one copy of
+   * the picture however the history got there. images.pictureObject finds a picture embedded
+   * before through a map of its own per document, which a document re-opened from a checkpoint
+   * starts without: a replay after the checkpoint (undo, a rollback) would embed a second copy,
+   * which the download would carry too (garbage collection does not merge copies), and every
+   * later placement of it would use that one. So each name the edit adds to those pages' /XObject
+   * is pointed at the copy the app embedded first, when the document still holds it (an image of
+   * the same size, layer and EXIF orientation, noted with the same bytes); a picture not seen before is noted. The
+   * notes go with the checkpoints. Part of the edit: every replay does it.
+   */
+  private sharePicture<T>(doc: MuPDF.PDFDocument, pages: number[], picture: Picture, embed: () => T): T {
+    const before = pages.map((p) => namesOf(xobjectsOf(doc, p)));
+    const result = embed();
+    let known = this.pictures.get(doc) ?? [];
+    pages.forEach((pageIndex, k) => {
+      const xobjects = xobjectsOf(doc, pageIndex);
+      if (!xobjects) return;
+      for (const name of namesOf(xobjects)) {
+        const ref = xobjects.get(name);
+        if (before[k].has(name) || !ref.isIndirect() || !isImage(ref)) continue;
+        const num = ref.asIndirect(), layer = layerOf(ref);
+        if (layer < 0) continue; // (a direct /OC: pictureObject does not reuse those either)
+        const i = known.findIndex((e) => e.layer === layer && sameBytes(e.bytes, picture.bytes));
+        if (i < 0) known = [...known, { bytes: picture.bytes, num, layer }];
+        else if (known[i].num !== num) {
+          const first = doc.newIndirect(known[i].num);
+          if (isImage(first) && layerOf(first) === layer && sameSize(first, ref) && turnOf(first) === turnOf(ref)) xobjects.put(name, first);
+          else known = known.map((e, j) => (j === i ? { ...e, num } : e)); // (gone: this copy is the one now)
+        }
+      }
+    });
+    this.pictures.set(doc, known);
+    return result;
   }
 
   /**
@@ -841,7 +1369,7 @@ export class EngineSession {
       if (!p) throw new Error(`There is no ${where}`);
       if (!p.movable) throw new Error(`The ${where} cannot be changed (${p.reason})`);
       if (!nearlyEqual(p.matrix, edit.expect)) throw new Error(`The ${where} is not where the edit expects it`);
-      applyImageEdit(this.mupdf, doc, page, found, p, edit);
+      this.applyPlacementEdit(doc, page, found, p, edit);
     } finally {
       page.destroy();
     }
@@ -855,6 +1383,7 @@ export class EngineSession {
       doc.destroy();
       throw new Error("The original no longer opens with its password");
     }
+    hidePasswords(this.mupdf, doc); // as open() did
     return doc;
   }
 
@@ -872,6 +1401,7 @@ export class EngineSession {
     const doc = base ? this.openSnapshot(base.bytes) : this.openOriginal();
     try {
       if (base) restoreFallbackFonts(doc, base.fonts);
+      this.pictures.set(doc, base ? base.pictures : []);
       for (const edit of this.log.slice(base ? base.editCount : 0, count)) this.apply(doc, edit);
       return doc;
     } catch (err) {
@@ -894,22 +1424,28 @@ export class EngineSession {
     }
   }
 
-  /** Takes a checkpoint of the working document when the log has just reached a multiple of CHECKPOINT_EVERY. */
+  /**
+   * Takes a checkpoint of the working document when the log has just reached a multiple of
+   * CHECKPOINT_EVERY, and carries on with it (continueOn): `doc` is no longer the working
+   * document after this.
+   */
   private checkpoint(doc: MuPDF.PDFDocument) {
     const editCount = this.log.length;
     if (editCount % CHECKPOINT_EVERY !== 0 || this.checkpoints.some((c) => c.editCount === editCount)) return;
+    const fonts = fallbackFontState(doc), pictures = this.pictures.get(doc) ?? [];
     let bytes: Uint8Array;
     try {
       const buf = doc.saveToBuffer(SNAPSHOT_OPTIONS);
       try {
         bytes = buf.asUint8Array().slice(); // out of the wasm heap
+        this.continueOn(doc, buf, fonts);
       } finally {
         buf.destroy();
       }
     } catch {
       return; // a checkpoint only saves time: undo then starts from an earlier one
     }
-    this.checkpoints.push({ editCount, bytes, fonts: fallbackFontState(doc) });
+    this.checkpoints.push({ editCount, bytes, fonts, pictures });
     this.checkpoints.sort((a, b) => a.editCount - b.editCount);
     let total = this.checkpoints.reduce((n, c) => n + c.bytes.byteLength, 0);
     while (this.checkpoints.length > MAX_CHECKPOINTS || (total > MAX_CHECKPOINT_BYTES && this.checkpoints.length > 0))
@@ -932,9 +1468,33 @@ export class EngineSession {
     return best;
   }
 
+  /**
+   * Carries on with `snapshot` (a Buffer that saveToBuffer(SNAPSHOT_OPTIONS) just gave for the
+   * working document `doc`) re-opened in place of `doc`, with `fonts` (core.fallbackFontState of
+   * `doc`) and the pictures noted for it: the same document, but with its pictures compressed,
+   * so the next snapshots copy them instead of compressing them again; what undo carries on with
+   * after a rebuild from a checkpoint. Not done when `doc` is not the working document; when the
+   * snapshot does not open, the session goes on with `doc`.
+   */
+  private continueOn(doc: MuPDF.PDFDocument, snapshot: MuPDF.Buffer, fonts: ReturnType<typeof fallbackFontState>) {
+    if (doc !== this.doc || this.broken) return;
+    let fresh: MuPDF.PDFDocument | null = null;
+    try {
+      fresh = this.openSnapshot(snapshot); // (it keeps its own reference to the buffer)
+      restoreFallbackFonts(fresh, fonts);
+    } catch {
+      if (fresh) this.dispose(fresh);
+      return;
+    }
+    this.pictures.set(fresh, this.pictures.get(doc) ?? []);
+    this.replaceDoc(fresh);
+  }
+
+  /** Makes `fresh` the working document (undo, recover, continueOn), closing the one before. */
   private replaceDoc(fresh: MuPDF.PDFDocument) {
     if (this.doc) this.dispose(this.doc);
     this.doc = fresh;
+    formChanged(fresh);
   }
 
   /** Destroys a document and the fallback fonts core.js cached for it (rule 5). */
@@ -985,18 +1545,314 @@ function linesBeyondBMP(lines: RawLine[], glyphs: Glyph[]): Set<RawLine> {
 
 const toRect = (r: ArrayLike<number>): Rect => [r[0], r[1], r[2], r[3]];
 
-/** A copy of a log entry, its matrices and bytes included. */
+const copyStyle = (s: TextStyle): TextStyle => ({ ...s, color: [s.color[0], s.color[1], s.color[2]] });
+const copyPoint = (p: [number, number]): [number, number] => [p[0], p[1]];
+const copyPicture = (p: Picture): Picture => ({ ...p, bytes: p.bytes.slice() });
+
+/** A copy of a log entry, its matrices, points, styles, values and bytes included. */
 function copyEdit(e: LoggedEdit): LoggedEdit {
-  if (e.kind === "text") return { ...e };
-  const expect = [...e.expect] as Matrix;
-  switch (e.op) {
-    case "transform":
-      return { ...e, expect, matrix: [...e.matrix] as Matrix };
-    case "replace":
-      return { ...e, expect, bytes: e.bytes.slice() };
-    default:
-      return { ...e, expect };
+  switch (e.kind) {
+    case "text":
+      return { ...e };
+    case "field": {
+      const v = e.value;
+      const value: FieldValue = v.kind === "choice" ? { kind: "choice", values: [...v.values] } : { ...v };
+      return { ...e, value, pages: [...e.pages] };
+    }
+    case "addText":
+      return { ...e, origin: copyPoint(e.origin), style: copyStyle(e.style) };
+    case "editAdded": {
+      const out: AddedTextEdit = { ...e };
+      if (e.origin) out.origin = copyPoint(e.origin);
+      if (e.style) out.style = copyStyle(e.style);
+      if (e.absorb) out.absorb = [...e.absorb];
+      return out;
+    }
+    case "addImage":
+      return { ...e, picture: copyPicture(e.picture), targets: e.targets.map((t) => ({ pageIndex: t.pageIndex, matrix: [...t.matrix] as Matrix })) };
+    case "mixed":
+      return { ...e, edits: e.edits.map((x) => copyEdit(x) as TextEdit | AddedTextEdit) };
+    case "image": {
+      const expect = [...e.expect] as Matrix;
+      switch (e.op) {
+        case "transform":
+          return { ...e, expect, matrix: [...e.matrix] as Matrix };
+        case "replace":
+          return { ...e, expect, picture: copyPicture(e.picture) };
+        default:
+          return { ...e, expect };
+      }
+    }
   }
+}
+
+/** What replaceLine logs for a line with printed and added parts. */
+type LineEdit = TextEdit | AddedTextEdit | MixedLineEdit;
+
+/** What an EditResult tells of a core.replaceText result: its segments, the fallbacks the user can see, the characters left out. */
+function textOutcome(result: ReturnType<typeof replaceText>): Pick<EditResult, "segments" | "fallbackChars" | "missingChars"> {
+  // core's segment kinds are exactly the protocol's SegmentSource values.
+  const segments: EditSegment[] = result.segments.map((s) => ({
+    text: String(s.text),
+    source: s.source as SegmentSource,
+    fontName: untag(String(s.fontName)),
+  }));
+  // Spaces are left out: a space from a fallback font looks the same (Type3 fonts often lack one).
+  // So is a fallback in the very face the line was drawn with (`program`: a line an earlier edit
+  // wrote in the app's fonts): nothing changes that the user could see.
+  const face = untag(String(result.original.fontName));
+  const fallbackChars = visibleChars(
+    result.segments
+      .filter((s) => s.source === "fallback" && untag(String(s.program ?? "")) !== face)
+      .flatMap((s) => [...String(s.text)]),
+  );
+  return { segments, fallbackChars, missingChars: visibleChars(result.missing as string[]) };
+}
+
+/**
+ * A run of a line MuPDF reads as printed text and text the app wrote together (lineParts):
+ * printed text, or one whole line the app wrote.
+ */
+interface LinePart {
+  /** 0 for printed text, else the AddedText.id of the line the app wrote that draws it. */
+  id: number;
+  /** Where it is in the line's text without its leading whitespace (end excluded), and what it reads there. */
+  start: number;
+  end: number;
+  text: string;
+  /** Printed text: which match of `text` on the page it is (TextEdit.occurrence; locateLine counts it). */
+  occurrence: number;
+  /** The added line's style (null for printed text). */
+  style: TextStyle | null;
+  /** Where its first character starts (page space): the added line's origin, or the printed text's first glyph. */
+  origin: [number, number];
+  /** How far right its characters' boxes reach (page space). */
+  right: number;
+}
+
+/** What applyLine needs to move the added lines after a printed part that grows (replaceLine). */
+interface LineFlow {
+  /** The printed part's first character's origin, and how far right it reached before the edit. */
+  start: [number, number];
+  right: number;
+  /** The page's right edge: an added line is not moved off the page. */
+  maxX: number;
+  /** The added lines after it on the line, and their origins. */
+  followers: { id: number; origin: [number, number] }[];
+}
+
+/** The ligatures MuPDF's structured text reads as their letters (an added "ﬁ" is "fi" in a line). */
+const LIGATURES: Readonly<Record<string, string>> = { "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st" };
+const asRead = (text: string) => text.replace(/[ﬀ-ﬆ]/g, (c) => LIGATURES[c]);
+
+/** How far right the boxes of characters reach (a quad's four x). */
+const rightOf = (chars: { quad: number[] }[]) => Math.max(...chars.flatMap((c) => [c.quad[0], c.quad[2], c.quad[4], c.quad[6]]));
+
+/**
+ * After a printed part was written again: how far right the characters of `text` reach, read on
+ * the page from the character that starts at `start` (core.replaceText writes the replacement
+ * where the old text's first glyph was). Null when it cannot be found.
+ */
+function printedRight(doc: MuPDF.PDFDocument, pageIndex: number, start: [number, number], text: string): number | null {
+  const page = doc.loadPage(pageIndex);
+  let raw: RawLine[] = [];
+  try {
+    raw = extractLines(page);
+    for (const line of raw) {
+      const chars = line.chars as { origin: number[]; quad: number[] }[];
+      for (let k = 0; k < chars.length; k++)
+        if (Math.hypot(chars[k].origin[0] - start[0], chars[k].origin[1] - start[1]) < 0.05 && line.text.startsWith(text, k))
+          return rightOf(chars.slice(k, k + text.length));
+    }
+    return null;
+  } finally {
+    releasePage(page, raw);
+  }
+}
+
+/**
+ * The parts of `line` (a core.extractLines line) when some of its characters are drawn by lines
+ * the app wrote (`added`, the page's AddedText) and others are printed: MuPDF reads an added text
+ * that starts within a few points of a label's end, on about its baseline, as part of the label's
+ * line ("Data di nascita: 12/03/1980"). An added line is part of it when the line reads its whole
+ * text from a character at its origin: not by place alone, since a name written over a form's
+ * underscores lies on their baseline but is a line of its own. In order: runs of printed text,
+ * without the whitespace at their ends (a space MuPDF puts in a gap belongs to no part), and the
+ * runs of one added line each. Null when the line holds no added line.
+ */
+function lineParts(line: RawLine, added: AddedText[]): LinePart[] | null {
+  const chars = line.chars as { c: string; origin: number[]; quad: number[] }[];
+  const owner = chars.map(() => 0);
+  for (const t of added) {
+    const read = asRead(t.text);
+    for (let k = 0; k < chars.length; k++) {
+      if (Math.hypot(chars[k].origin[0] - t.origin[0], chars[k].origin[1] - t.origin[1]) >= 0.05 || !line.text.startsWith(read, k)) continue;
+      if (owner.slice(k, k + read.length).every((id) => !id)) owner.fill(t.id, k, k + read.length);
+      break;
+    }
+  }
+  if (!owner.some((id) => id > 0)) return null;
+  const lead = line.text.length - line.text.trimStart().length, end = line.text.trimEnd().length;
+  const parts: LinePart[] = [];
+  const space = (k: number) => chars[k].c.trim() === "";
+  for (let i = lead; i < end; ) {
+    let j = i + 1;
+    while (j < end && owner[j] === owner[i]) j++;
+    let a = i, b = j;
+    if (!owner[i]) {
+      while (a < b && space(a)) a++;
+      while (b > a && space(b - 1)) b--;
+    }
+    if (a < b) {
+      const t = added.find((x) => x.id === owner[i]);
+      parts.push({
+        id: owner[i], start: a - lead, end: b - lead, text: line.text.slice(a, b), occurrence: 0, style: t ? t.style : null,
+        origin: t ? [t.origin[0], t.origin[1]] : [chars[a].origin[0], chars[a].origin[1]], right: rightOf(chars.slice(a, b)),
+      });
+    }
+    i = j;
+  }
+  return parts;
+}
+
+/**
+ * The edits that make a line with printed and added parts (lineParts) read `next` instead of
+ * `old` (both without leading and trailing whitespace): each part's new text (splitLine), the
+ * printed part that changes as a TextEdit (first: its occurrence was counted on the page as it
+ * is), each added line that changes as an AddedTextEdit (its text checked as addText checks it;
+ * empty deletes it), and the printed part that changes (null: none). No edits when no part
+ * changes. A change that would rewrite two printed parts is refused ("not-editable"): the second
+ * one's occurrence would have to be counted again after the first is written.
+ */
+function mixedLineEdits(pageIndex: number, old: string, next: string, parts: LinePart[]): { edits: (TextEdit | AddedTextEdit)[]; printed: LinePart | null } {
+  const texts = splitLine(old, next, parts);
+  const printed: [TextEdit, LinePart][] = [], added: AddedTextEdit[] = [];
+  parts.forEach((p, k) => {
+    if (!p.id) {
+      const replacement = normalizeLineText(texts[k]);
+      if (replacement !== p.text) printed.push([{ kind: "text", pageIndex, find: p.text, occurrence: p.occurrence, replacement }, p]);
+    } else {
+      const text = lineFrom(texts[k]);
+      if (text !== p.text) added.push({ kind: "editAdded", pageIndex, id: p.id, text });
+    }
+  });
+  if (printed.length > 1)
+    throw new SessionError("The edit changes two printed parts of a line that holds text the app wrote", "not-editable");
+  return { edits: [...printed.map(([e]) => e), ...added], printed: printed[0]?.[1] ?? null };
+}
+
+/**
+ * What each part of a line with printed and added parts (lineParts, in order) reads once the line
+ * reads `next` instead of `old` (both without leading and trailing whitespace; the parts' places
+ * are in `old`):
+ * - an empty line empties every part;
+ * - one change (what lies between the common start and the common end) inside one part goes to
+ *   that part, text typed where two parts meet to the first; a change of nothing but the space
+ *   between two parts changes nothing (MuPDF puts that space in the gap), and text typed there
+ *   goes to the part before it;
+ * - otherwise, with two parts (a label and what was written after it), the new text is cut where
+ *   the space between them still is (anywhere, when they touch), each side as close as possible
+ *   to the part it replaces, when together they keep at least half of the old text (splitAtGap);
+ * - otherwise the parts the change runs across become the first of them: it gets the new text,
+ *   the others lose what the change took of them (a line typed again from scratch is one line).
+ */
+export function splitLine(old: string, next: string, parts: readonly { start: number; end: number; text: string }[]): string[] {
+  const texts = parts.map((p) => p.text);
+  if (!next) return texts.map(() => "");
+  let a = 0;
+  while (a < old.length && a < next.length && old[a] === next[a]) a++;
+  let s = 0;
+  while (s < old.length - a && s < next.length - a && old[old.length - 1 - s] === next[next.length - 1 - s]) s++;
+  const b = old.length - s, typed = next.slice(a, next.length - s);
+  const inside = parts.findIndex((p) => p.start <= a && b <= p.end);
+  if (inside >= 0) {
+    const p = parts[inside];
+    texts[inside] = p.text.slice(0, a - p.start) + typed + p.text.slice(b - p.start);
+    return texts;
+  }
+  const touched = parts.flatMap((p, k) => (p.start < b && a < p.end ? [k] : []));
+  if (!touched.length) {
+    if (!typed.trim()) return texts;
+    const k = Math.max(0, parts.findLastIndex((p) => p.end <= a));
+    texts[k] += old.slice(parts[k].end, a) + typed;
+    return texts;
+  }
+  if (parts.length === 2) {
+    const split = splitAtGap(old, next, parts);
+    if (split) return split;
+  }
+  const first = parts[touched[0]], last = parts[touched[touched.length - 1]];
+  for (const k of touched) texts[k] = "";
+  texts[touched[0]] = first.text.slice(0, Math.max(0, a - first.start)) + typed + last.text.slice(Math.max(0, b - last.start));
+  return texts;
+}
+
+/** Longest new line splitAtGap looks for a cut in (it takes time with the square of the length). */
+const MAX_SPLIT_CHARS = 2000;
+
+/**
+ * `next` cut in two for two parts that a change runs across (splitLine): around a run of
+ * whitespace when the parts had a space between them, anywhere when they touched; the cut whose
+ * sides are closest to the parts' old texts (edit distance), when together they are at most half
+ * of the old texts' length away. Null when there is no such cut.
+ */
+function splitAtGap(old: string, next: string, [p, q]: readonly { start: number; end: number; text: string }[]): string[] | null {
+  if (next.length > MAX_SPLIT_CHARS) return null;
+  const cuts: [number, number][] = [];
+  if (old.slice(p.end, q.start)) for (const m of next.matchAll(/\s+/g)) cuts.push([m.index, m.index + m[0].length]);
+  else for (let x = 1; x < next.length; x++) cuts.push([x, x]);
+  const reverse = (t: string) => t.split("").reverse().join("");
+  const head = prefixDistances(p.text, next), tail = prefixDistances(reverse(q.text), reverse(next));
+  let best: [number, number] | null = null, cost = Infinity;
+  for (const [i, j] of cuts) {
+    const c = head[i] + tail[next.length - j];
+    if (c < cost) [best, cost] = [[i, j], c];
+  }
+  return best && 2 * cost <= p.text.length + q.text.length ? [next.slice(0, best[0]), next.slice(best[1])] : null;
+}
+
+/** The edit distance (Levenshtein, in UTF-16 units) between `a` and each start of `b`: out[x] for b.slice(0, x). */
+function prefixDistances(a: string, b: string): number[] {
+  let row = Array.from({ length: a.length + 1 }, (_, k) => k);
+  const out = [a.length];
+  for (let x = 1; x <= b.length; x++) {
+    const next = [x];
+    for (let k = 1; k <= a.length; k++) next[k] = Math.min(row[k] + 1, next[k - 1] + 1, row[k - 1] + (b[x - 1] === a[k - 1] ? 0 : 1));
+    row = next;
+    out.push(row[a.length]);
+  }
+  return out;
+}
+
+/** Page `pageIndex`'s /XObject dictionary (inherited, shared or its own), or null. */
+function xobjectsOf(doc: MuPDF.PDFDocument, pageIndex: number): MuPDF.PDFObject | null {
+  const res = doc.findPage(pageIndex).getInheritable("Resources");
+  const xobjects = res.isDictionary() ? res.get("XObject") : null;
+  return xobjects?.isDictionary() ? xobjects : null;
+}
+
+function namesOf(dict: MuPDF.PDFObject | null): Set<string> {
+  const names = new Set<string>();
+  dict?.forEach((_v, k) => names.add(String(k)));
+  return names;
+}
+
+const isImage = (o: MuPDF.PDFObject) => o.isStream() && o.get("Subtype").isName() && o.get("Subtype").asName() === "Image";
+
+/** An image's /OC as EmbeddedPicture.layer has it: 0 for none, the object number of an indirect one, -1 for a direct one. */
+function layerOf(o: MuPDF.PDFObject): number {
+  const oc = o.get("OC");
+  return oc.isNull() ? 0 : oc.isIndirect() ? oc.asIndirect() : -1;
+}
+
+const sameSize = (a: MuPDF.PDFObject, b: MuPDF.PDFObject) =>
+  ["Width", "Height"].every((k) => a.get(k).isNumber() && b.get(k).isNumber() && a.get(k).asNumber() === b.get(k).asNumber());
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 const imageInfo = (p: Placement): ImageInfo => ({
@@ -1008,7 +1864,17 @@ const imageInfo = (p: Placement): ImageInfo => ({
   pixelHeight: p.pixelHeight,
   movable: p.movable,
   reason: p.reason,
+  added: p.added,
 });
+
+/** The document's form (DocInfo.form): a form whose objects cannot be read counts as none, so the file still opens. */
+function readForm(mupdf: MuPDFModule, doc: MuPDF.PDFDocument): FormInfo | null {
+  try {
+    return formInfo(mupdf, doc);
+  } catch {
+    return null;
+  }
+}
 
 /** The page's placements (images.findPlacements), a failure of MuPDF while reading them reported as "edit-failed". */
 function placementsOf(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePlacements {
@@ -1036,9 +1902,10 @@ function applyImageEdit(mupdf: MuPDFModule, doc: MuPDF.PDFDocument, page: MuPDF.
       deletePlacement(mupdf, doc, page, found, p);
       break;
     case "replace": {
-      const image = openImage(mupdf, edit.bytes);
+      const { bytes, orientation } = edit.picture;
+      const image = openImage(mupdf, bytes);
       try {
-        replacePlacement(mupdf, doc, page, found, p, image, edit.bytes);
+        replacePlacement(mupdf, doc, page, found, p, image, bytes, orientation);
       } finally {
         image.destroy();
       }
@@ -1052,6 +1919,44 @@ function matrixFrom(matrix: unknown): Matrix {
   if (!Array.isArray(matrix) || matrix.length !== 6 || !matrix.every((v) => typeof v === "number" && Number.isFinite(v)))
     throw new SessionError("An image matrix is six finite numbers", "bad-request");
   return [...matrix] as Matrix;
+}
+
+/** What checkTarget compares a new picture's sides with: none yet, so each must be within MIN_IMAGE_SIDE..MAX_IMAGE_SIDE. */
+const UNIT_SQUARE: Matrix = [MIN_IMAGE_SIDE, 0, 0, MIN_IMAGE_SIDE, 0, 0];
+
+/**
+ * A text style from the main thread, checked as untrusted ("bad-request" otherwise): a size
+ * within MIN_TEXT_SIZE..MAX_TEXT_SIZE, an sRGB colour of three numbers within 0..1, a family
+ * the app has, bold and italic as booleans.
+ */
+function styleFrom(s: unknown): TextStyle {
+  const o = (s && typeof s === "object" ? s : {}) as Partial<Record<keyof TextStyle, unknown>>;
+  const { size, color, family, bold, italic } = o;
+  if (typeof size !== "number" || !(size >= MIN_TEXT_SIZE && size <= MAX_TEXT_SIZE))
+    throw new SessionError(`A text size is ${MIN_TEXT_SIZE} to ${MAX_TEXT_SIZE} points`, "bad-request");
+  if (!Array.isArray(color) || color.length !== 3 || !color.every((v) => typeof v === "number" && v >= 0 && v <= 1))
+    throw new SessionError("A text colour is three numbers from 0 to 1", "bad-request");
+  if (family !== "sans" && family !== "serif" && family !== "mono") throw new SessionError("Unknown font family", "bad-request");
+  if (typeof bold !== "boolean" || typeof italic !== "boolean") throw new SessionError("Bold and italic are true or false", "bad-request");
+  return { size, color: [color[0], color[1], color[2]], family, bold, italic };
+}
+
+/** The same style, as an added line reads back (its size and colour to 0.001). */
+function sameStyle(a: TextStyle, b: TextStyle): boolean {
+  return a.family === b.family && a.bold === b.bold && a.italic === b.italic && Math.abs(a.size - b.size) < 0.001 &&
+    a.color.every((v, k) => Math.abs(v - b.color[k]) < 0.001);
+}
+
+/**
+ * A picture's description from the main thread, checked as untrusted: null, or a string of at
+ * most MAX_ALT_CHARS characters ("bad-request" otherwise), its control characters made spaces
+ * (U+0000 would cut it short in MuPDF); blank is null.
+ */
+function altFrom(alt: unknown): string | null {
+  if (alt === null) return null;
+  if (typeof alt !== "string" || [...alt].length > MAX_ALT_CHARS)
+    throw new SessionError(`A description is at most ${MAX_ALT_CHARS} characters`, "bad-request");
+  return alt.replace(UNDRAWN, " ").replace(/\s+/g, " ").trim() || null;
 }
 
 /**

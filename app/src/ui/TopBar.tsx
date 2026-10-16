@@ -2,8 +2,8 @@
 // - no document (desktop and phone): the brand, then "Update available" and the language switch;
 // - desktop with a document: brand, file chip (name and "Edited"), Undo/Redo, zoom, Open,
 //   Share, Download PDF (a split button: the one-tap download, and a chevron that opens the
-//   download options), Update and a "More" menu (language, what the bar has no room for, source
-//   code, close document);
+//   download options), Update and a "More" menu (language, what the bar has no room for, the
+//   signatures saved on this device when there are any, source code, close document);
 // - phone with a document: Back (closes it), the file name over "Page n of m · Edited",
 //   Undo, Redo and Download. Zoom, share, the download options, language, update and open live
 //   in the phone "More" sheet (PhoneSheets), editing in the tab bar.
@@ -22,15 +22,18 @@ import { computed } from "@preact/signals";
 import { LOCALE_NAMES, otherLocale, t, toggleLocale } from "../i18n";
 import { SOURCE_URL } from "../links";
 import { updateInstalled, updateReady } from "../platform/pwa";
-import { busy, currentPage, dirty, doc, downloadRunning, editingStopped, fitMode, history, zoom } from "../state";
+import {
+  busy, currentPage, dirty, doc, downloadRunning, editingStopped, fitMode, history, savedSignatures, zoom,
+} from "../state";
 import { MAX_ZOOM, MIN_ZOOM } from "../viewer/layout";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
 import { closeDocument, download, openDownloadOptions, redo, share, undo, updateApp } from "./actions";
 import { ToolButton } from "./Button";
 import { openFilePicker } from "./filePicker";
+import { openSavedSignatures, savedKind } from "./fill/FillBar";
 import {
   IconBack, IconChevronDown, IconClose, IconCode, IconDownload, IconFitWidth, IconGlobe, IconMore, IconOpen,
-  IconRedo, IconShare, IconUndo, IconUpdate, IconZoomIn, IconZoomOut,
+  IconRedo, IconShare, IconSignature, IconUndo, IconUpdate, IconZoomIn, IconZoomOut,
 } from "./icons";
 import { Logo } from "./Logo";
 import { canSharePdf, hasZoomRoom, isCoarse, isNarrow, isRoomy, isWide, shortcuts } from "./media";
@@ -217,6 +220,13 @@ export function TopBar() {
   }
   if (!extrasShown && update) {
     items.push({ key: "update", label: t("toolbar.update"), icon: <IconUpdate />, onSelect: () => void updateApp() });
+  }
+  const saved = savedSignatures.value;
+  if (saved.length) {
+    items.push({
+      key: "signatures", label: t("more.savedSignatures", { count: saved.length }), icon: <IconSignature />,
+      onSelect: () => void openSavedSignatures(savedKind(saved)),
+    });
   }
   items.push(
     {

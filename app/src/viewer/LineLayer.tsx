@@ -5,7 +5,9 @@
 // the field writes it, Escape or Cancel cancels, and a download, share, open, close, update or
 // leaving edit mode writes it first (registerEditor). Vertical lines use the same horizontal
 // editor, placed at their box.
-// Lines the engine cannot rewrite (LineInfo.editable false) get a dashed box and no editor.
+// Lines the engine cannot rewrite (LineInfo.editable false) get a dashed box and no editor. Lines
+// the user wrote in Compila e firma (LineInfo.added) get a dotted underline instead of the solid
+// one, as the fill layer marks them; they are edited the same way.
 //
 // The context bar belongs to the editor: pressing it never takes the focus from the field (a
 // blur would write the line before Cancel could run), and tabbing from the field into the bar
@@ -407,7 +409,7 @@ export function LineLayer({ page, zoom }: { page: PageModel; zoom: number }) {
           <button
             type="button"
             key={line.index}
-            class={locked ? "line is-locked" : "line"}
+            class={locked ? "line is-locked" : line.added ? "line is-added" : "line"}
             data-line={line.index}
             style={{ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }}
             aria-label={t(locked ? "edit.lockedLabel" : "edit.lineLabel", { text: line.text })}

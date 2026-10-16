@@ -1,25 +1,32 @@
 // Desktop details panel (right, from 1200 px). It follows what the user is doing:
 // - browsing: facts about the document (file, pages, size of the current page, PDF/A format,
-//   protection, digital signature, edits and whether they were downloaded), how to start
-//   editing, and the privacy note;
+//   protection, digital signature, form fields, edits and whether they were downloaded), how to
+//   start editing or filling in, and the privacy note;
 // - edit mode, no line open: the three steps, the legend of the line and image marks, the
 //   shortcuts;
 // - edit mode with a line open: that line's text, font, size, style and colour, the shortcuts;
 // - edit mode with an image selected: its size, pixels and resolution, rotation, how to move it
-//   (with a mouse, or by touch: large tablets have the panel too), and the image's own shortcuts.
-// Read-only: it shows state and offers one action (enter edit mode), nothing else.
+//   (with a mouse, or by touch: large tablets have the panel too), and the image's own shortcuts;
+// - Fill mode, nothing open: its steps, the legend of the field and text marks, the shortcuts;
+//   with a writer open: its size and colour; with a picture it added selected: as in edit mode;
+// - a form field with the focus (in Fill mode or browsing, D2): its label, type, whether it is
+//   required, its maximum length.
+// Read-only: it shows state and offers two actions (Edit, Fill & sign), nothing else.
 import type { ComponentChildren } from "preact";
-import { useRef } from "preact/hooks";
-import type { DocInfo, ImageInfo, LineInfo } from "../engine/protocol";
+import { useEffect, useRef, useState } from "preact/hooks";
+import type { DocInfo, FieldWidget, ImageInfo, LineInfo } from "../engine/protocol";
 import { formatFontSize, formatMm, t } from "../i18n";
 import {
-  currentPage, dirty, editingLine, editingStopped, editMode, history, selectedImage, type SelectedImage,
+  currentPage, dirty, editingLine, editingStopped, focusedField, history, INK, openWriter, pendingPlacement,
+  selectedImage, tool, type InkColor, type OpenWriter, type SelectedImage,
 } from "../state";
 import { fontDisplayName, isSubsetFont } from "../viewer/fontName";
 import { ppi, rotationDeg, sides } from "../viewer/imageGeometry";
 import type { OpenDoc } from "../viewer/model";
-import { lockReasonText, setEditMode } from "./actions";
-import { IconCheck, IconEditText, IconShield } from "./icons";
+import { lockReasonText, setTool } from "./actions";
+import { fillableFields, formCountText } from "./fill/FillBar";
+import { viewerScroller } from "./focus";
+import { IconCheck, IconEditText, IconShield, IconSign } from "./icons";
 import { isCoarse, isMac, shortcuts } from "./media";
 import { pageSize } from "./pageSize";
 
@@ -79,6 +86,7 @@ function DocumentInfo({ doc }: { doc: OpenDoc }) {
   const edited = dirty.value;
   const stopped = editingStopped.value;
   const protection = protectionText(info);
+  const fields = fillableFields(doc);
 
   return (
     <>
@@ -102,6 +110,11 @@ function DocumentInfo({ doc }: { doc: OpenDoc }) {
           {info.pdfa && <Row label={t("details.format")}>{pdfaLabel(info.pdfa)}</Row>}
           {protection && <Row label={t("details.protected")}>{protection}</Row>}
           {info.signatures > 0 && <Row label={t("details.signature")}>{t("details.signatureValue")}</Row>}
+          {fields && (
+            <Row label={t("details.form")}>
+              <span class="dp-num">{formCountText(fields.fields, fields.required)}</span>
+            </Row>
+          )}
           {/* Undoing every edit after a download leaves no edits, but a file on disk that still
               has them: that is "not downloaded", as the top bar's "Edited" says. */}
           <Row label={t("details.edits")}>
@@ -132,9 +145,14 @@ function DocumentInfo({ doc }: { doc: OpenDoc }) {
         ) : (
           <div class="dp-callout">
             <p>{t("details.howTo")}</p>
-            <button type="button" class="btn btn-secondary" onClick={() => void setEditMode(true)}>
+            <button type="button" class="btn btn-secondary" onClick={() => void setTool("edit")}>
               <IconEditText />
               <span>{t("tools.editText")}</span>
+            </button>
+            <p>{t("details.howToFill")}</p>
+            <button type="button" class="btn btn-secondary" onClick={() => void setTool("fill")}>
+              <IconSign />
+              <span>{t("tools.fill")}</span>
             </button>
           </div>
         )}
@@ -177,6 +195,133 @@ function EditSteps() {
           {t("details.legendImageLocked")}
         </li>
       </ul>
+    </Section>
+  );
+}
+
+/** Fill mode, nothing open: the steps, and the marks of the fields and of the text the user wrote. */
+function FillSteps() {
+  const steps = [t("details.fillStep1"), t("details.fillStep2"), t("details.step3")];
+  return (
+    <Section title={t("details.fillTitle")}>
+      <ol class="dp-steps" role="list">
+        {steps.map((text, i) => (
+          <li key={i} class="dp-step">
+            <span class="dp-step-num" aria-hidden="true">{i + 1}</span>
+            <span>{text}</span>
+          </li>
+        ))}
+      </ol>
+      <ul class="dp-legend" role="list">
+        <li>
+          <span class="dp-swatch is-field" aria-hidden="true" />
+          {t("details.legendField")}
+        </li>
+        <li>
+          <span class="dp-swatch is-field is-required" aria-hidden="true" />
+          {t("details.legendRequired")}
+        </li>
+        <li>
+          <span class="dp-swatch is-added" aria-hidden="true" />
+          {t("details.legendAdded")}
+        </li>
+      </ul>
+    </Section>
+  );
+}
+
+/** A field's kind in words: a text field says whether it has several lines or one box per character. */
+export function fieldTypeText(field: FieldWidget): string {
+  if (field.type === "text" && field.comb) return t("details.fieldType.comb");
+  if (field.type === "text" && field.multiline) return t("details.fieldType.multiline");
+  return t(`details.fieldType.${field.type}`);
+}
+
+/** A text field's length in words: "Up to 1 character", "Up to 16 characters", "No limit". */
+export function fieldLengthText(maxLen: number): string {
+  if (maxLen <= 0) return t("details.fieldNoLimit");
+  return maxLen === 1 ? t("form.maxLenOne") : t("form.maxLen", { count: maxLen });
+}
+
+/** The focused field: its label (or its name made readable), type, whether required, maximum length. */
+function FieldInfoSection({ field }: { field: FieldWidget }) {
+  const label = field.label.trim() || field.name.replace(/[_-]+/g, " ").trim();
+  return (
+    <Section title={t("details.field")}>
+      {label && <p class="dp-quote" dir="auto">{label}</p>}
+      <dl class="dp-list">
+        <Row label={t("details.fieldType")}>{fieldTypeText(field)}</Row>
+        <Row label={t("details.fieldRequired")}>{field.required ? t("details.yes") : t("details.no")}</Row>
+        {field.type === "text" && (
+          <Row label={t("details.fieldLength")}>
+            <span class="dp-num">{fieldLengthText(field.maxLen)}</span>
+          </Row>
+        )}
+      </dl>
+      {field.locked && <p class="dp-note">{t("form.readOnly")}</p>}
+      {field.scripted && !field.locked && <p class="dp-note">{t("form.calculations")}</p>}
+    </Section>
+  );
+}
+
+/** What the open writer writes with now: its size as its bar says it ("16 pt"), and its ink. */
+interface WriterLook {
+  size: string;
+  color: InkColor;
+}
+
+/**
+ * The open writer's look, read from its bar (FillLayer's TextWriter; one writer at a time): A−,
+ * A+ and the ink buttons change the size and the ink inside the writer until it writes, while
+ * `openWriter` keeps what it opened with. Before the bar is there, what it opened with.
+ */
+function lookOf(writer: OpenWriter): WriterLook {
+  const bar = document.querySelector<HTMLElement>(".fill-layer .writer-bar");
+  const size = bar?.querySelector(".writer-size")?.textContent?.trim();
+  const ink = bar?.querySelector('.writer-ink[aria-pressed="true"]');
+  const color: InkColor = ink ? (ink.getAttribute("aria-label") === t("writer.blue") ? "blue" : "black") : writer.color;
+  return { size: size || t("writer.size", { size: formatFontSize(writer.size) }), color };
+}
+
+/** The open writer's size and ink as its bar shows them, followed as they change. */
+function useWriterLook(writer: OpenWriter): WriterLook {
+  const [look, setLook] = useState(() => lookOf(writer));
+  useEffect(() => {
+    const update = () => {
+      const next = lookOf(writer);
+      setLook((prev) => (prev.size === next.size && prev.color === next.color ? prev : next));
+    };
+    update();
+    const root = viewerScroller();
+    if (!root) return;
+    const watch = new MutationObserver(update);
+    watch.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["aria-pressed"] });
+    return () => watch.disconnect();
+  }, [writer]);
+  return look;
+}
+
+/**
+ * The open writer: the size and the ink it writes with, as A−/A+ and the ink buttons set them.
+ * The size is said when it changes (a polite live region): A−/A+ keep their names.
+ */
+function WriterInfoSection({ writer }: { writer: OpenWriter }) {
+  const look = useWriterLook(writer);
+  const color = hexColor(INK[look.color]);
+  return (
+    <Section title={t("details.writer")}>
+      <dl class="dp-list">
+        <Row label={t("details.size")}>
+          <span class="dp-num" aria-live="polite">{look.size}</span>
+        </Row>
+        <Row label={t("details.color")}>
+          <span class="dp-color">
+            {/* The ink's own colour, as written on the page (not a theme colour). */}
+            <span class="dp-color-swatch" style={{ background: color }} aria-hidden="true" />
+            <span>{look.color === "blue" ? t("writer.blue") : t("writer.black")}</span>
+          </span>
+        </Row>
+      </dl>
     </Section>
   );
 }
@@ -275,6 +420,43 @@ function useSelectedImage(doc: OpenDoc, sel: SelectedImage | null): ImageInfo | 
   return kept && kept.doc === doc && kept.pageIndex === sel.pageIndex && kept.image.index === sel.index ? kept.image : null;
 }
 
+/**
+ * The focused form field as its page's current field list has it. While that list is read again
+ * after an edit, the last one known for the same field, so the section does not blink away.
+ */
+function useFocusedField(doc: OpenDoc, focus: { pageIndex: number; name: string; index: number } | null): FieldWidget | null {
+  const last = useRef<{ doc: OpenDoc; pageIndex: number; field: FieldWidget } | null>(null);
+  const page = focus ? doc.pages[focus.pageIndex] : undefined;
+  if (!focus || !page) {
+    last.current = null;
+    return null;
+  }
+  const cached = page.fields.value;
+  if (cached && cached.rev === page.rev.value) {
+    const field = cached.fields.find((w) => w.index === focus.index && w.name === focus.name) ?? null;
+    last.current = field && { doc, pageIndex: focus.pageIndex, field };
+    return field;
+  }
+  const kept = last.current;
+  return kept && kept.doc === doc && kept.pageIndex === focus.pageIndex && kept.field.name === focus.name ? kept.field : null;
+}
+
+/**
+ * Fill mode's keys: Enter writes (or applies), Shift+Enter writes and starts the line below, Esc
+ * cancels the writer, or the signature waiting to be placed, or leaves Fill mode; Tab goes to the
+ * next field, except in the writer, where it goes to the writer's own bar.
+ */
+export function fillShortcuts(state: "writer" | "pending" | "idle"): [key: string, action: string][] {
+  const esc = state === "writer" ? t("shortcut.cancelWriter") : state === "pending" ? t("common.cancel") : t("shortcut.exitFill");
+  const keys: [key: string, action: string][] = [
+    [t("key.enter"), t("shortcut.write")],
+    [`Shift + ${t("key.enter")}`, t("writer.newLine")],
+    [t("key.esc"), esc],
+  ];
+  if (state !== "writer") keys.push([t("key.tab"), t("shortcut.nextField")]);
+  return keys;
+}
+
 /** The keys of the selected image's frame (ImageLayer). Alt is Option (⌥) on a Mac keyboard. */
 export function imageShortcuts(): [key: string, action: string][] {
   return [
@@ -288,17 +470,30 @@ export function imageShortcuts(): [key: string, action: string][] {
   ];
 }
 
+type ShortcutFocus = "edit" | "line" | "image" | "fill" | "writer" | "pending" | "field";
+
+function shortcutRows(focus: ShortcutFocus): [key: string, action: string][] {
+  switch (focus) {
+    case "image": return imageShortcuts();
+    case "fill": return fillShortcuts("idle");
+    case "writer": return fillShortcuts("writer");
+    case "pending": return fillShortcuts("pending");
+    case "field": return [[t("key.tab"), t("shortcut.nextField")], [`Shift + ${t("key.tab")}`, t("shortcut.prevField")]];
+    case "edit":
+    case "line":
+      return [
+        [t("key.enter"), t("shortcut.apply")],
+        [t("key.esc"), focus === "line" ? t("shortcut.cancel") : t("shortcut.exitEdit")],
+      ];
+  }
+}
+
 /**
  * The keys of what is going on: Enter/Esc for the line editor (Esc leaves edit mode when no line
- * is open), or the selected image's keys; then history and save.
+ * is open), the selected image's keys, Fill mode's keys or a field's; then history and save.
  */
-function Shortcuts({ focus }: { focus: "edit" | "line" | "image" }) {
-  const rows: [key: string, action: string][] = focus === "image"
-    ? imageShortcuts()
-    : [
-      [t("key.enter"), t("shortcut.apply")],
-      [t("key.esc"), focus === "line" ? t("shortcut.cancel") : t("shortcut.exitEdit")],
-    ];
+function Shortcuts({ focus }: { focus: ShortcutFocus }) {
+  const rows = shortcutRows(focus);
   rows.push(
     [shortcuts.undo, t("shortcut.undo")],
     [shortcuts.redo, t("shortcut.redo")],
@@ -318,21 +513,57 @@ function Shortcuts({ focus }: { focus: "edit" | "line" | "image" }) {
   );
 }
 
+/** Fill mode: the writer, else the focused field, else the selected picture, else the steps. */
+function FillDetails({ doc, image, selected }: { doc: OpenDoc; image: ImageInfo | null; selected: boolean }) {
+  const writer = openWriter.value;
+  const field = useFocusedField(doc, writer ? null : focusedField.value);
+  const pending = pendingPlacement.value !== null;
+  const focus: ShortcutFocus = writer ? "writer" : field ? "field" : selected ? "image" : pending ? "pending" : "fill";
+  return (
+    <>
+      {writer
+        ? <WriterInfoSection writer={writer} />
+        : field
+        ? <FieldInfoSection field={field} />
+        : image
+        ? <ImageInfoSection image={image} />
+        : <FillSteps />}
+      <Shortcuts focus={focus} />
+    </>
+  );
+}
+
+/** Browsing: the document's facts, or the focused field's (its fields work without a tool, D2). */
+function BrowseDetails({ doc }: { doc: OpenDoc }) {
+  const field = useFocusedField(doc, focusedField.value);
+  if (!field) return <DocumentInfo doc={doc} />;
+  return (
+    <>
+      <FieldInfoSection field={field} />
+      <Shortcuts focus="field" />
+    </>
+  );
+}
+
 export function DetailsPanel({ doc }: { doc: OpenDoc }) {
-  const editing = editMode.value;
+  const current = tool.value;
+  const editing = current === "edit";
   const line = editing ? editingLine.value?.line ?? null : null;
-  const selected = editing && !line ? selectedImage.value : null;
+  // Fill mode selects only the pictures it added (signatures, photos), with the same frame.
+  const selected = (editing && !line) || current === "fill" ? selectedImage.value : null;
   const image = useSelectedImage(doc, selected);
 
   return (
     <aside class="details-panel" id="details-panel" aria-label={t("details.label")}>
-      {!editing ? (
-        <DocumentInfo doc={doc} />
-      ) : (
+      {editing ? (
         <>
           {line ? <LineInfoSection line={line} /> : image ? <ImageInfoSection image={image} /> : <EditSteps />}
           <Shortcuts focus={line ? "line" : selected ? "image" : "edit"} />
         </>
+      ) : current === "fill" ? (
+        <FillDetails doc={doc} image={image} selected={selected !== null} />
+      ) : (
+        <BrowseDetails doc={doc} />
       )}
     </aside>
   );

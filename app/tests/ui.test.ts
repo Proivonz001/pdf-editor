@@ -3,8 +3,13 @@
 // scale caps, engine error codes, edited-page marks, closing a document, leaving edit mode, the
 // service-worker update flow, and the downloads of phase 3 (one tap keeping PDF/A and passwords,
 // the PDF/A check and questions, the download options' rules and messages, the PDF/A texts, the
-// details panel's protection row), and the images of release 2 (selection, edits, replacement,
-// Escape, the details panel's image facts).
+// details panel's protection row), the images of release 2 (selection, edits, replacement,
+// Escape, the details panel's image facts), and the fill and sign of release 3 (the tools, the
+// text writer, marks and dates, form fields, the empty required fields at download, signatures,
+// initials on every page, pictures, saved signatures, Escape and undo), and the fixes after its
+// review (a picture landing while the writer is open, a text reopened while a change is on its
+// way, new texts kept on the page, what keeping or forgetting a signature really did, failed
+// placements, "Put it in the middle", "Next empty field", the focus asked for, Enter on the page).
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
@@ -21,11 +26,17 @@ vi.mock("../src/engine/client.ts", () => {
     open(bytes: ArrayBuffer, password?: string) { return e().open(bytes, password); }
     lines() { return Promise.resolve([]); }
     replaceLine(p: number, l: number, text: string) { return e().replaceLine(p, l, text); }
-    images() { return Promise.resolve([]); }
+    images(p: number) { return e().images(p); }
     transformImage(p: number, i: number, matrix: number[]) { return e().transformImage(p, i, matrix); }
     deleteImage(p: number, i: number) { return e().deleteImage(p, i); }
     replaceImage(p: number, i: number, bytes: ArrayBuffer) { return e().replaceImage(p, i, bytes); }
     renderImage() { return Promise.reject(new Error("no bitmaps in Node")); }
+    fields(p: number) { return e().fields(p); }
+    setField(name: string, value: unknown) { return e().setField(name, value); }
+    addText(p: number, origin: number[], text: string, style: unknown) { return e().addText(p, origin, text, style); }
+    addedTexts(p: number) { return e().addedTexts(p); }
+    editAddedText(p: number, id: number, patch: unknown) { return e().editAddedText(p, id, patch); }
+    addImage(bytes: ArrayBuffer, targets: unknown[], alt: string | null) { return e().addImage(bytes, targets, alt); }
     undo() { return e().undo(); }
     redo() { return e().redo(); }
     save(options: unknown) { return e().save(options); }
@@ -49,6 +60,30 @@ vi.mock("../src/ui/imageFile.ts", () => {
     fitWithin: () => ({ width: 1, height: 1 }),
     hasTransparency: () => false,
     preparePicture: (file: File) => (globalThis as any).__prepare(file),
+  };
+});
+
+// The signatures kept on the device: IndexedDB is not in Node, so a store in memory, which a test
+// can make refuse (`__storeRefuses`, as a private window or a storage that stops answering would),
+// and which keeps at most 5, as the real one.
+vi.mock("../src/ui/fill/signatureStore.ts", () => {
+  const g = globalThis as any;
+  const stored = new Map<string, any>();
+  g.__stored = stored;
+  return {
+    MAX_SAVED: 5,
+    available: async () => !g.__storeRefuses,
+    list: async () => (g.__storeRefuses ? [] : [...stored.values()]),
+    save: async (sig: any) => {
+      if (g.__storeRefuses || (stored.size >= 5 && !stored.has(sig.id))) return null;
+      stored.set(sig.id, sig);
+      return sig;
+    },
+    forget: async (id: string) => {
+      if (g.__storeRefuses) return false;
+      stored.delete(id);
+      return true;
+    },
   };
 });
 
@@ -94,7 +129,38 @@ const engineImpl: any = {
   },
   pdfaCheck: async () => { calls.push("pdfaCheck"); return pdfaReport; },
   close: async () => { calls.push("close"); return null; },
+  images: async () => [],
+  fields: async () => [],
+  setField: async (name: string, value: unknown) => {
+    calls.push(`setField:${name}`);
+    sent.push(value);
+    return { editCount: 1, canUndo: true, canRedo: false, changedPages: [0], name, missingChars: [], overflow: false };
+  },
+  addText: async (p: number, origin: number[], text: string, style: unknown) => {
+    calls.push(`addText:${p}:${text}`);
+    sent.push({ origin, text, style });
+    return { editCount: 1, canUndo: true, canRedo: false, changedPages: [p], pageIndex: p, id: 100 + sent.length, missingChars: [] };
+  },
+  addedTexts: async () => [],
+  editAddedText: async (p: number, id: number, patch: { text?: string }) => {
+    calls.push(`editAddedText:${id}`);
+    sent.push(patch);
+    return {
+      editCount: 1, canUndo: true, canRedo: false, changedPages: [p], pageIndex: p,
+      id: patch.text === "" ? null : id, missingChars: [],
+    };
+  },
+  addImage: async (bytes: ArrayBuffer, targets: { pageIndex: number }[], alt: string | null) => {
+    calls.push(`addImage:${targets.map((x) => x.pageIndex).join(",")}`);
+    sent.push({ bytes, targets, alt });
+    return {
+      editCount: 1, canUndo: true, canRedo: false, changedPages: [...new Set(targets.map((x) => x.pageIndex))],
+      placed: targets.map((x) => ({ pageIndex: x.pageIndex, imageIndex: 5 })),
+    };
+  },
 };
+/** What the fill-and-sign calls of the fake engine received (values, texts, patches, pictures), in order. */
+const sent: any[] = [];
 (globalThis as any).__engine = engineImpl;
 
 function fakeFile(name: string, content: string, ready: Promise<void> = Promise.resolve()): File {
@@ -271,7 +337,7 @@ describe("U8 engine error codes", () => {
     expect(state.editingStopped.value).toBe(false);
 
     engineImpl.replaceLine = async () => { throw new EngineError("lost", "broken"); };
-    state.editMode.value = true;
+    state.tool.value = "edit";
     await actions.replaceLine(page, LINE, "x", page.rev.peek());
     expect(state.editingStopped.value).toBe(true);
     expect(state.editMode.value).toBe(false);
@@ -321,7 +387,7 @@ describe("U10 closing a document", () => {
   it("asks when edits are not downloaded, then resets everything and frees the engine", async () => {
     await actions.openFile(fakeFile("G.pdf", "G"), { confirmed: true });
     state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
-    state.editMode.value = true;
+    state.tool.value = "edit";
     state.sheet.value = "more";
 
     let p = actions.closeDocument();
@@ -1728,6 +1794,1361 @@ describe("U27 image texts", () => {
     const names = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
     for (const key of Object.keys(en) as (keyof typeof en)[]) {
       expect({ key, names: names(italian[key]) }).toEqual({ key, names: names(en[key]) });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3, release 3: fill and sign
+
+const A4 = [0, 0, 595.28, 841.89] as [number, number, number, number];
+/** Points per millimetre. */
+const MMPT = 72 / 25.4;
+
+/** Open a document (one page unless `info` says otherwise) in Compila e firma; returns its first page. */
+async function filling(name: string, info: Record<string, unknown> = {}) {
+  await openWith(name, info);
+  await actions.setTool("fill");
+  state.toasts.value = [];
+  sent.length = 0;
+  return state.doc.value!.pages[0];
+}
+
+/** What the writer registers while `w` is open with `typed` in it (FillLayer): flushEditor writes it. */
+function typing(w: any, typed: string) {
+  const unregister = state.registerEditor({
+    changed: () => typed.trim() !== w.text.trim(),
+    commit: async () => {
+      unregister();
+      await actions.commitWriter(w, typed, w.origin, w.size, w.color);
+    },
+  });
+  return unregister;
+}
+
+const png = () => new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
+const SIG = (extra: Record<string, unknown> = {}) => ({
+  id: "sig-1", kind: "signature", png: png(), width: 300, height: 100, description: "Signature: Mario Rossi",
+  source: "type", savedAt: null, ...extra,
+}) as any;
+const INITIALS = () => SIG({ id: "ini-1", kind: "initials", width: 200, height: 100, description: "Initials: MR" });
+
+/** A form field widget of page 0 as the engine lists it: an empty text field unless `extra` says otherwise. */
+const FIELD = (name: string, extra: Record<string, unknown> = {}) => ({
+  name, index: 0, type: "text", rect: [10, 10, 90, 30], rotation: 0, label: name, value: "", multiline: false,
+  comb: false, maxLen: 0, multiSelect: false, editable: false, required: false, scripted: false, format: null,
+  fontSize: 0, color: [0, 0, 0], align: 0, locked: null, ...extra,
+}) as any;
+/** DocInfo.form with `perPage` widgets on each page, `required` of them required. */
+const FORM = (perPage: number[], required: number) => ({
+  form: { fieldsPerPage: perPage, fields: perPage.reduce((a, b) => a + b, 0), required, xfa: "none", scripts: false },
+});
+
+/** Wait for the dialog `kind`, take it away and return it (its resolve still to be called). */
+async function takeDialog(kind: string) {
+  await vi.waitFor(() => expect(state.dialog.value?.kind).toBe(kind));
+  const d = state.dialog.value as any;
+  state.dialog.value = null;
+  return d;
+}
+
+/** The keyboard shortcuts installed on a fake window; returns press() and the function that removes them. */
+async function keyboard() {
+  const g = globalThis as any;
+  const saved = { add: g.addEventListener, remove: g.removeEventListener, element: g.HTMLElement };
+  const listeners: Record<string, (e: unknown) => void> = {};
+  g.addEventListener = (type: string, fn: (e: unknown) => void) => { listeners[type] = fn; };
+  g.removeEventListener = () => undefined;
+  g.HTMLElement ??= class {};
+  const { installShortcuts } = await import("../src/ui/shortcuts");
+  const uninstall = installShortcuts();
+  const press = (key: string, mods: Record<string, unknown> = {}) => {
+    const e: any = {
+      key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, target: null, defaultPrevented: false,
+      preventDefault() { e.defaultPrevented = true; }, ...mods,
+    };
+    listeners.keydown(e);
+    return e;
+  };
+  const restore = () => {
+    uninstall();
+    g.addEventListener = saved.add;
+    g.removeEventListener = saved.remove;
+    g.HTMLElement = saved.element;
+  };
+  return { press, restore };
+}
+
+describe("U28 the tools", () => {
+  it("one at a time; editMode follows the tool; none without a document or once editing stopped", async () => {
+    const page = await filling("FA.pdf");
+    expect([state.tool.value, state.fillMode.value, state.editMode.value]).toEqual(["fill", true, false]);
+    await actions.setTool("edit");
+    expect([state.tool.value, state.fillMode.value, state.editMode.value]).toEqual(["edit", false, true]);
+    await actions.setEditMode(false);
+    expect(state.tool.value).toBeNull();
+    await actions.setEditMode(true);
+    expect(state.tool.value).toBe("edit");
+
+    const { EngineError } = await import("../src/engine/client");
+    const replace = engineImpl.replaceLine;
+    engineImpl.replaceLine = async () => { throw new EngineError("lost", "broken"); };
+    await actions.replaceLine(page, LINE, "x", page.rev.peek());
+    engineImpl.replaceLine = replace;
+    expect(state.tool.value).toBeNull();
+    await actions.setTool("fill");
+    expect(state.tool.value).toBeNull();
+    state.showDialog(null);
+
+    await actions.closeDocument();
+    await actions.setTool("fill");
+    expect(state.tool.value).toBeNull();
+  });
+
+  it("the phone tab bar: pressing the lit tool turns it off, pressing the other one switches", async () => {
+    const { toolAfterTap } = await import("../src/ui/TabBar");
+    expect([toolAfterTap(null, "fill"), toolAfterTap("fill", "fill"), toolAfterTap("edit", "fill")]).toEqual(["fill", null, "fill"]);
+    expect([toolAfterTap(null, "edit"), toolAfterTap("edit", "edit"), toolAfterTap("fill", "edit")]).toEqual(["edit", null, "edit"]);
+  });
+
+  it("changing the tool writes the writer first, then closes it, the signature waiting and the focused field", async () => {
+    state.writerStyle.value = { size: 11, color: "black" };
+    const page = await filling("FB.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const w = state.openWriter.value!;
+    expect(w).toEqual({
+      pageIndex: 0, origin: [10, 50], text: "", size: 11, color: "black", kind: "text", editing: null, rev: page.rev.peek(),
+    });
+    const unregister = typing(w, "Mario Rossi");
+    state.pendingPlacement.value = SIG();
+    state.focusedField.value = { pageIndex: 0, name: "nome", index: 0 };
+    await actions.setTool("edit");
+    unregister();
+    expect(calls).toEqual(["addText:0:Mario Rossi"]);
+    expect(sent).toEqual([{
+      origin: [10, 50], text: "Mario Rossi", style: { size: 11, color: [0, 0, 0], family: "sans", bold: false, italic: false },
+    }]);
+    expect([state.openWriter.value, state.pendingPlacement.value, state.focusedField.value]).toEqual([null, null, null]);
+    expect(state.dirty.value).toBe(true);
+    expect(state.editMode.value).toBe(true);
+  });
+});
+
+describe("U29 Escape in Compila e firma", () => {
+  it("closes the writer (nothing written), then cancels the signature waiting, then deselects the picture, then leaves", async () => {
+    const { press, restore } = await keyboard();
+    try {
+      const page = await filling("FC.pdf");
+      await actions.openWriterAt(0, [10, 50], "text");
+      const unregister = typing(state.openWriter.value!, "typed");
+      expect(press("Escape").defaultPrevented).toBe(true);
+      expect(state.openWriter.value).toBeNull();
+      await state.flushEditor(); // asked before the writer has unregistered: it writes nothing
+      unregister();
+      expect(calls).toEqual([]);
+      expect(state.fillMode.value).toBe(true);
+
+      actions.setFillTool("signature");
+      expect(state.dialog.value).toEqual({ kind: "signature", mode: "signature", forField: null });
+      actions.useSignature(SIG());
+      expect(state.dialog.value).toBeNull();
+      expect(state.pendingPlacement.value?.id).toBe("sig-1");
+      expect(state.fillTool.value).toBe("signature");
+      press("Escape");
+      expect(state.pendingPlacement.value).toBeNull();
+      expect(state.fillTool.value).toBe("text");
+      expect(state.fillMode.value).toBe(true);
+
+      // Only the pictures the user added are selected here.
+      await actions.selectImage(0, IMAGE(0), page.rev.peek());
+      expect(state.selectedImage.value).toBeNull();
+      await actions.selectImage(0, IMAGE(1, { added: true }), page.rev.peek());
+      expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+      press("Escape");
+      await vi.waitFor(() => expect(state.selectedImage.value).toBeNull());
+      expect(state.fillMode.value).toBe(true);
+      press("Escape");
+      await vi.waitFor(() => expect(state.fillMode.value).toBe(false));
+      expect(press("Escape").defaultPrevented).toBe(false); // browse: nothing to close
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("U30 the text writer", () => {
+  it("a tap with a writer open writes it and opens a new one there; only spaces write nothing", async () => {
+    state.writerStyle.value = { size: 11, color: "black" };
+    const page = await filling("FD.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    let unregister = typing(state.openWriter.value!, "Nome");
+    await actions.openWriterAt(0, [10, 80], "text");
+    unregister();
+    expect(calls).toEqual(["addText:0:Nome"]);
+    // Opened after the text before it was written: its revision includes it.
+    expect(state.openWriter.value).toMatchObject({ origin: [10, 80], text: "", editing: null, rev: page.rev.peek() });
+
+    unregister = typing(state.openWriter.value!, "   ");
+    await actions.openWriterAt(0, [10, 95], "text");
+    unregister();
+    expect(calls).toEqual(["addText:0:Nome"]);
+    expect(state.openWriter.value?.origin).toEqual([10, 95]);
+  });
+
+  it("a writer that closed with its blur is written before the next one opens on its page", async () => {
+    const page = await filling("FD2.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const w = state.openWriter.value!;
+    const held = hold("addText");
+    const blurred = actions.commitWriter(w, "Prima", w.origin, w.size, w.color); // the writer goes with it
+    const release = await held;
+    const dopo = {
+      id: 3, text: "Dopo", origin: [10, 90], style: { size: 11, color: [0, 0, 0], family: "sans", bold: false, italic: false },
+      bbox: [10, 80, 40, 92],
+    } as any;
+    const opening = actions.reopenAdded(0, dopo);
+    const before = state.openWriter.value;
+    // The page changed meanwhile: the text is read again before the writer opens.
+    const texts = engineImpl.addedTexts;
+    engineImpl.addedTexts = async () => [dopo];
+    try {
+      release();
+      await blurred;
+      await opening;
+    } finally {
+      engineImpl.addedTexts = texts;
+    }
+    expect(before).toBeNull();
+    expect(state.openWriter.value).toMatchObject({ editing: 3, text: "Dopo", rev: page.rev.peek() });
+  });
+
+  it("its Enter and the blur after it write once; Line below writes it and opens the next line 1.25 em lower", async () => {
+    state.writerStyle.value = { size: 11, color: "black" };
+    await filling("FE.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const w = state.openWriter.value!;
+    const writing = actions.writeAndNewLine(w, "Riga 1", w.origin, 14, "blue");
+    // The next line is open at once, in the same size and ink (the keyboard stays up).
+    expect(state.openWriter.value).toMatchObject({
+      pageIndex: 0, origin: [10, 50 + 1.25 * 14], text: "", size: 14, color: "blue", kind: "text", editing: null,
+    });
+    await writing;
+    await actions.commitWriter(w, "Riga 1", w.origin, 14, "blue"); // its blur afterwards
+    expect(calls).toEqual(["addText:0:Riga 1"]);
+    expect(sent[0].style).toEqual({ size: 14, color: state.INK.blue, family: "sans", bold: false, italic: false });
+    expect(state.writerStyle.value).toEqual({ size: 14, color: "blue" });
+    await actions.openWriterAt(0, [10, 200], "text");
+    expect(state.openWriter.value).toMatchObject({ size: 14, color: "blue" });
+  });
+
+  it("the download waits for the writer", async () => {
+    fakePicker();
+    await filling("FF.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const unregister = typing(state.openWriter.value!, "Firmato");
+    expect(state.hasUnsavedWork()).toBe(true);
+    await actions.download();
+    unregister();
+    expect(calls).toEqual(["addText:0:Firmato", "save"]);
+    expect(state.dirty.value).toBe(false);
+  });
+
+  it("a page the engine cannot add to says so, not the line editor's words", async () => {
+    await filling("FF2.pdf");
+    const { EngineError } = await import("../src/engine/client");
+    const add = engineImpl.addText;
+    engineImpl.addText = async () => { throw new EngineError("content ends inside a string", "not-editable"); };
+    await actions.openWriterAt(0, [10, 50], "check");
+    engineImpl.addText = add;
+    expect(toastTexts()).toEqual(["You can't add text or pictures to this page: its content can't be changed safely."]);
+    expect(state.dirty.value).toBe(false);
+  });
+});
+
+describe("U31 marks, dates and texts written before", () => {
+  it("a tick, a cross and the date are written at once, the marks at 1.1 × the size; the sub-tool stays", async () => {
+    await filling("FG.pdf");
+    state.writerStyle.value = { size: 10, color: "blue" };
+    state.fillTool.value = "check";
+    await actions.openWriterAt(0, [20, 30], "check");
+    await actions.openWriterAt(0, [20, 40], "cross");
+    await actions.openWriterAt(0, [20, 50], "date");
+    expect(calls).toEqual(["addText:0:✓", "addText:0:✗", `addText:0:${actions.todayText()}`]);
+    expect(sent.map((x) => x.style.size)).toEqual([expect.closeTo(11), expect.closeTo(11), 10]);
+    expect(sent.map((x) => x.origin)).toEqual([[20, 30], [20, 40], [20, 50]]);
+    expect(sent[0].style.color).toEqual(state.INK.blue);
+    expect(state.openWriter.value).toBeNull();
+    expect(state.fillTool.value).toBe("check");
+    const i18n = await import("../src/i18n");
+    i18n.setLocale("it");
+    expect(actions.todayText()).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(actions.todayText("long")).toMatch(/^\d{1,2} \p{L}+ \d{4}$/u);
+    i18n.setLocale("en");
+  });
+
+  it("reopened, a text changes only what changed; cleared, it is deleted; Delete is not written back; a stale page is refused", async () => {
+    const page = await filling("FH.pdf");
+    const style = { size: 11, color: [0, 0, 0], family: "sans", bold: false, italic: false };
+    const tick = { id: 7, text: "✓", origin: [20, 30], style, bbox: [20, 20, 30, 31] } as any;
+    await actions.reopenAdded(0, tick);
+    let w = state.openWriter.value!;
+    expect(w).toEqual({ pageIndex: 0, origin: [20, 30], text: "✓", size: 11, color: "black", kind: "check", editing: 7, rev: page.rev.peek() });
+    await actions.commitWriter(w, "✓", w.origin, w.size, w.color);
+    expect(calls).toEqual([]); // nothing changed: nothing written, no step
+
+    await actions.reopenAdded(0, tick);
+    w = state.openWriter.value!;
+    await actions.commitWriter(w, "✗", w.origin, w.size, w.color); // "Change to ✗"
+    expect(calls).toEqual(["editAddedText:7"]);
+    expect(sent.at(-1)).toEqual({ text: "✗" });
+
+    // Moved, larger and blue: the place and the style, its own font kept.
+    const name = { id: 8, text: "Mario", origin: [20, 60], style: { ...style, family: "serif", bold: true }, bbox: [20, 50, 60, 62] } as any;
+    await actions.reopenAdded(0, name);
+    w = state.openWriter.value!;
+    expect(w.kind).toBe("text");
+    await actions.commitWriter(w, "Mario", [25, 60], 12, "blue");
+    expect(sent.at(-1)).toEqual({ origin: [25, 60], style: { size: 12, color: state.INK.blue, family: "serif", bold: true, italic: false } });
+
+    // Cleared and applied: deleted.
+    await actions.reopenAdded(0, name);
+    w = state.openWriter.value!;
+    await actions.commitWriter(w, "  ", w.origin, w.size, w.color);
+    expect(sent.at(-1)).toEqual({ text: "" });
+
+    // Delete in the writer: its blur afterwards writes nothing more.
+    await actions.reopenAdded(0, name);
+    w = state.openWriter.value!;
+    calls.length = 0;
+    await actions.deleteAdded(0, 8, w.rev);
+    expect(state.openWriter.value).toBeNull();
+    await actions.commitWriter(w, "Mario", w.origin, w.size, w.color);
+    expect(calls).toEqual(["editAddedText:8"]);
+    expect(sent.at(-1)).toEqual({ text: "" });
+
+    state.toasts.value = [];
+    await actions.deleteAdded(0, 8, page.rev.peek() - 1);
+    expect(calls).toEqual(["editAddedText:8"]);
+    expect(toastTexts()).toEqual(["Could not write this text."]);
+
+    expect(["16/10/2026", "10/16/2026", "16 ottobre 2026", "16 October 2026", "October 16, 2026", "Nome", "✓ Sì"]
+      .map(actions.addedKind)).toEqual(["date", "date", "date", "date", "date", "text", "text"]);
+  });
+});
+
+describe("U32 form fields", () => {
+  it("a value is one edit, by name; the overlays read the values again; a stale page, a locked field and Modifica are refused", async () => {
+    const page = await filling("FI.pdf", FORM([1], 0));
+    const nome = FIELD("nome");
+    page.fields.value = { rev: page.rev.peek(), fields: [nome] };
+    const rev = page.rev.peek();
+    await actions.setFieldValue(0, nome, { kind: "text", text: "Mario" }, rev);
+    expect(calls).toEqual(["setField:nome"]);
+    expect(sent).toEqual([{ kind: "text", text: "Mario" }]);
+    expect(page.fields.value).toBeNull(); // read again, with the value the engine now has
+    expect(page.rev.peek()).toBe(rev + 1);
+    expect(state.dirty.value).toBe(true);
+
+    await actions.setFieldValue(0, nome, { kind: "text", text: "Maria" }, rev);
+    expect(calls).toEqual(["setField:nome"]);
+    expect(toastTexts()).toEqual(["Could not fill in this field."]);
+
+    state.toasts.value = [];
+    await actions.setFieldValue(0, FIELD("codice", { locked: "read-only" }), { kind: "text", text: "x" }, page.rev.peek());
+    expect(toastTexts()).toEqual(["This field can't be changed."]);
+
+    // With no tool on the fields work (D2); in Modifica they are not there.
+    await actions.setTool(null);
+    await actions.setFieldValue(0, FIELD("ok", { type: "checkbox", onState: "Yes" }), { kind: "state", state: "Yes" }, page.rev.peek());
+    await actions.setTool("edit");
+    await actions.setFieldValue(0, nome, { kind: "text", text: "Mario" }, page.rev.peek());
+    expect(calls).toEqual(["setField:nome", "setField:ok"]);
+
+    // Undo: the focus goes and the values are read again.
+    await actions.setTool("fill");
+    page.fields.value = { rev: page.rev.peek(), fields: [nome] };
+    state.focusedField.value = { pageIndex: 0, name: "nome", index: 0 };
+    await actions.undo();
+    expect(state.focusedField.value).toBeNull();
+    expect(page.fields.value).toBeNull();
+  });
+
+  it("a box ticked while the writer's text is still on its way is not refused", async () => {
+    const page = await filling("FI3.pdf", FORM([1], 0));
+    await actions.openWriterAt(0, [10, 50], "text");
+    const w = state.openWriter.value!;
+    const held = hold("addText");
+    const writing = actions.commitWriter(w, "Nome", w.origin, w.size, w.color); // its blur, as the box is tapped
+    const release = await held;
+    const ticking = actions.setFieldValue(0, FIELD("ok", { type: "checkbox" }), { kind: "state", state: "Yes" }, page.rev.peek());
+    release();
+    await writing;
+    await ticking;
+    expect(calls).toEqual(["addText:0:Nome", "setField:ok"]);
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it("the same value records nothing; a text too long for its box and characters no font has say so", async () => {
+    const page = await filling("FI2.pdf", FORM([1], 0));
+    const set = engineImpl.setField;
+    try {
+      engineImpl.setField = async (name: string) => ({
+        editCount: 0, canUndo: false, canRedo: false, changedPages: [], name, missingChars: [], overflow: false,
+      });
+      await actions.setFieldValue(0, FIELD("nome"), { kind: "text", text: "" }, page.rev.peek());
+      expect(state.dirty.value).toBe(false);
+      engineImpl.setField = async (name: string) => ({
+        editCount: 1, canUndo: true, canRedo: false, changedPages: [0], name, missingChars: ["\u{10FFFD}"], overflow: true,
+      });
+      await actions.setFieldValue(0, FIELD("nome"), { kind: "text", text: "molto lungo" }, page.rev.peek());
+    } finally {
+      engineImpl.setField = set;
+    }
+    const i18n = await import("../src/i18n");
+    expect(toastTexts()).toEqual([
+      i18n.t("edit.missing", { chars: "\u{10FFFD}" }),
+      "The text doesn't fit in the field: some of it may not show or print.",
+    ]);
+  });
+
+  it("next field: across pages, in tab order, round to the start; the empty ones only; the field's other widgets skipped", async () => {
+    const twoPages = [{ index: 0, bounds: [0, 0, 100, 100] }, { index: 1, bounds: [0, 0, 100, 100] }];
+    await filling("FJ0.pdf", { pageCount: 2, pages: twoPages, ...FORM([2, 3], 0) });
+    const fields = engineImpl.fields;
+    engineImpl.fields = async (p: number) => p === 0
+      ? [FIELD("a", { value: "x" }), FIELD("r", { index: 1, type: "radio", value: "Off" })]
+      : [FIELD("r", { type: "radio", value: "Off" }), FIELD("b", { index: 1 }), FIELD("ro", { index: 2, locked: "read-only" })];
+    try {
+      expect(await actions.focusNextField({ pageIndex: 0, index: 0, name: "a" })).toBe(true);
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "r", index: 1 });
+      await actions.focusNextField({ pageIndex: 0, index: 1, name: "r" });
+      expect(state.focusedField.value).toEqual({ pageIndex: 1, name: "b", index: 1 });
+      await actions.focusNextField({ pageIndex: 1, index: 1, name: "b" }); // the read-only one is skipped, round to the start
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "a", index: 0 });
+      await actions.focusNextField(null, true);
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "r", index: 1 });
+    } finally {
+      engineImpl.fields = fields;
+    }
+  });
+});
+
+describe("U33 empty required fields at download", () => {
+  it("asked once per document; Fill them in focuses the first (Modifica gives way) and writes nothing", async () => {
+    fakePicker();
+    const fields = engineImpl.fields;
+    engineImpl.fields = async () => [
+      FIELD("nome", { required: true }),
+      FIELD("cognome", { index: 1, required: true, value: "Rossi" }),
+      FIELD("firma", { index: 2, type: "signature", required: true, locked: "signature" }),
+      FIELD("privacy", { index: 3, type: "checkbox", required: true, value: "Off" }),
+    ];
+    try {
+      await filling("FK.pdf", FORM([4], 4));
+      await actions.setTool("edit");
+      let p = actions.download();
+      let d = await takeDialog("missing-fields");
+      expect(d.count).toBe(2); // the signature field is signed with the Sign tool: not counted
+      d.resolve("fill");
+      await p;
+      expect(calls).toEqual([]);
+      expect(state.tool.value).toBe("fill");
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "nome", index: 0 });
+      await actions.download(); // asked once: straight on
+      expect(calls).toEqual(["save"]);
+
+      // Another document is asked again. Cancel writes nothing and asks again next time.
+      await openWith("FL.pdf", FORM([4], 4));
+      p = actions.download();
+      d = await takeDialog("missing-fields");
+      d.resolve(null);
+      await p;
+      expect(calls).toEqual([]);
+      p = actions.download();
+      d = await takeDialog("missing-fields");
+      d.resolve("download");
+      await p;
+      expect(calls).toEqual(["save"]);
+
+      // Another dialog taking the question's place answers it Cancel.
+      await openWith("FL2.pdf", FORM([4], 4));
+      p = actions.download();
+      await vi.waitFor(() => expect(state.dialog.value?.kind).toBe("missing-fields"));
+      state.showDialog({ kind: "alert", title: "x", body: "y" });
+      await p;
+      state.showDialog(null);
+      expect(calls).toEqual([]);
+
+      // All filled in: no question.
+      engineImpl.fields = async () => [FIELD("nome", { required: true, value: "Mario" })];
+      await openWith("FM0.pdf", FORM([1], 1));
+      await actions.download();
+      expect(calls).toEqual(["save"]);
+      expect(state.dialog.value).toBeNull();
+    } finally {
+      engineImpl.fields = fields;
+    }
+  });
+});
+
+describe("U34 signatures", () => {
+  it("chosen in the sheet, it waits for a tap; placed, it is one edit, selected with its frame, and Firma goes back to Testo", async () => {
+    const page = await filling("FN.pdf");
+    actions.setFillTool("signature");
+    expect(state.dialog.value).toEqual({ kind: "signature", mode: "signature", forField: null });
+    expect(state.fillTool.value).toBe("signature");
+    const sig = SIG();
+    actions.useSignature(sig);
+    expect(state.dialog.value).toBeNull();
+    expect(state.pendingPlacement.value).toBe(sig);
+    expect(state.sessionSignatures.value[0]).toBe(sig);
+    const matrix = [141.7, 0, 0, 47.2, 10, 40] as any;
+    const placing = actions.placeSignature(0, sig, matrix);
+    expect(state.pendingPlacement.value).toBeNull(); // used up at once: a second tap places nothing
+    await placing;
+    expect(calls).toEqual(["addImage:0"]);
+    expect(sent[0].targets).toEqual([{ pageIndex: 0, matrix }]);
+    expect(sent[0].alt).toBe("Signature: Mario Rossi");
+    expect([...new Uint8Array(sent[0].bytes)]).toEqual([137, 80, 78, 71]);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 5 });
+    expect(state.fillTool.value).toBe("text");
+    expect(toastTexts()).toEqual(["Signature on page 1. Drag it to move it."]);
+    expect(state.initialsSource.value).toBeNull(); // a signature, not initials
+    expect(page.images.value).toBeNull();
+    expect(state.imageEditsPending.value).toBe(0);
+  });
+
+  it("the sheet closed without one: back to Testo; Sign here on a field puts it inside the box, Compila e firma turned on", async () => {
+    await filling("FO.pdf");
+    actions.setFillTool("initials");
+    expect(state.fillTool.value).toBe("initials");
+    state.showDialog(null);
+    expect(state.fillTool.value).toBe("text");
+
+    await actions.setTool(null);
+    state.showDialog({ kind: "signature", mode: "signature", forField: { pageIndex: 0, rect: [10, 10, 110, 40], rotation: 0 } });
+    actions.useSignature(SIG());
+    await vi.waitFor(() => expect(calls).toEqual(["addImage:0"]));
+    expect(state.tool.value).toBe("fill");
+    // 3:1 inside 100 × 30: 90 × 30, centred across, on the box's bottom.
+    expect(sent[0].targets[0].matrix).toEqual([90, 0, 0, 30, 15, 10]);
+    expect(state.pendingPlacement.value).toBeNull();
+  });
+
+  it("the signature waiting goes with undo and with a change of tool", async () => {
+    await filling("FP.pdf");
+    state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
+    actions.useSignature(SIG());
+    await actions.undo();
+    expect(state.pendingPlacement.value).toBeNull();
+    expect(state.fillTool.value).toBe("text");
+    actions.useSignature(SIG());
+    await actions.setTool("edit");
+    expect(state.pendingPlacement.value).toBeNull();
+    expect(state.fillTool.value).toBe("text");
+  });
+
+  it("kept on the device only when asked, then listed as saved; forgotten at once; refused storage says false", async () => {
+    await filling("FQ0.pdf");
+    const g = globalThis as any;
+    const sig = SIG({ id: "sig-keep" });
+    actions.useSignature(sig);
+    expect(state.savedSignatures.value.map((s) => s.id)).not.toContain("sig-keep"); // this session only, by default
+    expect(await actions.rememberSignature(sig)).toBe(true);
+    expect(g.__stored.has("sig-keep")).toBe(true);
+    expect(state.savedSignatures.value.map((s) => s.id)).toContain("sig-keep");
+    expect(state.pendingPlacement.value?.savedAt).toEqual(expect.any(Number));
+    state.toasts.value = [];
+    await actions.forgetSignature("sig-keep");
+    expect(g.__stored.has("sig-keep")).toBe(false);
+    expect(state.sessionSignatures.value.map((s) => s.id)).not.toContain("sig-keep");
+    expect(toastTexts()).toEqual(["Signature forgotten."]);
+    g.__storeRefuses = true;
+    try {
+      expect(await actions.rememberSignature(SIG({ id: "sig-no" }))).toBe(false);
+    } finally {
+      g.__storeRefuses = false;
+    }
+    expect(state.savedSignatures.value.map((s) => s.id)).not.toContain("sig-no");
+  });
+});
+
+describe("U35 initials on every page", () => {
+  const PAGES = [{ index: 0, bounds: A4 }, { index: 1, bounds: [0, 0, 841.89, 595.28] }, { index: 2, bounds: [0, 0, 612, 792] }];
+  // 12 × 6 mm, 15 mm from the right and 10 mm from the bottom of the A4 page.
+  const W = 12 * MMPT, H = 6 * MMPT;
+  const AT = [W, 0, 0, H, A4[2] - 15 * MMPT - W, A4[3] - 10 * MMPT - H] as any;
+
+  it("one addImage for the pages chosen, as far from the nearest corner on every page size: one history step", async () => {
+    await filling("FQ.pdf", { pageCount: 3, pages: PAGES });
+    const ini = INITIALS();
+    actions.useSignature(ini);
+    await actions.placeSignature(0, ini, AT);
+    expect(state.initialsSource.value).toMatchObject({ pageIndex: 0, imageIndex: 5, sig: ini });
+    expect(toastTexts()).toEqual(["Initials on page 1. Drag them to move them."]);
+    const images = engineImpl.images;
+    engineImpl.images = async (p: number) => (p === 0 ? [IMAGE(5, { matrix: AT, added: true })] : []);
+    try {
+      state.toasts.value = [];
+      const placing = actions.placeInitialsOnPages(0, 5);
+      const d = await takeDialog("initials-pages");
+      expect(d).toMatchObject({ pageIndex: 0, imageIndex: 5 });
+      const choices = actions.initialsChoices(0, 3);
+      expect(choices).toEqual({ all: [1, 2], allButLast: [1] });
+      d.resolve(choices.all);
+      await placing;
+    } finally {
+      engineImpl.images = images;
+    }
+    expect(calls).toEqual(["addImage:0", "addImage:1,2"]);
+    const copies = sent[1];
+    expect(copies.alt).toBe("Initials: MR");
+    expect(copies.targets.map((x: any) => x.pageIndex)).toEqual([1, 2]);
+    for (const { pageIndex, matrix } of copies.targets) {
+      const b = PAGES[pageIndex].bounds;
+      expect(matrix[0]).toBeCloseTo(W, 6);
+      expect(matrix[3]).toBeCloseTo(H, 6);
+      expect((b[2] - (matrix[4] + matrix[0])) / MMPT).toBeCloseTo(15, 6);
+      expect((b[3] - (matrix[5] + matrix[3])) / MMPT).toBeCloseTo(10, 6);
+    }
+    expect(toastTexts()).toEqual(["Initials added to 2 pages."]);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 5 }); // the original stays selected
+    expect([...state.editedPages.value].sort()).toEqual([0, 1, 2]);
+    await actions.undo(); // the copies are one step
+    expect([...state.editedPages.value]).toEqual([0]);
+    expect(actions.initialsChoices(2, 3)).toEqual({ all: [0, 1], allButLast: [0, 1] });
+  });
+
+  it("followed through edits; Cancel, or another dialog, adds nothing; initials gone with an undo are not copied", async () => {
+    const page = await filling("FR.pdf", { pageCount: 3, pages: PAGES });
+    const ini = INITIALS();
+    await actions.placeSignature(0, ini, AT);
+    await actions.transformImage(page, IMAGE(5, { added: true }), MOVED, page.rev.peek());
+    expect(state.initialsSource.value?.imageIndex).toBe(5);
+    await actions.deleteImage(page, IMAGE(2), page.rev.peek()); // painted before them: they move up one place
+    expect(state.initialsSource.value?.imageIndex).toBe(4);
+
+    let placing = actions.placeInitialsOnPages(0, 4);
+    (await takeDialog("initials-pages")).resolve(null);
+    await placing;
+    placing = actions.placeInitialsOnPages(0, 4);
+    await vi.waitFor(() => expect(state.dialog.value?.kind).toBe("initials-pages"));
+    state.showDialog({ kind: "alert", title: "x", body: "y" });
+    await placing;
+    state.showDialog(null);
+    expect(calls).toEqual(["addImage:0", "transformImage:5", "deleteImage:2"]);
+
+    await actions.undo();
+    expect(state.initialsSource.value).toBeNull();
+    state.toasts.value = [];
+    await actions.placeInitialsOnPages(0, 4);
+    expect(state.dialog.value).toBeNull();
+    expect(toastTexts()).toEqual(["Could not add the initials to the other pages."]);
+  });
+});
+
+describe("U36 a picture from a file", () => {
+  it("prepared, placed in the middle of the page at most 60 % of its width, selected", async () => {
+    await filling("FS.pdf", { pages: [{ index: 0, bounds: [0, 0, 600, 800] }] });
+    const bytes = new Uint8Array([9, 9]).buffer;
+    (globalThis as any).__prepare = async () => ({ bytes, width: 2000, height: 1000 });
+    await actions.addPictureFromFile(PICKED);
+    expect(calls).toEqual(["addImage:0"]);
+    // 60 % of 600 pt: 360 × 180, in the middle (no viewer here: the whole page counts as what shows).
+    expect(sent[0]).toEqual({ bytes, targets: [{ pageIndex: 0, matrix: [360, 0, 0, 180, 120, 310] }], alt: null });
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 5 });
+    expect(toastTexts()).toEqual(["Image added on page 1. Drag it where you want."]);
+    expect(state.imageEditsPending.value).toBe(0);
+    // A small picture keeps its own size (150 ppi); a tall one is held to 60 % of the height.
+    const view = [0, 0, 600, 800] as any;
+    expect(actions.pictureMatrix(view, view, 300, 150)).toEqual([144, 0, 0, 72, 228, 364]);
+    expect(actions.pictureMatrix(view, view, 1000, 4000)).toEqual([120, 0, 0, 480, 240, 160]);
+  });
+
+  it("Immagine opens the picture picker, keeps the sub-tool, and adds the picture chosen", async () => {
+    await filling("FT.pdf");
+    (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 100, height: 100 });
+    state.fillTool.value = "date";
+    const inputs: any[] = [];
+    const doc = (globalThis as any).document;
+    const createElement = doc.createElement;
+    doc.createElement = (tag: string) => {
+      const el: any = {
+        tag, listeners: {}, clicked: false, removed: false,
+        addEventListener(type: string, fn: () => void) { el.listeners[type] = fn; },
+        setAttribute() { /* aria-hidden */ },
+        click() { el.clicked = true; },
+        remove() { el.removed = true; },
+      };
+      inputs.push(el);
+      return el;
+    };
+    try {
+      actions.setFillTool("image");
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({ tag: "input", type: "file", accept: "image/*", clicked: true });
+      expect(state.fillTool.value).toBe("date");
+      inputs[0].files = [PICKED];
+      inputs[0].listeners.change();
+      await vi.waitFor(() => expect(calls).toEqual(["addImage:0"]));
+    } finally {
+      doc.createElement = createElement;
+    }
+  });
+});
+
+describe("U37 undo in Compila e firma", () => {
+  it("writes the writer first, then undoes it; the writer, the focused field and the selection go", async () => {
+    await filling("FU.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const unregister = typing(state.openWriter.value!, "Scritto");
+    state.focusedField.value = { pageIndex: 0, name: "x", index: 0 };
+    await actions.undo();
+    unregister();
+    expect(calls).toEqual(["addText:0:Scritto", "undo"]);
+    expect([state.openWriter.value, state.focusedField.value, state.selectedImage.value]).toEqual([null, null, null]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Release 3, after its review
+
+/** A text the user wrote on page 0, as the engine lists it. */
+const ADDED = (id: number, text: string, origin: number[] = [20, 60]) => ({
+  id, text, origin, style: { size: 11, color: [0, 0, 0], family: "sans", bold: false, italic: false },
+  bbox: [origin[0], origin[1] - 9, origin[0] + 30, origin[1] + 3],
+}) as any;
+const SIGNED_AT = [60, 0, 0, 20, 10, 10] as any;
+
+describe("U38 a picture that lands while the writer is open", () => {
+  it("leaves the writer open with what is typed: the picture is placed, not selected; the line editor is not closed either", async () => {
+    await filling("FV.pdf");
+    let held = hold("addImage");
+    const placing = actions.placeSignature(0, SIG(), SIGNED_AT);
+    let release = await held;
+    await actions.openWriterAt(0, [10, 50], "text"); // a tap while the signature is on its way
+    const w = state.openWriter.value!;
+    expect(w).toMatchObject({ editing: null, origin: [10, 50] });
+    const unregister = typing(w, "Roma, 16 ottobre");
+    release();
+    await placing;
+    expect(state.openWriter.value).toBe(w);
+    expect(state.selectedImage.value).toBeNull();
+    expect(toastTexts()).toEqual(["Signature on page 1. Drag it to move it."]);
+    expect(state.hasUnsavedWork()).toBe(true);
+    await state.flushEditor();
+    unregister();
+    expect(calls).toEqual(["addImage:0", "addText:0:Roma, 16 ottobre"]);
+
+    held = hold("addImage");
+    const again = actions.placeSignature(0, SIG(), SIGNED_AT);
+    release = await held;
+    await actions.setTool("edit");
+    state.editingLine.value = { pageIndex: 0, line: LINE };
+    release();
+    await again;
+    expect(state.editingLine.value).toEqual({ pageIndex: 0, line: LINE });
+    expect(state.selectedImage.value).toBeNull();
+    state.editingLine.value = null;
+  });
+
+  it("a text reopened while the picture is on its way opens once it has landed, and can be changed", async () => {
+    const page = await filling("FW.pdf");
+    const mario = ADDED(4, "Mario");
+    const held = hold("addImage");
+    const placing = actions.placeSignature(0, SIG(), SIGNED_AT);
+    const release = await held;
+    const texts = engineImpl.addedTexts;
+    engineImpl.addedTexts = async () => [mario];
+    try {
+      const opening = actions.reopenAdded(0, mario);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(state.openWriter.value).toBeNull(); // waits for the picture
+      release();
+      await placing;
+      await opening;
+    } finally {
+      engineImpl.addedTexts = texts;
+    }
+    const w = state.openWriter.value!;
+    expect(w).toMatchObject({ editing: 4, text: "Mario", rev: page.rev.peek() });
+    expect(state.selectedImage.value).toBeNull(); // the writer, asked for later, has it
+    await actions.commitWriter(w, "Mario Rossi", w.origin, w.size, w.color);
+    expect(calls).toEqual(["addImage:0", "editAddedText:4"]);
+    expect(toastTexts()).not.toContain("Could not write this text.");
+  });
+
+  it("choosing a signature writes the writer still open instead of dropping it", async () => {
+    await filling("FW2.pdf");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const unregister = typing(state.openWriter.value!, "Nome");
+    state.showDialog({ kind: "signature", mode: "signature", forField: null });
+    actions.useSignature(SIG());
+    await vi.waitFor(() => expect(calls).toEqual(["addText:0:Nome"]));
+    unregister();
+    expect(state.openWriter.value).toBeNull();
+    expect(state.pendingPlacement.value?.id).toBe("sig-1");
+  });
+});
+
+describe("U39 a text reopened while an undo runs", () => {
+  it("opens once the undo has landed, at its revision: it can still be changed or deleted", async () => {
+    const page = await filling("FX.pdf");
+    state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
+    const mario = ADDED(4, "Mario");
+    const held = hold("undo");
+    const undoing = actions.undo();
+    const release = await held;
+    const texts = engineImpl.addedTexts;
+    engineImpl.addedTexts = async () => [mario];
+    try {
+      const opening = actions.reopenAdded(0, mario);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(state.openWriter.value).toBeNull();
+      release();
+      await undoing;
+      await opening;
+    } finally {
+      engineImpl.addedTexts = texts;
+    }
+    const w = state.openWriter.value!;
+    expect(w).toMatchObject({ editing: 4, rev: page.rev.peek() });
+    await actions.deleteAdded(0, 4, w.rev);
+    expect(calls).toEqual(["undo", "editAddedText:4"]);
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it("a text the undo took away does not open; one it changed opens as it is now", async () => {
+    await filling("FX2.pdf");
+    const texts = engineImpl.addedTexts;
+    try {
+      for (const now of [[], [ADDED(4, "Maria", [30, 70])]]) {
+        state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
+        const held = hold("undo");
+        const undoing = actions.undo();
+        const release = await held;
+        engineImpl.addedTexts = async () => now;
+        const opening = actions.reopenAdded(0, ADDED(4, "Mario"));
+        release();
+        await undoing;
+        await opening;
+        if (!now.length) expect(state.openWriter.value).toBeNull();
+      }
+    } finally {
+      engineImpl.addedTexts = texts;
+    }
+    expect(state.openWriter.value).toMatchObject({ editing: 4, text: "Maria", origin: [30, 70] });
+    actions.cancelWriter();
+  });
+
+  it("a writer asked for afterwards wins over the one still on its way", async () => {
+    await filling("FX3.pdf");
+    state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
+    const held = hold("undo");
+    const undoing = actions.undo();
+    const release = await held;
+    const texts = engineImpl.addedTexts;
+    engineImpl.addedTexts = async () => [ADDED(4, "Mario")];
+    try {
+      const opening = actions.reopenAdded(0, ADDED(4, "Mario"));
+      await actions.openWriterAt(0, [10, 30], "text"); // a tap elsewhere meanwhile
+      release();
+      await undoing;
+      await opening;
+    } finally {
+      engineImpl.addedTexts = texts;
+    }
+    expect(state.openWriter.value).toMatchObject({ editing: null, origin: [10, 30] });
+    actions.cancelWriter();
+  });
+
+  it("a new text's writer opened while the undo waits its turn keeps what is typed through it", async () => {
+    const page = await filling("FX4.pdf", FORM([1], 0));
+    state.recordHistory({ editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }, "edit");
+    const held = hold("setField");
+    const ticking = actions.setFieldValue(0, FIELD("ok", { type: "checkbox" }), { kind: "state", state: "Yes" }, page.rev.peek());
+    const release = await held;
+    const undoing = actions.undo(); // behind the tick
+    await actions.openWriterAt(0, [10, 50], "text");
+    const w = state.openWriter.value!;
+    const unregister = typing(w, "Ciao");
+    release();
+    await ticking;
+    await undoing;
+    expect(state.openWriter.value).toBe(w);
+    await state.flushEditor();
+    unregister();
+    expect(calls).toEqual(["setField:ok", "undo", "addText:0:Ciao"]);
+  });
+});
+
+describe("U40 new texts stay on the page", () => {
+  it("originOnPage: capitals under the top, descenders above the bottom, the width before the right edge", () => {
+    const b = [0, 0, 100, 200] as any;
+    expect(actions.originOnPage(b, [50, 100], 10, 20)).toEqual([50, 100]);
+    expect(actions.originOnPage(b, [-5, 1], 10, 20)).toEqual([0, 8]);
+    expect(actions.originOnPage(b, [95, 210], 10, 20)).toEqual([80, 197.5]);
+    expect(actions.originOnPage([0, 0, 10, 5] as any, [3, 3], 10, 20)).toEqual([0, 5]); // too small for it: still on it
+  });
+
+  it("a tick, a date or a writer near an edge lands on the page; a text written before is not moved", async () => {
+    await filling("FY.pdf"); // 100 × 100
+    state.writerStyle.value = { size: 10, color: "black" };
+    await actions.openWriterAt(0, [-3, 99], "check");
+    await actions.openWriterAt(0, [98, 2], "date");
+    const tick = sent[0].origin;
+    expect(tick[0]).toBe(0);
+    expect(tick[1]).toBeCloseTo(100 - 0.25 * 11, 6);
+    expect(sent[1].origin).toEqual([100 - 0.56 * 10 * [...actions.todayText()].length, 8]);
+    await actions.openWriterAt(0, [99, 0.5], "text");
+    expect(state.openWriter.value?.origin).toEqual([100 - 0.56 * 10 * 2, 8]);
+    await actions.reopenAdded(0, ADDED(5, "Fine", [99, 99.9]));
+    expect(state.openWriter.value).toMatchObject({ editing: 5, origin: [99, 99.9] });
+    actions.cancelWriter();
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it("Line below on the page's last line writes the line, opens no writer, and says why", async () => {
+    await filling("FY2.pdf");
+    state.writerStyle.value = { size: 10, color: "black" };
+    await actions.openWriterAt(0, [10, 95], "text");
+    const w = state.openWriter.value!;
+    const writing = actions.writeAndNewLine(w, "Riga 1", w.origin, 10, "black");
+    expect(state.openWriter.value).toBeNull();
+    await writing;
+    expect(calls).toEqual(["addText:0:Riga 1"]);
+    expect(toastTexts()).toEqual(["There's no room for another line on this page."]);
+  });
+});
+
+describe("U41 keeping a signature on the device: what really happened", () => {
+  it("a forget the storage refuses keeps it listed and says so; a save that fails, or finds 5 saved, says so", async () => {
+    await filling("FZ.pdf");
+    const g = globalThis as any;
+    const sig = SIG({ id: "sig-stay" });
+    actions.useSignature(sig);
+    expect(await actions.rememberSignature(sig)).toBe(true);
+    state.toasts.value = [];
+    g.__storeRefuses = true;
+    try {
+      expect(await actions.forgetSignature("sig-stay")).toBe(false);
+      expect(state.savedSignatures.value.map((s) => s.id)).toContain("sig-stay");
+      expect(g.__stored.has("sig-stay")).toBe(true);
+      expect(toastTexts()).toEqual(["Couldn't forget it on this device: it's still saved. Try again."]);
+      state.toasts.value = [];
+      expect(await actions.rememberSignature(SIG({ id: "sig-no" }))).toBe(false);
+      expect(toastTexts()).toEqual(["Couldn't save it on this device: you can use it until you close the app."]);
+    } finally {
+      g.__storeRefuses = false;
+    }
+    state.toasts.value = [];
+    expect(await actions.forgetSignature("sig-stay")).toBe(true);
+    expect(g.__stored.has("sig-stay")).toBe(false);
+    expect(toastTexts()).toEqual(["Signature forgotten."]);
+
+    // Five saved already (from another tab, say): not kept, and why.
+    for (let i = 0; i < 5; i++) g.__stored.set(`other-${i}`, SIG({ id: `other-${i}`, savedAt: 1 }));
+    state.toasts.value = [];
+    try {
+      expect(await actions.rememberSignature(SIG({ id: "sig-sixth" }))).toBe(false);
+      expect(toastTexts()).toEqual(["Not saved on this device: you already have 5 saved. Forget one to save another."]);
+    } finally {
+      for (let i = 0; i < 5; i++) g.__stored.delete(`other-${i}`);
+    }
+  });
+});
+
+describe("U42 a placement that fails", () => {
+  it("says the signature or picture was not added, not that an image could not be changed", async () => {
+    await filling("GA.pdf");
+    const { EngineError } = await import("../src/engine/client");
+    const add = engineImpl.addImage;
+    const error = console.error;
+    console.error = () => undefined;
+    engineImpl.addImage = async () => { throw new EngineError("matrix", "bad-request"); };
+    try {
+      await actions.placeSignature(0, SIG(), SIGNED_AT);
+      expect(toastTexts()).toEqual(["Could not add the signature or picture."]);
+      state.toasts.value = [];
+      (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 100, height: 100 });
+      await actions.addPictureFromFile(PICKED);
+      expect(toastTexts()).toEqual(["Could not add the signature or picture."]);
+    } finally {
+      engineImpl.addImage = add;
+      console.error = error;
+    }
+    state.toasts.value = [];
+    const unreadable = SIG({ png: { arrayBuffer: () => Promise.reject(new Error("gone")) } });
+    const warn = console.warn;
+    console.warn = () => undefined;
+    try {
+      await actions.placeSignature(0, unreadable, SIGNED_AT);
+    } finally {
+      console.warn = warn;
+    }
+    expect(toastTexts()).toEqual(["Could not add the signature or picture."]);
+    expect(state.selectedImage.value).toBeNull();
+    expect(state.dirty.value).toBe(false);
+  });
+});
+
+describe("U43 Put it in the middle", () => {
+  it("✓, ✗ and Data: written in the middle of the page, said with where, and the focus asked for on their box", async () => {
+    await filling("GB.pdf"); // 100 × 100, no viewer: the whole page shows
+    state.writerStyle.value = { size: 10, color: "black" };
+    const i18n = await import("../src/i18n");
+    const where = (o: number[]) => ({ page: 1, x: i18n.formatMm(o[0]), y: i18n.formatMm(o[1]) });
+    await actions.placeAtCentre("check");
+    expect(calls).toEqual(["addText:0:✓"]);
+    expect(sent[0].origin[0]).toBeCloseTo(50 - 0.4 * 11, 6);
+    expect(sent[0].origin[1]).toBeCloseTo(50 + 0.35 * 11, 6);
+    expect(toastTexts()).toEqual([i18n.t("mark.placedAt", where(sent[0].origin))]);
+    expect(toastTexts()[0]).toMatch(/^Mark on page 1\b.*\d mm from the top\.$/); // one message, ending with a full stop
+    expect(state.focusRequest.value).toEqual({ pageIndex: 0, kind: "added", id: 101 });
+    state.toasts.value = [];
+    await actions.placeAtCentre("cross");
+    expect(calls.at(-1)).toBe("addText:0:✗");
+    expect(state.focusRequest.value).toEqual({ pageIndex: 0, kind: "added", id: 102 });
+    state.toasts.value = [];
+    await actions.placeAtCentre("date");
+    expect(calls.at(-1)).toBe(`addText:0:${actions.todayText()}`);
+    expect(toastTexts()).toEqual([i18n.t("writer.doneAt", where(sent[2].origin))]);
+    expect(toastTexts()[0]).toMatch(/^Written on page 1\b.*\d mm from the top\.$/);
+    expect(state.focusRequest.value).toEqual({ pageIndex: 0, kind: "added", id: 103 });
+    expect(state.openWriter.value).toBeNull();
+
+    // Refused by the engine: nothing said as written, no focus asked for.
+    state.focusRequest.value = null;
+    state.toasts.value = [];
+    const { EngineError } = await import("../src/engine/client");
+    const addText = engineImpl.addText;
+    engineImpl.addText = async () => { throw new EngineError("locked", "not-editable"); };
+    try {
+      await actions.placeAtCentre("check");
+    } finally {
+      engineImpl.addText = addText;
+    }
+    expect(toastTexts()).toEqual(["You can't add text or pictures to this page: its content can't be changed safely."]);
+    expect(state.focusRequest.value).toBeNull();
+  });
+
+  it("Testo opens a writer there; a signature waiting is placed there and selected; Firma and Immagine open their chooser", async () => {
+    const page = await filling("GC0.pdf");
+    state.writerStyle.value = { size: 10, color: "black" };
+    const geometry = await import("../src/ui/fill/geometry");
+    await actions.placeAtCentre("text");
+    expect(state.openWriter.value).toMatchObject({ editing: null, kind: "text", origin: geometry.writerOrigin([50, 50], 10) });
+    actions.cancelWriter();
+
+    const sig = SIG();
+    actions.useSignature(sig);
+    await actions.placeAtCentre();
+    const box = geometry.signatureRect(page.bounds, "signature", 3, [50, 50]);
+    expect(sent[0].targets).toEqual([{ pageIndex: 0, matrix: geometry.rectMatrix(box) }]);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 5 });
+    expect(state.focusRequest.value).toEqual({ pageIndex: 0, kind: "image", id: 5 });
+
+    await actions.placeAtCentre("signature");
+    expect(state.dialog.value).toEqual({ kind: "signature", mode: "signature", forField: null });
+    state.showDialog(null);
+    const created = (globalThis as any).__created as { tag: string; clicked?: boolean; type?: string }[];
+    created.length = 0;
+    await actions.placeAtCentre("image");
+    expect(created).toMatchObject([{ tag: "input", type: "file", clicked: true }]);
+    await actions.setTool(null);
+    await actions.placeAtCentre("check"); // not in Compila e firma: nothing
+    expect(calls).toEqual(["addImage:0"]);
+  });
+});
+
+describe("U44 Next empty field", () => {
+  it("the banner's button goes on from the field just left (its blur took focusedField), not back to the start of the page", async () => {
+    const page = await filling("GC.pdf", FORM([3], 0));
+    const { goToNextEmptyField } = await import("../src/ui/fill/FillBar");
+    const fields = engineImpl.fields;
+    engineImpl.fields = async () => [FIELD("a"), FIELD("b", { index: 1, value: "x" }), FIELD("c", { index: 2 })];
+    try {
+      page.fields.value = { rev: page.rev.peek(), fields: [FIELD("a"), FIELD("b", { index: 1 }), FIELD("c", { index: 2 })] };
+      state.focusedField.value = { pageIndex: 0, name: "b", index: 1 };
+      state.focusedField.value = null; // the button took the focus; b's blur has asked for its write
+      const write = actions.setFieldValue(0, FIELD("b", { index: 1 }), { kind: "text", text: "x" }, page.rev.peek());
+      await goToNextEmptyField();
+      await write;
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "c", index: 2 });
+      expect(toastTexts()).toEqual([]);
+    } finally {
+      engineImpl.fields = fields;
+    }
+  });
+
+  it("a value still being written counts as filled: never back to the field just filled", async () => {
+    const page = await filling("GD.pdf", FORM([2], 0));
+    const fields = engineImpl.fields;
+    engineImpl.fields = async () => [FIELD("a", { value: "Mario" }), FIELD("b", { index: 1 })];
+    try {
+      page.fields.value = { rev: page.rev.peek(), fields: [FIELD("a"), FIELD("b", { index: 1 })] };
+      const held = hold("setField");
+      const write = actions.setFieldValue(0, FIELD("a"), { kind: "text", text: "Mario" }, page.rev.peek());
+      const release = await held;
+      const next = actions.focusNextField({ pageIndex: 0, index: -1 }, true); // from the start of the page
+      release();
+      await write;
+      expect(await next).toBe(true);
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "b", index: 1 });
+    } finally {
+      engineImpl.fields = fields;
+    }
+  });
+});
+
+describe("U46 wording chosen here", () => {
+  it("initials copied to one page say page, not pages; a picture added on a touch screen names the round grip", async () => {
+    const pages = [{ index: 0, bounds: A4 }, { index: 1, bounds: A4 }];
+    await filling("GH.pdf", { pageCount: 2, pages });
+    const ini = INITIALS();
+    await actions.placeSignature(0, ini, SIGNED_AT);
+    const images = engineImpl.images;
+    engineImpl.images = async (p: number) => (p === 0 ? [IMAGE(5, { matrix: SIGNED_AT, added: true })] : []);
+    try {
+      state.toasts.value = [];
+      const held = hold("addImage");
+      const placing = actions.placeInitialsOnPages(0, 5);
+      (await takeDialog("initials-pages")).resolve([1]);
+      const release = await held;
+      expect(toastTexts()).toEqual(["Adding initials to 1 page…"]);
+      release();
+      await placing;
+    } finally {
+      engineImpl.images = images;
+    }
+    expect(toastTexts()).toEqual(["Initials added to 1 page."]);
+
+    const media = await import("../src/ui/media");
+    media.isCoarse.value = true;
+    try {
+      state.toasts.value = [];
+      (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 100, height: 100 });
+      await actions.addPictureFromFile(PICKED);
+      expect(toastTexts()).toEqual(["Image added on page 1. Drag the round grip to move it."]);
+    } finally {
+      media.isCoarse.value = false;
+    }
+  });
+});
+
+describe("U45 the focus asked for, and Enter on the page", () => {
+  it("a change of tool or another document drops the focus asked for", async () => {
+    await filling("GE.pdf");
+    state.focusRequest.value = { pageIndex: 0, kind: "added", id: 1 };
+    await actions.setTool("edit");
+    expect(state.focusRequest.value).toBeNull();
+    state.focusRequest.value = { pageIndex: 0, kind: "image", id: 2 };
+    await openWith("GF.pdf", {});
+    expect(state.focusRequest.value).toBeNull();
+  });
+
+  it("Enter on the page region with Testo opens a writer in the middle; not with ✓, nor with a writer open, nor elsewhere", async () => {
+    const { press, restore } = await keyboard();
+    const g = globalThis as any;
+    const scroller = { tag: "scroller" };
+    const query = g.document.querySelector;
+    g.document.querySelector = (sel: string) => (sel === ".viewer .scroller" ? scroller : null);
+    try {
+      await filling("GG.pdf");
+      state.writerStyle.value = { size: 10, color: "black" };
+      const { writerOrigin } = await import("../src/ui/fill/geometry");
+      expect(press("Enter").defaultPrevented).toBe(false); // not on the page region
+      expect(press("Enter", { target: scroller }).defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(state.openWriter.value).not.toBeNull());
+      expect(state.openWriter.value).toMatchObject({ editing: null, origin: writerOrigin([50, 50], 10) });
+      expect(press("Enter", { target: scroller }).defaultPrevented).toBe(false); // a writer is open
+      actions.cancelWriter();
+      state.fillTool.value = "check";
+      expect(press("Enter", { target: scroller }).defaultPrevented).toBe(false);
+      expect(press("Enter", { target: scroller, shiftKey: true }).defaultPrevented).toBe(false);
+      await new Promise((r) => setTimeout(r, 10));
+      expect(calls).toEqual([]);
+    } finally {
+      g.document.querySelector = query;
+      restore();
+    }
+  });
+});
+
+describe("U47 where a new text lands, as openWriterAt says", () => {
+  it("resolves with the origin used: kept on the page for a tick, a date and a writer; a reopened text's own; null when nothing came", async () => {
+    await filling("GK.pdf"); // 100 × 100
+    state.writerStyle.value = { size: 10, color: "black" };
+    const tick = await actions.openWriterAt(0, [-3, 99], "check");
+    expect(tick).toEqual(sent[0].origin); // what the engine was sent, not the tap
+    expect(tick![0]).toBe(0);
+    const date = await actions.openWriterAt(0, [98, 2], "date");
+    expect(date).toEqual(sent[1].origin);
+    expect(date).toEqual([100 - 0.56 * 10 * [...actions.todayText()].length, 8]);
+    const writer = await actions.openWriterAt(0, [99, 0.5], "text");
+    expect(writer).toEqual(state.openWriter.value?.origin);
+    expect(writer).toEqual([100 - 0.56 * 10 * 2, 8]);
+    expect(await actions.reopenAdded(0, ADDED(5, "Fine", [99, 99.9]))).toEqual([99, 99.9]);
+    actions.cancelWriter();
+
+    // Asked for something else meanwhile: the first writer never opens.
+    const first = actions.openWriterAt(0, [10, 20], "text");
+    const second = actions.openWriterAt(0, [30, 40], "text");
+    expect(await first).toBeNull();
+    expect(await second).toEqual([30, 40]);
+    actions.cancelWriter();
+
+    // Refused by the engine: nothing written, null.
+    const { EngineError } = await import("../src/engine/client");
+    const addText = engineImpl.addText;
+    engineImpl.addText = async () => { throw new EngineError("locked", "not-editable"); };
+    try {
+      expect(await actions.openWriterAt(0, [50, 50], "cross")).toBeNull();
+    } finally {
+      engineImpl.addText = addText;
+    }
+    await actions.setTool(null);
+    expect(await actions.openWriterAt(0, [50, 50], "check")).toBeNull(); // not in Compila e firma
+  });
+});
+
+describe("U48 Sign here on a turned field", () => {
+  it("the signature goes in upright to the field's text: signatureInField with the widget's rotation", async () => {
+    await filling("GL.pdf");
+    const geometry = await import("../src/ui/fill/geometry");
+    const rect = [10, 10, 40, 110] as [number, number, number, number]; // 30 × 100: a field on its side
+    state.showDialog({ kind: "signature", mode: "signature", forField: { pageIndex: 0, rect, rotation: 90 } });
+    actions.useSignature(SIG()); // 3:1
+    await vi.waitFor(() => expect(calls).toEqual(["addImage:0"]));
+    expect(sent[0].targets[0].matrix).toEqual(geometry.signatureInField(rect, 3, 90));
+    expect(sent[0].targets[0].matrix).not.toEqual(geometry.rectMatrix(geometry.fitInField(rect, 3)));
+    // Turned a quarter: the picture's width runs down the page (a = 0, b > 0).
+    const [a, b] = sent[0].targets[0].matrix;
+    expect(a).toBe(0);
+    expect(b).toBeGreaterThan(0);
+  });
+});
+
+describe("U49 Next empty field in the last empty one", () => {
+  it("keeps the focus in it and says it is the last one, never that none are left; filled, there is none", async () => {
+    const page = await filling("GM.pdf", FORM([2], 1));
+    const fields = engineImpl.fields;
+    let value = "";
+    engineImpl.fields = async () => [FIELD("a", { required: true, value }), FIELD("b", { index: 1, value: "x" })];
+    try {
+      page.fields.value = { rev: page.rev.peek(), fields: await engineImpl.fields() };
+      state.focusedField.value = { pageIndex: 0, name: "a", index: 0 };
+      expect(await actions.focusNextField({ pageIndex: 0, index: 0, name: "a" }, true)).toBe(true);
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "a", index: 0 });
+      expect(toastTexts()).toEqual(["This is the last empty field."]);
+
+      // The banner's button, from the field (its press kept the focus there): the same, said once.
+      state.toasts.value = [];
+      const { goToNextEmptyField } = await import("../src/ui/fill/FillBar");
+      await goToNextEmptyField();
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "a", index: 0 });
+      expect(toastTexts()).toEqual(["This is the last empty field."]);
+
+      // Just filled (the write still on its way when asked): no empty field left, and nothing said here.
+      state.toasts.value = [];
+      const held = hold("setField");
+      const write = actions.setFieldValue(0, FIELD("a", { required: true }), { kind: "text", text: "Mario" }, page.rev.peek());
+      const release = await held;
+      value = "Mario";
+      const next = actions.focusNextField({ pageIndex: 0, index: 0, name: "a" }, true);
+      release();
+      await write;
+      expect(await next).toBe(false);
+      expect(toastTexts()).toEqual([]);
+    } finally {
+      engineImpl.fields = fields;
+    }
+  });
+
+  it("an empty field after the one the user is in still comes first; a locked field the user is in is not the last empty one", async () => {
+    const page = await filling("GN.pdf", FORM([3], 0));
+    const fields = engineImpl.fields;
+    engineImpl.fields = async () => [
+      FIELD("a"), FIELD("b", { index: 1, value: "x" }), FIELD("c", { index: 2 }),
+    ];
+    try {
+      page.fields.value = { rev: page.rev.peek(), fields: await engineImpl.fields() };
+      expect(await actions.focusNextField({ pageIndex: 0, index: 0, name: "a" }, true)).toBe(true);
+      expect(state.focusedField.value).toEqual({ pageIndex: 0, name: "c", index: 2 });
+      expect(toastTexts()).toEqual([]);
+      engineImpl.fields = async () => [FIELD("ro", { locked: "read-only" }), FIELD("b", { index: 1, value: "x" })];
+      page.fields.value = { rev: page.rev.peek(), fields: await engineImpl.fields() };
+      expect(await actions.focusNextField({ pageIndex: 0, index: 0, name: "ro" }, true)).toBe(false);
+      expect(toastTexts()).toEqual([]);
+    } finally {
+      engineImpl.fields = fields;
+    }
+  });
+});
+
+describe("U50 Forget, said once", () => {
+  it("with the signature sheet open, no toast (the sheet shows it); closed, one toast", async () => {
+    await filling("GO.pdf");
+    const g = globalThis as any;
+    const sig = SIG({ id: "sig-once" });
+    actions.useSignature(sig);
+    expect(await actions.rememberSignature(sig)).toBe(true);
+    state.toasts.value = [];
+    state.showDialog({ kind: "signature", mode: "signature", forField: null });
+    g.__storeRefuses = true;
+    try {
+      expect(await actions.forgetSignature("sig-once")).toBe(false);
+    } finally {
+      g.__storeRefuses = false;
+    }
+    expect(state.savedSignatures.value.map((s) => s.id)).toContain("sig-once");
+    expect(toastTexts()).toEqual([]);
+    expect(await actions.forgetSignature("sig-once")).toBe(true);
+    expect(state.sessionSignatures.value.map((s) => s.id)).not.toContain("sig-once");
+    expect(toastTexts()).toEqual([]);
+
+    state.showDialog(null);
+    const again = SIG({ id: "sig-twice", kind: "initials" });
+    expect(await actions.rememberSignature(again)).toBe(true);
+    g.__storeRefuses = true;
+    try {
+      expect(await actions.forgetSignature("sig-twice")).toBe(false);
+    } finally {
+      g.__storeRefuses = false;
+    }
+    expect(toastTexts()).toEqual(["Couldn't forget it on this device: it's still saved. Try again."]);
+    state.toasts.value = [];
+    expect(await actions.forgetSignature("sig-twice")).toBe(true);
+    expect(toastTexts()).toEqual(["Initials forgotten."]);
+  });
+});
+
+describe("U51 typingField", () => {
+  it("goes back to false when Modifica comes on and when the document goes; other tools keep it", async () => {
+    await filling("GP.pdf");
+    state.typingField.value = true;
+    await actions.setTool(null); // the form fields stay in browse
+    expect(state.typingField.value).toBe(true);
+    await actions.setTool("fill");
+    expect(state.typingField.value).toBe(true);
+    await actions.setTool("edit");
+    expect(state.typingField.value).toBe(false);
+    await actions.setTool("fill");
+    state.typingField.value = true;
+    await openWith("GQ.pdf", {});
+    expect(state.typingField.value).toBe(false);
+    state.typingField.value = true;
+    await actions.closeDocument();
+    expect(state.typingField.value).toBe(false);
+  });
+});
+
+describe("U52 mark and date texts", () => {
+  it("the toasts of Put it in the middle end with a full stop, in both languages", async () => {
+    const { en } = await import("../src/i18n/en");
+    const { it: italian } = await import("../src/i18n/it");
+    for (const key of ["mark.placedAt", "writer.doneAt", "form.lastEmpty"] as const) {
+      expect({ key, en: en[key].endsWith("."), it: italian[key].endsWith(".") }).toEqual({ key, en: true, it: true });
     }
   });
 });
