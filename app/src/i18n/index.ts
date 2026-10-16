@@ -70,6 +70,19 @@ export function formatFontSize(size: number): string {
   return (Math.round(size * 10) / 10).toLocaleString(locale.value);
 }
 
+const MM_PER_PT = 25.4 / 72;
+
+/**
+ * A length in points as millimetres for people (an image's size or position): whole ones, one
+ * decimal below 10 mm, with the decimal comma in Italian ("0,3" for a 0.75 pt spacer picture,
+ * which whole millimetres would call 0). No thousands separator, no "-0".
+ */
+export function formatMm(pt: number): string {
+  const mm = pt * MM_PER_PT;
+  const rounded = Math.abs(mm) < 10 ? Math.round(mm * 10) / 10 : Math.round(mm);
+  return (rounded || 0).toLocaleString(locale.value, { useGrouping: false });
+}
+
 /** "1 page" / "12 pages". */
 export function pageCount(count: number): string {
   return count === 1 ? t("pages.countOne") : t("pages.count", { count });

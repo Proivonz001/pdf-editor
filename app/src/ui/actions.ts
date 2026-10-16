@@ -1,21 +1,27 @@
-// What the buttons, shortcuts and the line editor do: open, close, edit mode, edit, undo/redo,
-// download (one tap, or with options: PDF/A, password), share, update. Engine changes run one at
-// a time (a promise chain), so an Undo clicked while an edit is being written applies after it,
-// never in between. Download, share, open, close, update and leaving edit mode first write what
-// is still typed in the line editor (flushEditor), so it is neither left out of the file nor
-// lost without a warning.
+// What the buttons, shortcuts, the line editor and the image frame do: open, close, edit mode,
+// edit a line, select, move, delete or replace an image, undo/redo, download (one tap, or with
+// options: PDF/A, password), share, update. Engine changes run one at a time (a promise chain),
+// so an Undo clicked while an edit is being written applies after it, never in between.
+// Download, share, open, close, update, undo, redo and leaving edit mode first write what is
+// still typed in the line editor, or an image's keyboard move still waiting (flushEditor), so it
+// is neither left out of the file nor lost without a warning.
 import { batch } from "@preact/signals";
 import { EngineError } from "../engine/client";
-import type { DocInfo, LineInfo, PdfaReport, SaveFormat, SaveOptions, SavePassword } from "../engine/protocol";
+import type {
+  DocInfo, ImageEditResult, ImageInfo, ImageLockReason, LineInfo, Matrix, PdfaReport, SaveFormat, SaveOptions,
+  SavePassword,
+} from "../engine/protocol";
 import { t } from "../i18n";
 import { applyUpdate } from "../platform/pwa";
 import {
-  busy, confirmDialog, currentPage, dialog, dismissToast, doc, downloadRunning, editingLine, editingStopped, editMode,
-  engine, engineStatus, fitMode, flushEditor, hasUnsavedWork, history, markSaved, opening, recordHistory,
-  resetHistory, saveKey, sheet, showDialog, showToast, type BusyKind, type DialogState, type SavePurpose,
+  busy, confirmDialog, countImageEdit, currentPage, dialog, dismissToast, doc, downloadRunning, editingLine,
+  editingStopped, editMode, engine, engineStatus, fitMode, flushEditor, hasUnsavedWork, history, imageEditsPending,
+  markSaved, opening, recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage, sheet, showDialog,
+  showToast, type BusyKind, type DialogState, type SavePurpose,
 } from "../state";
 import { createPages, type OpenDoc, type PageModel } from "../viewer/model";
 import { rescueFocus, viewerScroller } from "./focus";
+import { PictureError, preparePicture } from "./imageFile";
 
 // ---------------------------------------------------------------------------------------------
 // Helpers
@@ -74,6 +80,7 @@ function stopEditing() {
     editingStopped.value = true;
     editMode.value = false;
     editingLine.value = null;
+    selectedImage.value = null;
   });
   showDialog({ kind: "alert", title: t("broken.title"), body: t("broken.body") });
 }
@@ -114,6 +121,8 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
   const seq = ++openSeq;
   batch(() => {
     editingLine.value = null;
+    selectedImage.value = null;
+    resetImageEdits(); // those of the document before end on their own, written nowhere
     editingStopped.value = false;
     sheet.value = null;
     doc.value = null;
@@ -190,6 +199,8 @@ export async function closeDocument() {
   homeFocus = true; // the control that closed it is about to go: the home page takes the focus
   batch(() => {
     editingLine.value = null;
+    selectedImage.value = null;
+    resetImageEdits(); // one still queued ends on its own, written nowhere: no "unsaved" warning
     editingStopped.value = false;
     editMode.value = false;
     sheet.value = null;
@@ -207,13 +218,15 @@ export async function closeDocument() {
 
 /**
  * Turn edit mode on or off. Turning it off first writes what the line editor holds (a tap on a
- * tab does not always take the focus away from the field, so blur cannot be relied on).
+ * tab does not always take the focus away from the field, so blur cannot be relied on), or the
+ * selected image's keyboard move.
  */
 export async function setEditMode(on: boolean) {
   const before = document.activeElement;
   if (!on) await flushEditor();
   batch(() => {
     editingLine.value = null;
+    selectedImage.value = null;
     editMode.value = on && doc.peek() !== null && !editingStopped.peek();
   });
   // The control that did it may go with the change (Done in the edit banner, Edit text in the
@@ -249,14 +262,21 @@ export function replaceLine(page: PageModel, line: LineInfo, text: string, rev: 
   });
 }
 
-function historyStep(step: "undo" | "redo") {
+async function historyStep(step: "undo" | "redo") {
   const d = doc.peek();
-  if (!d) return Promise.resolve();
+  if (!d) return;
+  // What the line editor holds, or an image's keyboard move still waiting, is the latest change:
+  // written first, then undone (redo brings it back).
+  await flushEditor();
   return exclusive(step, async () => {
     if (doc.peek() !== d || editingStopped.peek()) return;
     const h = history.peek();
     if (step === "undo" ? !h.canUndo : !h.canRedo) return;
-    editingLine.value = null;
+    // Image indices may change with the step: the selection goes, as the line editor does.
+    batch(() => {
+      editingLine.value = null;
+      selectedImage.value = null;
+    });
     try {
       const state = step === "undo" ? await engine().undo() : await engine().redo();
       if (doc.peek() === d) recordHistory(state, step);
@@ -268,6 +288,271 @@ function historyStep(step: "undo" | "redo") {
 
 export const undo = () => historyStep("undo");
 export const redo = () => historyStep("redo");
+
+/**
+ * Open the line editor on `line` (a click or tap on its box), deselecting the selected image. A
+ * keyboard move of that image still waiting is written first; if it changed this page, the
+ * line's index may be stale, so no editor opens (the line is clicked again). As for images,
+ * nothing opens while an edit, undo or redo is being written or an image edit waits for its turn
+ * (a Delete behind a download, say): when it lands the page is read again, which closes the
+ * editor and would drop what was typed in it without a word.
+ */
+export async function openLine(pageIndex: number, line: LineInfo): Promise<void> {
+  const d = doc.peek();
+  const page = d?.pages[pageIndex];
+  const canOpen = () => editMode.peek() && !editingStopped.peek() && !changing();
+  if (!d || !page || !canOpen()) return;
+  if (selectedImage.peek()) {
+    const rev = page.rev.peek();
+    await flushEditor();
+    if (doc.peek() !== d) return;
+    if (page.rev.peek() !== rev) {
+      selectedImage.value = null;
+      return;
+    }
+  }
+  if (!canOpen()) return;
+  batch(() => {
+    selectedImage.value = null;
+    editingLine.value = { pageIndex, line };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Images
+//
+// In edit mode an image is selected with a click or a tap, then moved, resized, rotated (all
+// three are transformImage), deleted or replaced. Each change is one edit in the history, made
+// like a line edit: one at a time, refused when the page changed since its images were read.
+// The selection is an index in the page's image list, which an edit can change: it follows the
+// edited image to its new index (none after a delete), and after a delete a selection on an
+// image painted later moves one place up with it; undo, redo, leaving edit mode, open and close
+// clear it. An image edit counts from the moment it is asked for (imageEditsPending), even when
+// it waits behind a download: until it is done no other image is selected and no line opened, so
+// nothing is picked on indices about to change, and a second Delete of the same image is the
+// first one. Only the open document's edits count: opening or closing one starts again from 0.
+
+/** Why an image cannot be moved, in words (for the toast, the box's label, the details panel). */
+export function lockReasonText(reason: ImageLockReason | null): string {
+  return t(`image.reason.${reason ?? "unreadable"}`);
+}
+
+/**
+ * An edit, undo or redo is running, or an image edit of the open document waits for its turn:
+ * the pages' image and line indices may be about to change.
+ */
+function changing() {
+  const kind = busy.peek();
+  return kind === "edit" || kind === "undo" || kind === "redo" || imageEditsPending.peek() > 0;
+}
+
+/** The open document, when `page` is one of its pages (not one of a document closed since). */
+function docOf(page: PageModel): OpenDoc | null {
+  const d = doc.peek();
+  return d && d.pages[page.index] === page ? d : null;
+}
+
+/**
+ * Count an image edit of `page` in imageEditsPending from now until it has finished: written,
+ * refused or failed (or its document closed: countImageEdit). `edit` starts right away (its
+ * place in the engine's queue is taken now). A page of a document closed already (an image
+ * frame going away late, say) has nothing to edit: not counted, nothing sent.
+ */
+async function counted(page: PageModel, edit: () => Promise<void>): Promise<void> {
+  if (!docOf(page)) return;
+  const end = countImageEdit();
+  try {
+    await edit();
+  } finally {
+    end();
+  }
+}
+
+/** The selection is on `image` of `page`. */
+function isSelected(page: PageModel, image: ImageInfo) {
+  const sel = selectedImage.peek();
+  return sel !== null && sel.pageIndex === page.index && sel.index === image.index;
+}
+
+/**
+ * Select `image` of page `pageIndex` (a click or tap on it), or deselect with null. A line edit
+ * or an image's keyboard move still waiting is written first; if that changed the page (its
+ * images were read at `rev`), their indices may be stale, so the selection is cleared instead.
+ * A locked image says why and is not selected. Selecting closes the line editor. Nothing is
+ * selected outside edit mode, while another change is being written (as for lines), or while an
+ * image edit waits for its turn (behind a download, say). Deselecting always works.
+ */
+export async function selectImage(pageIndex: number, image: ImageInfo | null, rev?: number): Promise<void> {
+  const d = doc.peek();
+  if (!d) return;
+  await flushEditor();
+  if (doc.peek() !== d) return;
+  if (!image) {
+    selectedImage.value = null;
+    return;
+  }
+  if (!editMode.peek() || editingStopped.peek() || changing()) return;
+  const page = d.pages[pageIndex];
+  if (!page || (rev !== undefined && page.rev.peek() !== rev)) {
+    selectedImage.value = null;
+    return;
+  }
+  if (!image.movable) {
+    showToast("info", t("image.locked", { reason: lockReasonText(image.reason) }));
+    return;
+  }
+  batch(() => {
+    editingLine.value = null;
+    selectedImage.value = { pageIndex, index: image.index };
+  });
+}
+
+/**
+ * Run one image edit in the engine. `current` says whether the image's index still holds (the
+ * page has not changed since its images were read); if not, nothing is written. On success the
+ * edit is recorded and the selection follows the image, unless the user selected another one
+ * (or none, or left edit mode) while it was written. After a delete (no new index) the images
+ * painted after it each move one place up, a selected one too.
+ */
+function editImage(
+  page: PageModel, image: ImageInfo, current: () => boolean, send: () => Promise<ImageEditResult>,
+): Promise<void> {
+  const d = docOf(page);
+  return exclusive("edit", async () => {
+    if (!d || doc.peek() !== d || editingStopped.peek()) return;
+    if (!current()) {
+      showToast("error", t("image.failed"));
+      return;
+    }
+    try {
+      const result = await send();
+      if (doc.peek() !== d) return;
+      batch(() => {
+        const sel = selectedImage.peek();
+        recordHistory(result, "edit");
+        if (!sel || sel.pageIndex !== page.index) return;
+        if (sel.index === image.index) {
+          selectedImage.value = result.imageIndex === null ? null : { pageIndex: page.index, index: result.imageIndex };
+        } else if (result.imageIndex === null && sel.index > image.index) {
+          selectedImage.value = { pageIndex: page.index, index: sel.index - 1 };
+        }
+      });
+    } catch (e) {
+      if (e instanceof EngineError && e.code === "not-editable") {
+        showToast("info", t("image.notEditable"));
+        if (isSelected(page, image)) selectedImage.value = null;
+        return;
+      }
+      reportEngineError(e, t("image.failed"));
+    }
+  });
+}
+
+/**
+ * Move, resize or rotate an image: `matrix` is where it is to be drawn (ImageInfo.matrix
+ * convention). `rev` is the page revision its images were read at.
+ */
+export function transformImage(page: PageModel, image: ImageInfo, matrix: Matrix, rev: number): Promise<void> {
+  return counted(page, () => editImage(
+    page, image,
+    () => page.rev.peek() === rev,
+    () => engine().transformImage(page.index, image.index, matrix),
+  ));
+}
+
+/** Deletions asked for and not finished yet, by document, page, revision and image. */
+const deleting = new Map<string, Promise<void>>();
+
+/**
+ * Delete an image (`rev`: the page revision its images were read at). Delete pressed again
+ * while the first one waits behind a download is that same deletion, not a second one (which
+ * would then be refused as stale, with an error, although the image went as asked).
+ */
+export function deleteImage(page: PageModel, image: ImageInfo, rev: number): Promise<void> {
+  const key = `${doc.peek()?.id ?? 0}:${page.index}:${rev}:${image.index}`;
+  const queued = deleting.get(key);
+  if (queued) return queued;
+  const run = counted(page, () => editImage(
+    page, image,
+    () => page.rev.peek() === rev,
+    () => engine().deleteImage(page.index, image.index),
+  ));
+  deleting.set(key, run);
+  const forget = () => {
+    if (deleting.get(key) === run) deleting.delete(key);
+  };
+  run.then(forget, forget);
+  return run;
+}
+
+/**
+ * Replace an image with the picture in `file`, prepared first (upright, scaled down, JPEG or
+ * PNG: imageFile.ts). The engine fits it inside the image's current box, so only which
+ * placement it is matters: when the page changed since `rev` through an edit of this very image
+ * (a keyboard move written while the picker was open), the selection, which follows the image,
+ * still says that it is the same index. It counts as pending from the moment the picture is
+ * chosen, its preparation included.
+ */
+export function replaceImage(page: PageModel, image: ImageInfo, rev: number, file: File): Promise<void> {
+  const d = docOf(page);
+  if (!d || editingStopped.peek()) return Promise.resolve();
+  return counted(page, async () => {
+    // Decoding and encoding a large photo takes a moment: outside the engine's queue.
+    const status = showToast("info", t("image.preparing"), 0);
+    let bytes: ArrayBuffer;
+    try {
+      bytes = (await preparePicture(file)).bytes;
+    } catch (e) {
+      const tooBig = e instanceof PictureError && e.code === "too-big";
+      if (!tooBig) console.warn("The picture could not be prepared", e);
+      showToast("error", tooBig ? t("image.pictureTooBig") : t("image.pictureUnreadable"));
+      return;
+    } finally {
+      dismissToast(status);
+    }
+    if (doc.peek() !== d) return;
+    await editImage(
+      page, image,
+      () => page.rev.peek() === rev || isSelected(page, image),
+      () => engine().replaceImage(page.index, image.index, bytes),
+    );
+  });
+}
+
+/** The input of the picture picker open now, if any. */
+let picker: HTMLInputElement | null = null;
+
+/**
+ * Replace… in the image's context bar: the system picker for a picture, then replaceImage. It
+ * has no `capture` attribute, so phones offer the camera and the gallery both. The input is made
+ * for this pick and removed after it; it is attached (iOS Safari opens pickers only for inputs
+ * in the document) and clicked right here, within the user's click.
+ */
+export function chooseReplacement(page: PageModel, image: ImageInfo, rev: number): void {
+  if (!doc.peek() || editingStopped.peek()) return;
+  // A keyboard move still waiting is written now, not while the picker is open.
+  void flushEditor();
+  picker?.remove(); // left over from a pick cancelled where "cancel" is not fired
+  const input = document.createElement("input");
+  picker = input;
+  input.type = "file";
+  input.accept = "image/*";
+  input.hidden = true;
+  input.tabIndex = -1;
+  input.setAttribute("aria-hidden", "true");
+  const done = () => {
+    input.remove();
+    if (picker === input) picker = null;
+  };
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    done();
+    if (file) void replaceImage(page, image, rev, file);
+  });
+  input.addEventListener("cancel", done);
+  document.body.append(input);
+  input.click();
+}
 
 // ---------------------------------------------------------------------------------------------
 // Download and share

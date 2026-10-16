@@ -4,8 +4,8 @@
 // CropBox already applied — what the user sees. MuPDF's structured text, annotations and
 // rendering all use it. The UI converts to screen pixels with: px = (pt - bounds origin) * zoom.
 //
-// The worker owns the document. The UI never holds a copy of it: it asks for page bitmaps
-// and text lines, sends edits, and asks for the bytes when the user downloads.
+// The worker owns the document. The UI never holds a copy of it: it asks for page bitmaps,
+// text lines and images, sends edits, and asks for the bytes when the user downloads.
 
 /** x0, y0, x1, y1 in page space (points, y down). */
 export type Rect = [number, number, number, number];
@@ -259,6 +259,58 @@ export interface EditResult extends HistoryState {
   missingChars: string[];
 }
 
+// ---------------------------------------------------------------------------------------------
+// Images (phase 3, release 2): the pictures drawn on a page, which can be moved, resized,
+// rotated, deleted or replaced one placement at a time (the same picture drawn twice is two
+// placements). Only the drawing instruction of that placement changes: the text over it stays
+// over it, other placements of the same picture stay as they are (ARCHITECTURE.md, "Images").
+
+/**
+ * An affine matrix [a, b, c, d, e, f] in the PDF layout: it maps (x, y) to
+ * (a·x + c·y + e, b·x + d·y + f), the same layout as CSS matrix(a, b, c, d, e, f).
+ */
+export type Matrix = [number, number, number, number, number, number];
+
+/** Why an image cannot be moved, resized, rotated, deleted or replaced (ImageInfo.reason). */
+export type ImageLockReason =
+  /** Drawn inside a group (a Form XObject) that also draws other content, such as a caption. */
+  | "group"
+  /** A transparency mask (soft mask) set outside the image's own drawing block applies to it. */
+  | "soft-mask"
+  /** Cropped by a clip set outside its own drawing block: moved, it would show another part. */
+  | "cropped"
+  /** The page's drawing instructions could not be read with certainty (the engine's safety check disagreed). */
+  | "unreadable";
+
+/** One placement of a picture on a page, in painting order. */
+export interface ImageInfo {
+  /** Position in the page's image list (painting order). Changes after an edit: always re-read images. */
+  index: number;
+  /**
+   * Where the picture is drawn, in page space: the matrix maps the picture's unit square, with
+   * (0, 0) its top-left corner and (1, 1) its bottom-right corner as the picture is seen, onto
+   * the page. An upright picture W × H pt with its top-left corner at (x, y) has
+   * [W, 0, 0, H, x, y]; a rotated or flipped one has the rotation in a, b, c, d.
+   */
+  matrix: Matrix;
+  /** Bounding box of the whole picture (page space). */
+  bbox: Rect;
+  /** The part of bbox that shows (clips applied): where the user can click it. */
+  visible: Rect;
+  /** Size of the picture in pixels. */
+  pixelWidth: number;
+  pixelHeight: number;
+  /** False when the image cannot be edited; `reason` says why. */
+  movable: boolean;
+  reason: ImageLockReason | null;
+}
+
+export interface ImageEditResult extends HistoryState {
+  pageIndex: number;
+  /** The edited image's index in the page's new image list (the same as before for a move or a replace); null after a delete. */
+  imageIndex: number | null;
+}
+
 export interface RenderResult {
   bitmap: ImageBitmap;
   /** Pixel size of the bitmap. */
@@ -273,6 +325,23 @@ export type Request =
   | { op: "render"; pageIndex: number; scale: number }
   | { op: "lines"; pageIndex: number }
   | { op: "replaceLine"; pageIndex: number; lineIndex: number; text: string }
+  /** The page's images (ImageInfo), in painting order. */
+  | { op: "images"; pageIndex: number }
+  /**
+   * Move, resize or rotate one image: `matrix` is where it must be drawn (ImageInfo.matrix
+   * convention). Refused ("bad-request") when the matrix is not finite or degenerate, a side is
+   * shorter than MIN_IMAGE_SIDE or longer than MAX_IMAGE_SIDE, or its centre is off the page.
+   */
+  | { op: "transformImage"; pageIndex: number; imageIndex: number; matrix: Matrix }
+  | { op: "deleteImage"; pageIndex: number; imageIndex: number }
+  /**
+   * Replace one placement with another picture (JPEG or PNG bytes, at most MAX_IMAGE_BYTES,
+   * transferred): fitted inside the old one's box keeping its own proportions, centred, with the
+   * same rotation. Other placements of the old picture stay.
+   */
+  | { op: "replaceImage"; pageIndex: number; imageIndex: number; bytes: ArrayBuffer }
+  /** One image alone on a transparent bitmap, with its clips (the preview while it is dragged). */
+  | { op: "renderImage"; pageIndex: number; imageIndex: number; scale: number }
   | { op: "undo" }
   | { op: "redo" }
   | { op: "save"; options: SaveOptions }
@@ -285,12 +354,29 @@ export interface ResultMap {
   render: RenderResult;
   lines: LineInfo[];
   replaceLine: EditResult;
+  images: ImageInfo[];
+  transformImage: ImageEditResult;
+  deleteImage: ImageEditResult;
+  replaceImage: ImageEditResult;
+  renderImage: ImageRenderResult;
   undo: HistoryState;
   redo: HistoryState;
   save: SaveResult;
   pdfaCheck: PdfaReport;
   close: null;
 }
+
+/** renderImage: the bitmap covers `rect` (page space), the image's visible box rounded out to whole pixels. */
+export interface ImageRenderResult extends RenderResult {
+  rect: Rect;
+}
+
+/** Shortest side an image may be given, in points. */
+export const MIN_IMAGE_SIDE = 1;
+/** Longest side an image may be given, in points (PDF's own limit for a page side). */
+export const MAX_IMAGE_SIDE = 14_400;
+/** Largest picture accepted by replaceImage, in bytes. */
+export const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
 
 export type Op = Request["op"];
 export type RequestOf<K extends Op> = Extract<Request, { op: K }>;
@@ -300,7 +386,8 @@ export type RequestMessage = { id: number } & Request;
 
 /**
  * Error codes in `{ ok: false, code }` replies: "no-document", "bad-request", "edit-failed",
- * "not-editable" (the line has characters the engine cannot rewrite safely), "broken" (an edit
+ * "not-editable" (the line has characters the engine cannot rewrite safely, or the image is
+ * locked: ImageInfo.movable false), "broken" (an edit
  * failed and the document could not be restored: the UI must stop editing and offer to reload),
  * "pdfa-blocked" (save as "pdfa-2b" found blockers: ask pdfaCheck first),
  * "engine" (anything else). The client adds "init" and "crashed".

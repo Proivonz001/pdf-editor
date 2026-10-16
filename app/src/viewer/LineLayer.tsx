@@ -15,7 +15,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { LineInfo } from "../engine/protocol";
 import { formatFontSize, t } from "../i18n";
 import { busy, editingLine, registerEditor, showToast } from "../state";
-import { replaceLine } from "../ui/actions";
+import { openLine, replaceLine } from "../ui/actions";
 import { IconCheck, IconClose, IconFont } from "../ui/icons";
 import { isCoarse } from "../ui/media";
 import { fontDisplayName, fontRawFamily } from "./fontName";
@@ -418,7 +418,7 @@ export function LineLayer({ page, zoom }: { page: PageModel; zoom: number }) {
                 return;
               }
               if (busy.peek() === "edit") return; // the previous edit is still being written
-              editingLine.value = { pageIndex: page.index, line };
+              void openLine(page.index, line); // deselects the selected image too
             }}
           />
         );

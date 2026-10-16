@@ -1206,6 +1206,13 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	if (written) appendContent(doc, pObj, ops);
 	t.write = now() - t0;
 	releasePage(page, lines, glyphs);
+	// App addition: MuPDF keeps every font it has loaded in its resource store, keyed by the font
+	// dict, and does not see that the dict's /ToUnicode or /W just changed. The document would
+	// go on reading U+FFFD for the codes added (which the next edit of the line writes into the
+	// file) and drawing them with the old widths, while the saved bytes, a checkpoint included,
+	// read right. Emptying the store makes MuPDF load the font again. It also drops the decoded
+	// images and every other cached resource, so it is done only when a font was changed.
+	if (toUnicodeAdded || widthsAdded) mupdf.emptyStore();
 
 	return {
 		find, replacement, page: pageIndex,

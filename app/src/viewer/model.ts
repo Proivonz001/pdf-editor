@@ -1,13 +1,21 @@
 // The viewer's model of an open document: one PageModel per page, with small signals so that
 // a page component re-renders only when something about *that* page changes.
 import { signal, type Signal } from "@preact/signals";
-import type { DocInfo, LineInfo, Rect } from "../engine/protocol";
+import type { DocInfo, ImageInfo, LineInfo, Rect } from "../engine/protocol";
 
 /** Text lines of a page, tagged with the page revision they were read at. */
 export interface PageLines {
   rev: number;
   lines: LineInfo[];
   /** Reading the lines failed: nothing to show, and no retry until the page changes. */
+  failed?: boolean;
+}
+
+/** Images of a page (placements, in painting order), tagged with the page revision they were read at. */
+export interface PageImages {
+  rev: number;
+  images: ImageInfo[];
+  /** Reading the images failed: nothing to show, and no retry until the page changes. */
   failed?: boolean;
 }
 
@@ -26,6 +34,8 @@ export interface PageModel {
   rev: Signal<number>;
   /** Cached text lines (edit mode). Null = not read yet or dropped after a change. */
   lines: Signal<PageLines | null>;
+  /** Cached images (edit mode). Null = not read yet or dropped after a change. */
+  images: Signal<PageImages | null>;
 }
 
 export interface OpenDoc {
@@ -46,5 +56,6 @@ export function createPages(info: DocInfo): PageModel[] {
     keep: signal(false),
     rev: signal(0),
     lines: signal<PageLines | null>(null),
+    images: signal<PageImages | null>(null),
   }));
 }

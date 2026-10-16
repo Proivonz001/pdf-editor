@@ -38,6 +38,7 @@
   --page-mark: #b08c00; /* resting underline of an editable line (3.2:1 on white) */
   --page-mark-locked: #8a93a3; /* dashes of a line that cannot be edited (3.1:1 on white) */
   --page-mark-locked-strong: #5b6270; /* the same dashes under the pointer */
+  --page-mark-image: #627ded; /* resting dashes round a picture that can be moved (3.7:1 on white) */
   --hint-bg: #fff6c2;
   --hint-text: #4a3d00;
   --hint-line: #f0dc7a;

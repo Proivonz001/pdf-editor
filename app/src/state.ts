@@ -1,5 +1,6 @@
 // App-wide state, all in @preact/signals: the engine, the open document, the edit history
-// (and whether it has been downloaded), the viewer settings, toasts and dialogs (the download
+// (and whether it has been downloaded), the viewer settings (edit mode, the line being edited,
+// the selected image and the image edits still on their way), toasts and dialogs (the download
 // options and the PDF/A questions among them).
 // The actions that change it live in src/ui/actions.ts.
 import { batch, computed, signal } from "@preact/signals";
@@ -141,7 +142,7 @@ export function markSaved(key: string) {
   savedKey.value = key.slice(sep + 1);
 }
 
-/** Drop the cached lines of these pages and re-render them. */
+/** Drop the cached lines and images of these pages and re-render them. */
 export function invalidatePages(indices: readonly number[]) {
   const d = doc.peek();
   if (!d) return;
@@ -150,6 +151,7 @@ export function invalidatePages(indices: readonly number[]) {
       const page = d.pages[i];
       if (!page) continue;
       page.lines.value = null;
+      page.images.value = null;
       page.rev.value++;
     }
   });
@@ -193,6 +195,53 @@ export interface EditingLine {
 /** The line whose inline editor is open. */
 export const editingLine = signal<EditingLine | null>(null);
 
+export interface SelectedImage {
+  pageIndex: number;
+  /** ImageInfo.index in the page's current image list. */
+  index: number;
+}
+/**
+ * The image selected in edit mode (moved, resized, rotated... with its frame and context bar).
+ * One at a time, and never together with an open line editor: selecting one closes the other.
+ * After an edit of the image it follows the image's new index; undo and redo clear it.
+ */
+export const selectedImage = signal<SelectedImage | null>(null);
+/**
+ * Image edits (moves, resizes, rotations, deletions, replacements) of the open document asked
+ * for and not finished yet: waiting in the engine's queue (behind a download, say), being
+ * prepared or being written. While there are any, image indices may be about to change: the
+ * selected image's frame shows as pending, and no other image is selected nor line opened.
+ * Edits of a document closed since do not count (resetImageEdits).
+ */
+export const imageEditsPending = signal(0);
+
+/** Bumped by resetImageEdits: an edit counted before it no longer changes the count. */
+let imageEditsGeneration = 0;
+
+/**
+ * Another document is opened, or this one closed: from now on only that one's image edits
+ * count. Those of the one before still end on their own (written nowhere), uncounted.
+ */
+export function resetImageEdits() {
+  imageEditsGeneration++;
+  imageEditsPending.value = 0;
+}
+
+/**
+ * Count one image edit of the open document in imageEditsPending; returns the function that ends
+ * it (once; nothing then when another document was opened, or this one closed, meanwhile).
+ */
+export function countImageEdit(): () => void {
+  const generation = imageEditsGeneration;
+  imageEditsPending.value++;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    if (generation === imageEditsGeneration) imageEditsPending.value--;
+  };
+}
+
 export type SheetKind = "pages" | "more";
 /** The bottom sheet open on phones (page thumbnails, or the "More" actions). */
 export const sheet = signal<SheetKind | null>(null);
@@ -207,17 +256,20 @@ export const editingStopped = signal(false);
  */
 export const signedNoticeDismissed = signal<number | null>(null);
 
-/** What the open line editor offers to the rest of the app (see LineLayer). */
+/**
+ * What the open line editor offers to the rest of the app (see LineLayer). The selected image
+ * registers one too while a keyboard move or resize of it waits to be written (ImageLayer).
+ */
 export interface LineEditorHandle {
-  /** The typed text differs from the line (surrounding spaces aside). */
+  /** The typed text differs from the line (surrounding spaces aside), or the image was moved. */
   changed(): boolean;
-  /** Write the typed text, as Enter would; resolves once it is in the engine's history. */
+  /** Write the typed text, as Enter would (or the image's move); resolves once it is in the engine's history. */
   commit(): Promise<void>;
 }
 
 let openEditor: LineEditorHandle | null = null;
 
-/** Called by the line editor when it opens; returns the function to call when it closes. */
+/** Called by the line editor when it opens (or the image frame); returns the function to call when it closes. */
 export function registerEditor(handle: LineEditorHandle): () => void {
   openEditor = handle;
   return () => {
@@ -225,14 +277,20 @@ export function registerEditor(handle: LineEditorHandle): () => void {
   };
 }
 
-/** Write what the open line editor holds, so a download, share, open, close, update or leaving edit mode includes it. */
+/**
+ * Write what the open line editor holds (or the image's keyboard move), so a download, share,
+ * open, close, update, undo, redo or leaving edit mode includes it.
+ */
 export async function flushEditor() {
   await openEditor?.commit();
 }
 
-/** Edits not downloaded, counting text typed in the line editor but not written yet. */
+/**
+ * Edits not downloaded, counting text typed in the line editor (or an image move) not written
+ * yet, and the open document's image edits still waiting in the queue.
+ */
 export function hasUnsavedWork() {
-  return dirty.peek() || (openEditor?.changed() ?? false);
+  return dirty.peek() || imageEditsPending.peek() > 0 || (openEditor?.changed() ?? false);
 }
 
 // ---------------------------------------------------------------------------------------------

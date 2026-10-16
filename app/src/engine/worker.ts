@@ -56,6 +56,20 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
       return reply<"lines">(s.lines(msg.pageIndex));
     case "replaceLine":
       return reply<"replaceLine">(s.replaceLine(msg.pageIndex, msg.lineIndex, msg.text));
+    case "images":
+      return reply<"images">(s.images(msg.pageIndex));
+    case "transformImage":
+      return reply<"transformImage">(s.transformImage(msg.pageIndex, msg.imageIndex, msg.matrix));
+    case "deleteImage":
+      return reply<"deleteImage">(s.deleteImage(msg.pageIndex, msg.imageIndex));
+    case "replaceImage":
+      // Transferred like the bytes of "open": the session keeps this buffer in its log, not a copy.
+      return reply<"replaceImage">(s.replaceImage(msg.pageIndex, msg.imageIndex, msg.bytes, { transfer: true }));
+    case "renderImage": {
+      const { width, height, rgba, scale, rect } = s.renderImage(msg.pageIndex, msg.imageIndex, msg.scale);
+      const bitmap = await createImageBitmap(new ImageData(rgba, width, height));
+      return reply<"renderImage">({ bitmap, width, height, scale, rect }, [bitmap]);
+    }
     case "undo":
       return reply<"undo">(s.undo());
     case "redo":

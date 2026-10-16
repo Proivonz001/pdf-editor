@@ -1,5 +1,5 @@
 // Main-thread side of the engine: starts the worker and turns messages into promises.
-import type { Op, RequestOf, ResponseMessage, ResultMap, SaveOptions } from "./protocol";
+import type { Matrix, Op, RequestOf, ResponseMessage, ResultMap, SaveOptions } from "./protocol";
 // The URL of the worker chunk: Vite bundles worker.ts as a worker entry for this import.
 import workerPath from "./worker.ts?worker&url";
 
@@ -80,6 +80,22 @@ export class EngineClient {
   }
   replaceLine(pageIndex: number, lineIndex: number, text: string) {
     return this.call<"replaceLine">({ op: "replaceLine", pageIndex, lineIndex, text });
+  }
+  images(pageIndex: number) {
+    return this.call<"images">({ op: "images", pageIndex });
+  }
+  transformImage(pageIndex: number, imageIndex: number, matrix: Matrix) {
+    return this.call<"transformImage">({ op: "transformImage", pageIndex, imageIndex, matrix });
+  }
+  deleteImage(pageIndex: number, imageIndex: number) {
+    return this.call<"deleteImage">({ op: "deleteImage", pageIndex, imageIndex });
+  }
+  /** The bytes are transferred to the worker: the caller's ArrayBuffer becomes empty. */
+  replaceImage(pageIndex: number, imageIndex: number, bytes: ArrayBuffer) {
+    return this.call<"replaceImage">({ op: "replaceImage", pageIndex, imageIndex, bytes }, [bytes]);
+  }
+  renderImage(pageIndex: number, imageIndex: number, scale: number) {
+    return this.call<"renderImage">({ op: "renderImage", pageIndex, imageIndex, scale });
   }
   undo() {
     return this.call<"undo">({ op: "undo" });

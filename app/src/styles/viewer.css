@@ -1,10 +1,11 @@
 /* Document viewer: the workspace and its pages, the edit banner and the signed-PDF notice, the
-   page indicator, the busy bar, and edit mode (text lines, the line editor and its context bar).
+   page indicator, the busy bar, and edit mode (text lines, the line editor and its context bar;
+   images, the selection frame and its context bar).
    Colours only from tokens.css. PDF pages are white in both themes, so what is drawn on a page
    (lines, editor, their focus rings) must read on white in dark mode too: there --focus is
    tuned for dark surfaces, so on-page rings use --accent, which is the same colour in the light
-   theme and still reads on white in the dark one; the line marks use the --page-mark tokens,
-   which are the same in both themes. */
+   theme and still reads on white in the dark one; the line and image marks use the --page-mark
+   tokens, which are the same in both themes. */
 
 /* --- Viewer -------------------------------------------------------------------------------- */
 
@@ -51,10 +52,14 @@
   outline-offset: -3px;
 }
 
+/* Clipped to its own box: a selected picture's handles may stand out past the page gutter (a
+   full-width picture on a phone), and must not make the document scroll sideways. Bars and
+   editors stay inside the pages; overflow: clip creates no scroll container. */
 .pages {
   position: relative;
   box-sizing: content-box;
   padding-bottom: env(safe-area-inset-bottom);
+  overflow: clip;
 }
 
 /* Room after the last page (with the layout's own 24 px), so its last lines can be scrolled up
@@ -263,7 +268,8 @@
    highlighter tint and a thin underline (the tint alone hardly shows on white; the underline
    reads at 3:1); under the pointer or the keyboard a highlighter stroke. Both are inset shadows
    standing for a bottom border, so the box does not move. Hover only where there is a real
-   pointer: on touch screens it would stick to the last line tapped. */
+   pointer: on touch screens it would stick to the last line tapped. Lines stack above the image
+   boxes (which come after them in the page), so a line drawn over a picture can be clicked. */
 
 .lines {
   position: absolute;
@@ -272,6 +278,7 @@
 
 .line {
   position: absolute;
+  z-index: 2;
   box-sizing: content-box;
   margin: -1px 0 0 -2px;
   padding: 1px 2px;
@@ -477,6 +484,331 @@
   max-width: 120px;
 }
 
+/* --- Edit mode: images ---------------------------------------------------------------------
+   Every placement is a button over the part of it that shows (ImageLayer.tsx): at rest thin blue
+   dashes (--page-mark-image, at least 3:1 on the white page in both themes), so pictures can be
+   found; under the pointer or the keyboard a solid ink-blue outline and a light tint. One that
+   cannot be moved has grey dots, not the grey dashes of a locked line, so the details panel's
+   legend can tell them apart (a click says why). Over a dark picture the marks keep a pale rim.
+   Stacking: the boxes, the sprite and the ghost below the text lines (z-index 2), the selection
+   frame (3) and its context bar (4) above them, like the line editor and its bar. */
+
+.images {
+  position: absolute;
+  inset: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.image-box {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 1px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.55); /* the rim under the dashes */
+  outline: 1px dashed var(--page-mark-image);
+  outline-offset: -1px;
+  cursor: pointer;
+  font: inherit;
+  transition: background-color 0.12s var(--ease), outline-color 0.12s var(--ease);
+}
+
+.image-box:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .image-box:hover {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    outline-style: solid;
+    outline-color: var(--accent);
+  }
+}
+
+.image-box.is-locked,
+.image-box.is-locked:hover {
+  background: transparent;
+  outline: 1px dotted var(--page-mark-locked);
+  outline-offset: -1px;
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .image-box.is-locked:hover {
+    outline-color: var(--page-mark-locked-strong);
+  }
+}
+
+.image-box.is-locked:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.main[aria-busy="true"] .image-box:not(.is-locked) {
+  cursor: progress;
+}
+
+/* The selection frame: positioned and transformed by ImageLayer to cover the picture's quad, so
+   it turns with a rotated picture. A 2 px ink-blue line just outside the picture, with a thin
+   white rim for dark pictures; the keyboard focus adds a second ring further out. While its
+   edit is being written the line turns dashed and the handles go. */
+.image-frame {
+  --image-stem: 24px; /* STEM_FINE in ImageLayer.tsx: from the top edge to the rotation knob */
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 3px rgb(255 255 255 / 0.8);
+  cursor: move;
+  outline: none;
+}
+
+/* A mouse, a pen or a finger drags the frame itself where the pointer is fine (desktop). On touch
+   screens the frame lets one finger scroll the page: the grip and the handles move it there. */
+@media (pointer: fine) {
+  .image-frame {
+    touch-action: none;
+  }
+}
+
+.image-frame:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.image-frame.is-pending {
+  box-shadow: none;
+  outline: 2px dashed var(--accent);
+  outline-offset: 0;
+  cursor: progress;
+}
+
+.image-frame.is-pending > * {
+  display: none;
+}
+
+.image-frame.is-rotating,
+.image-frame.is-rotating .image-rotate {
+  cursor: grabbing;
+}
+
+/* Handles: an invisible target (18 px; 44 px on touch) round a white square with an ink-blue
+   border (10 px at the corners, 8 px on the edges), placed at their point of the frame. The knob
+   and the touch grip stack above them, so a corner target never takes a press meant for them. */
+.image-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  touch-action: none;
+}
+
+.image-handle::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: #fff; /* on the page, white in both themes */
+}
+
+.image-handle.is-n::before,
+.image-handle.is-e::before,
+.image-handle.is-s::before,
+.image-handle.is-w::before {
+  inset: 5px;
+}
+
+.image-handle.is-nw { left: 0; top: 0; }
+.image-handle.is-n { left: 50%; top: 0; }
+.image-handle.is-ne { left: 100%; top: 0; }
+.image-handle.is-e { left: 100%; top: 50%; }
+.image-handle.is-se { left: 100%; top: 100%; }
+.image-handle.is-s { left: 50%; top: 100%; }
+.image-handle.is-sw { left: 0; top: 100%; }
+.image-handle.is-w { left: 0; top: 50%; }
+
+/* The rotation knob, on a short stem above the middle of the top edge; below the bottom edge when
+   it could not be reached above (ImageLayer: a picture at the top of the first page). */
+.image-rotate {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: calc(-1 * var(--image-stem));
+  width: 20px;
+  height: 20px;
+  margin: -10px 0 0 -10px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.image-rotate.is-below {
+  top: calc(100% + var(--image-stem));
+}
+
+.image-rotate::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: var(--image-stem);
+  margin-left: -1px;
+  background: var(--accent);
+}
+
+.image-rotate.is-below::before {
+  top: auto;
+  bottom: 50%;
+}
+
+.image-rotate::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 50%;
+  background: #fff;
+}
+
+/* Touch screens: the round move grip at the centre (the frame itself lets the page scroll), or
+   below a picture too small to hold it clear of its corner targets (ImageLayer: GRIP_OUTSIDE). */
+.image-grip {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px #fff, var(--shadow-float);
+  color: var(--on-accent);
+  touch-action: none;
+}
+
+.image-grip.is-outside {
+  top: calc(100% + 48px);
+}
+
+.image-grip .icon {
+  width: 22px;
+  height: 22px;
+  color: inherit;
+}
+
+/* Where the picture was, while it is moved or its edit is written. */
+.image-ghost {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  outline: 1.5px dashed var(--accent);
+  outline-offset: -1px;
+  pointer-events: none;
+}
+
+/* The picture alone (the engine's transparent sprite), drawn where it is being moved. */
+.image-sprite {
+  position: absolute;
+  z-index: 1;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+/* The image's context bar is the line editor's (.context-bar), with icon-only buttons where the
+   labelled bar would not fit (each keeps its name and tooltip). Its buttons stay while an edit is
+   written (aria-disabled), with the spinner after them. */
+.context-btn.is-icon {
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* The labelled bar, laid out out of sight so that ImageLayer can measure it: at its full width
+   (max-content) inside a box of no size that clips it, because a hidden box still counts in what
+   the scroller can scroll across (on a phone the labelled bar is wider than the page). */
+.image-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.image-bar.is-measure {
+  width: max-content;
+  pointer-events: none;
+  animation: none;
+}
+
+/* While the picture is dragged the bar steps aside but stays in the page, and its status region
+   stays readable, so screen readers hear "Writing…" when it fills in on release. */
+.context-slot.is-hidden {
+  visibility: hidden;
+}
+
+.context-slot.is-hidden [role="status"] {
+  visibility: visible;
+}
+
+@media (pointer: coarse) {
+  .image-frame {
+    --image-stem: 32px; /* STEM_COARSE in ImageLayer.tsx */
+    cursor: default;
+  }
+
+  /* Corner targets reach 22 px out from the corner, and in only as far as --reach-x / --reach-y
+     (ImageLayer: at most 22 px, short of the middle of a small picture), round a 14 px square. */
+  .image-handle {
+    width: calc(22px + var(--reach-x, 22px));
+    height: calc(22px + var(--reach-y, 22px));
+  }
+
+  .image-handle::before {
+    inset: auto;
+    width: 14px;
+    height: 14px;
+  }
+
+  .image-handle.is-nw { margin: -22px 0 0 -22px; }
+  .image-handle.is-ne { margin: -22px 0 0 calc(-1 * var(--reach-x, 22px)); }
+  .image-handle.is-se { margin: calc(-1 * var(--reach-y, 22px)) 0 0 calc(-1 * var(--reach-x, 22px)); }
+  .image-handle.is-sw { margin: calc(-1 * var(--reach-y, 22px)) 0 0 -22px; }
+  .image-handle.is-nw::before { left: 15px; top: 15px; }
+  .image-handle.is-ne::before { right: 15px; top: 15px; }
+  .image-handle.is-se::before { right: 15px; bottom: 15px; }
+  .image-handle.is-sw::before { left: 15px; bottom: 15px; }
+
+  .image-rotate {
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0 -22px;
+  }
+
+  .image-rotate::after {
+    inset: 12px; /* a 20 px knob */
+  }
+
+  /* Below a small picture the grip comes first: the knob goes past it (STEM_PAST_GRIP). */
+  .image-rotate.is-past-grip {
+    --image-stem: 96px;
+  }
+}
+
 /* --- Touch screens -------------------------------------------------------------------------
    The compact buttons keep their look; an invisible ::after makes each one 44 px tall. */
 
@@ -495,6 +827,11 @@
 
   .context-btn {
     padding: 0 12px 0 10px;
+  }
+
+  .context-btn.is-icon {
+    width: 44px;
+    padding: 0;
   }
 
   .edit-banner-done::after,
@@ -547,16 +884,41 @@
    are white in the dark contrast themes). The tint is too faint to count on there, so an
    editable line gets a whole solid box (the border replaces 1 px of padding); a locked line
    keeps its dashes. The editor and its context bar are controls like the rest of the UI: they
-   take the system colours again. */
+   take the system colours again. The image marks are drawn on the page too, so they keep their
+   colours as well: a solid outline for a box (a locked one keeps its dots, darker), and outlines
+   instead of shadows for the selection frame. */
 
 @media (forced-colors: active) {
-  .lines {
+  .lines,
+  .images {
     forced-color-adjust: none;
   }
 
   .line {
     padding: 0 1px;
     border: 1px solid var(--page-mark);
+  }
+
+  .image-box {
+    outline-style: solid;
+    outline-color: var(--page-mark-image);
+  }
+
+  .image-box.is-locked,
+  .image-box.is-locked:hover {
+    outline-style: dotted;
+    outline-color: var(--page-mark-locked-strong);
+  }
+
+  .image-frame {
+    box-shadow: none;
+    outline: 2px solid var(--accent);
+    outline-offset: 0;
+  }
+
+  .image-frame:focus-visible {
+    outline: 4px double var(--accent);
+    outline-offset: 1px;
   }
 
   .line-editor,
@@ -573,5 +935,13 @@
     left: 0;
     width: 100%;
     opacity: 0.6;
+  }
+
+  .image-box {
+    transition: none;
+  }
+
+  .image-bar {
+    animation: none;
   }
 }

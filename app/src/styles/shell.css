@@ -611,9 +611,9 @@
   gap: 10px;
 }
 
-/* A scrap of PDF page with a line on it, as the line looks at rest in the viewer: white in both
-   themes like the pages, with the same --page-mark tokens (viewer.css), so the legend matches
-   the page. Contrast themes keep its colours too, as they keep the page's. */
+/* A scrap of PDF page with a line or a picture on it, as they look at rest in the viewer: white
+   in both themes like the pages, with the same --page-mark tokens (viewer.css), so the legend
+   matches the page. Contrast themes keep its colours too, as they keep the page's. */
 .dp-swatch {
   flex: none;
   display: grid;
@@ -641,14 +641,40 @@
   border: 1px dashed var(--page-mark-locked);
 }
 
+/* A picture's box: squarer than a line's, blue dashes when it can be moved, grey dots when it
+   cannot (a locked line has grey dashes), as .image-box there. */
+.dp-swatch.is-image::before,
+.dp-swatch.is-image-locked::before {
+  width: 18px;
+  height: 14px;
+  border-radius: 1px;
+}
+
+.dp-swatch.is-image::before {
+  border: 1px dashed var(--page-mark-image);
+}
+
+.dp-swatch.is-image-locked::before {
+  border: 1px dotted var(--page-mark-locked);
+}
+
 @media (forced-colors: active) {
   .dp-swatch {
     forced-color-adjust: none;
   }
 
-  /* As .line there (viewer.css): a solid box for an editable line. */
+  /* As .line and .image-box there (viewer.css): a solid box for an editable line or a movable
+     picture; a locked picture keeps its dots, in the darker grey. */
   .dp-swatch.is-editable::before {
     border: 1px solid var(--page-mark);
+  }
+
+  .dp-swatch.is-image::before {
+    border-style: solid;
+  }
+
+  .dp-swatch.is-image-locked::before {
+    border-color: var(--page-mark-locked-strong);
   }
 }
 

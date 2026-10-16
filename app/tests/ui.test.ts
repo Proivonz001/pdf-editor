@@ -3,7 +3,8 @@
 // scale caps, engine error codes, edited-page marks, closing a document, leaving edit mode, the
 // service-worker update flow, and the downloads of phase 3 (one tap keeping PDF/A and passwords,
 // the PDF/A check and questions, the download options' rules and messages, the PDF/A texts, the
-// details panel's protection row).
+// details panel's protection row), and the images of release 2 (selection, edits, replacement,
+// Escape, the details panel's image facts).
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
@@ -20,6 +21,11 @@ vi.mock("../src/engine/client.ts", () => {
     open(bytes: ArrayBuffer, password?: string) { return e().open(bytes, password); }
     lines() { return Promise.resolve([]); }
     replaceLine(p: number, l: number, text: string) { return e().replaceLine(p, l, text); }
+    images() { return Promise.resolve([]); }
+    transformImage(p: number, i: number, matrix: number[]) { return e().transformImage(p, i, matrix); }
+    deleteImage(p: number, i: number) { return e().deleteImage(p, i); }
+    replaceImage(p: number, i: number, bytes: ArrayBuffer) { return e().replaceImage(p, i, bytes); }
+    renderImage() { return Promise.reject(new Error("no bitmaps in Node")); }
     undo() { return e().undo(); }
     redo() { return e().redo(); }
     save(options: unknown) { return e().save(options); }
@@ -27,6 +33,23 @@ vi.mock("../src/engine/client.ts", () => {
     close() { return e().close(); }
   }
   return { EngineError, EngineClient };
+});
+
+// The picture prepared for a replacement: decoding needs a browser, so the test says what it gives.
+vi.mock("../src/ui/imageFile.ts", () => {
+  class PictureError extends Error {
+    constructor(message: string, readonly code: "too-big" | "unreadable") {
+      super(message);
+    }
+  }
+  return {
+    MAX_PICTURE_SIDE: 2000,
+    MAX_PICTURE_FILE: 50 * 1024 * 1024,
+    PictureError,
+    fitWithin: () => ({ width: 1, height: 1 }),
+    hasTransparency: () => false,
+    preparePicture: (file: File) => (globalThis as any).__prepare(file),
+  };
 });
 
 const calls: string[] = [];
@@ -40,6 +63,12 @@ const edited = (changedPages: number[]) => ({
   editCount: 1, canUndo: true, canRedo: false, changedPages,
   pageIndex: 0, before: "old", after: "new", segments: [], fallbackChars: [], missingChars: [],
 });
+/** An image edit's result: the edited image's new index (null after a delete). */
+const imageEdited = (imageIndex: number | null, changedPages = [0]) => ({
+  editCount: 1, canUndo: true, canRedo: false, changedPages, pageIndex: 0, imageIndex,
+});
+/** The bytes each replaceImage call received, in order. */
+const replacedBytes: ArrayBuffer[] = [];
 const engineImpl: any = {
   open: async (bytes: ArrayBuffer) => {
     calls.push("open:" + new TextDecoder().decode(bytes));
@@ -49,6 +78,13 @@ const engineImpl: any = {
     };
   },
   replaceLine: async () => { calls.push("replaceLine"); return edited([0]); },
+  transformImage: async (_p: number, i: number) => { calls.push(`transformImage:${i}`); return imageEdited(i); },
+  deleteImage: async (_p: number, i: number) => { calls.push(`deleteImage:${i}`); return imageEdited(null); },
+  replaceImage: async (_p: number, i: number, bytes: ArrayBuffer) => {
+    calls.push(`replaceImage:${i}`);
+    replacedBytes.push(bytes);
+    return imageEdited(i);
+  },
   undo: async () => { calls.push("undo"); return { editCount: 0, canUndo: false, canRedo: true, changedPages: [0] }; },
   redo: async () => { calls.push("redo"); return { editCount: 1, canUndo: true, canRedo: false, changedPages: [0] }; },
   save: async (options: any) => {
@@ -895,5 +931,803 @@ describe("U17 details panel", () => {
       .toBe("Yes · you'll choose a new password for the downloaded copy");
     expect(protectionText(info({ encrypted: true }))).toBe("Usage restrictions · the downloaded copy won't have them");
     expect(protectionText(info({}))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Phase 3, release 2: images
+
+/** An image of page 0 as the engine lists it. */
+const IMAGE = (index: number, extra: Record<string, unknown> = {}) => ({
+  index, matrix: [50, 0, 0, 40, 10, 20], bbox: [10, 20, 60, 60], visible: [10, 20, 60, 60],
+  pixelWidth: 500, pixelHeight: 400, movable: true, reason: null, ...extra,
+}) as any;
+const MOVED = [50, 0, 0, 40, 30, 25] as any;
+const PICKED = { name: "photo.heic", type: "image/heic", size: 4 } as unknown as File;
+
+/** Open a one-page document in edit mode; returns its page. */
+async function editing(name: string) {
+  await openWith(name, {});
+  await actions.setEditMode(true);
+  state.toasts.value = [];
+  return state.doc.value!.pages[0];
+}
+
+/** Make the next call of the engine's `op` wait; resolves to the function that lets it go on. */
+function hold(op: string): Promise<() => void> {
+  const original = engineImpl[op];
+  return new Promise((held) => {
+    engineImpl[op] = (...args: unknown[]) => new Promise((done) => {
+      engineImpl[op] = original;
+      held(() => done(original(...args)));
+    });
+  });
+}
+
+/** What the image frame registers while a keyboard move waits to be written (ImageLayer). */
+function pendingMove(page: any, image = IMAGE(1)) {
+  const unregister = state.registerEditor({
+    changed: () => true,
+    commit: async () => {
+      unregister();
+      await actions.transformImage(page, image, MOVED, page.rev.peek());
+    },
+  });
+  return unregister;
+}
+
+describe("U18 selecting an image", () => {
+  it("closes the line editor, and opening a line deselects it", async () => {
+    const page = await editing("IA.pdf");
+    state.editingLine.value = { pageIndex: 0, line: LINE };
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    expect(state.editingLine.value).toBeNull();
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+    await actions.openLine(0, LINE);
+    expect(state.selectedImage.value).toBeNull();
+    expect(state.editingLine.value).toEqual({ pageIndex: 0, line: LINE });
+    await actions.selectImage(0, IMAGE(2));
+    expect(state.editingLine.value).toBeNull();
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 2 });
+    await actions.selectImage(0, null);
+    expect(state.selectedImage.value).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it("a locked image says why and is not selected", async () => {
+    const page = await editing("IB.pdf");
+    await actions.selectImage(0, IMAGE(0), page.rev.peek());
+    await actions.selectImage(0, IMAGE(1, { movable: false, reason: "group" }), page.rev.peek());
+    expect(toastTexts()).toEqual(["This image can't be moved: it is joined to other content, such as a caption."]);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 0 }); // the one selected before stays
+  });
+
+  it("not in browse mode, nor from a stale image list, nor while an edit is being written", async () => {
+    const page = await editing("IC.pdf");
+    const rev = page.rev.peek();
+    await actions.setEditMode(false);
+    await actions.selectImage(0, IMAGE(1), rev);
+    expect(state.selectedImage.value).toBeNull();
+
+    await actions.setEditMode(true);
+    await actions.selectImage(0, IMAGE(1), rev);
+    state.invalidatePages([0]); // the page changed (an edit landed)
+    expect(page.images.value).toBeNull();
+    await actions.selectImage(0, IMAGE(2), rev);
+    expect(state.selectedImage.value).toBeNull(); // cleared: the indices may be stale
+
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const held = hold("transformImage");
+    const p = actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    const release = await held;
+    await actions.selectImage(0, IMAGE(2), page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 }); // the click during the write is ignored
+    release();
+    await p;
+  });
+
+  it("every lock reason has a text, in both languages", async () => {
+    const i18n = await import("../src/i18n");
+    for (const locale of ["en", "it"] as const) {
+      i18n.setLocale(locale);
+      const texts = (["group", "soft-mask", "cropped", "unreadable", null] as const).map(actions.lockReasonText);
+      for (const text of texts) expect(text).toMatch(/^[^{}]+$/);
+      expect(texts.some((text) => text.startsWith("image."))).toBe(false);
+      expect(new Set(texts).size).toBe(4); // no reason reads as "unreadable"
+    }
+    i18n.setLocale("en");
+  });
+});
+
+describe("U19 image edits", () => {
+  it("a move is one edit, and the selection follows the index the engine returns", async () => {
+    const page = await editing("ID.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const rev = page.rev.peek();
+    let sent: unknown;
+    const transform = engineImpl.transformImage;
+    engineImpl.transformImage = async (_p: number, i: number, matrix: unknown) => {
+      calls.push(`transformImage:${i}`);
+      sent = matrix;
+      return imageEdited(3);
+    };
+    await actions.transformImage(page, IMAGE(1), MOVED, rev);
+    engineImpl.transformImage = transform;
+    expect(calls).toEqual(["transformImage:1"]);
+    expect(sent).toEqual(MOVED);
+    expect(state.history.value.editCount).toBe(1);
+    expect(state.dirty.value).toBe(true);
+    expect([...state.editedPages.value]).toEqual([0]);
+    expect(page.rev.peek()).toBe(rev + 1); // re-rendered, its lines and images read again
+    expect(page.images.value).toBeNull();
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 3 });
+  });
+
+  it("delete is one edit and clears the selection", async () => {
+    const page = await editing("IE.pdf");
+    await actions.selectImage(0, IMAGE(2), page.rev.peek());
+    await actions.deleteImage(page, IMAGE(2), page.rev.peek());
+    expect(calls).toEqual(["deleteImage:2"]);
+    expect(state.selectedImage.value).toBeNull();
+    expect(state.history.value.canUndo).toBe(true);
+    expect(state.dirty.value).toBe(true);
+  });
+
+  it("a move the engine finds unchanged records nothing and keeps the selection", async () => {
+    const page = await editing("IE2.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const rev = page.rev.peek();
+    const transform = engineImpl.transformImage;
+    engineImpl.transformImage = async () => ({ ...imageEdited(1, []), editCount: 0, canUndo: false });
+    await actions.transformImage(page, IMAGE(1), IMAGE(1).matrix, rev);
+    engineImpl.transformImage = transform;
+    expect(state.dirty.value).toBe(false);
+    expect(page.rev.peek()).toBe(rev);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+  });
+
+  it("deselected, or edit mode left, while it is written: the selection does not come back", async () => {
+    const page = await editing("IE3.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    let held = hold("transformImage");
+    let p = actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    let release = await held;
+    await actions.selectImage(0, null);
+    release();
+    await p;
+    expect(calls).toEqual(["transformImage:1"]);
+    expect(state.selectedImage.value).toBeNull();
+
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    held = hold("transformImage");
+    p = actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    release = await held;
+    await actions.setEditMode(false);
+    release();
+    await p;
+    expect(state.editMode.value).toBe(false);
+    expect(state.selectedImage.value).toBeNull();
+  });
+
+  it("a stale page is refused; a locked image and engine failures say so", async () => {
+    const page = await editing("IF.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const rev = page.rev.peek();
+    state.invalidatePages([0]);
+    await actions.transformImage(page, IMAGE(1), MOVED, rev);
+    await actions.deleteImage(page, IMAGE(1), rev);
+    expect(calls).toEqual([]);
+    expect(toastTexts()).toEqual(["Could not change this image."]);
+
+    const { EngineError } = await import("../src/engine/client");
+    const transform = engineImpl.transformImage;
+    state.toasts.value = [];
+    engineImpl.transformImage = async () => { throw new EngineError("locked", "not-editable"); };
+    await actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    expect(toastTexts()).toEqual(["This image can't be changed."]); // not the line's text
+    expect(state.selectedImage.value).toBeNull();
+
+    state.toasts.value = [];
+    engineImpl.transformImage = async () => { throw new EngineError("stale entry", "edit-failed"); };
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    error.mockRestore();
+    engineImpl.transformImage = transform;
+    expect(toastTexts()).toEqual(["Could not change this image."]);
+    expect(state.dirty.value).toBe(false);
+    expect(state.editingStopped.value).toBe(false);
+  });
+});
+
+describe("U20 the selection and the history", () => {
+  it("undo, redo, leaving edit mode and closing the document clear it", async () => {
+    const page = await editing("IG.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    await actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+    await actions.undo();
+    expect(calls).toEqual(["transformImage:1", "undo"]);
+    expect(state.selectedImage.value).toBeNull();
+
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    await actions.redo();
+    expect(calls).toEqual(["transformImage:1", "undo", "redo"]);
+    expect(state.selectedImage.value).toBeNull();
+
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    await actions.setEditMode(false);
+    expect(state.selectedImage.value).toBeNull();
+
+    await actions.setEditMode(true);
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const p = actions.closeDocument();
+    await answerConfirm(true); // the edit was not downloaded
+    await p;
+    expect(state.selectedImage.value).toBeNull();
+    expect(state.doc.value).toBeNull();
+  });
+});
+
+describe("U21 a keyboard move still waiting", () => {
+  it("counts as unsaved and is written before a download", async () => {
+    fakePicker();
+    const page = await editing("IH.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const unregister = pendingMove(page);
+    expect(state.hasUnsavedWork()).toBe(true);
+    await actions.download();
+    unregister();
+    expect(calls).toEqual(["transformImage:1", "save"]);
+    expect(state.dirty.value).toBe(false); // the file has the move
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+  });
+
+  it("is written before undo, which then undoes it, and before leaving edit mode", async () => {
+    const page = await editing("II.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    let unregister = pendingMove(page);
+    await actions.undo();
+    unregister();
+    expect(calls).toEqual(["transformImage:1", "undo"]);
+    expect(state.selectedImage.value).toBeNull();
+
+    calls.length = 0;
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    unregister = pendingMove(page);
+    await actions.setEditMode(false);
+    unregister();
+    expect(calls).toEqual(["transformImage:1"]);
+    expect(state.editMode.value).toBe(false);
+    expect(state.selectedImage.value).toBeNull();
+  });
+
+  it("selecting another image or a line of the same page writes it first; their indices are stale then", async () => {
+    const page = await editing("IJ.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    let unregister = pendingMove(page);
+    await actions.selectImage(0, IMAGE(2), page.rev.peek());
+    unregister();
+    expect(calls).toEqual(["transformImage:1"]);
+    expect(state.selectedImage.value).toBeNull(); // clicked again, once the images are read again
+
+    calls.length = 0;
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    unregister = pendingMove(page);
+    await actions.openLine(0, LINE);
+    unregister();
+    expect(calls).toEqual(["transformImage:1"]);
+    expect(state.editingLine.value).toBeNull();
+    expect(state.selectedImage.value).toBeNull();
+  });
+});
+
+describe("U22 keys with an image selected", () => {
+  it("Escape deselects first, then leaves edit mode; Ctrl+Z undoes and clears the selection", async () => {
+    const g = globalThis as any;
+    const saved = { add: g.addEventListener, remove: g.removeEventListener, element: g.HTMLElement };
+    const listeners: Record<string, (e: unknown) => void> = {};
+    g.addEventListener = (type: string, fn: (e: unknown) => void) => { listeners[type] = fn; };
+    g.removeEventListener = () => undefined;
+    g.HTMLElement ??= class {};
+    const { installShortcuts } = await import("../src/ui/shortcuts");
+    const uninstall = installShortcuts();
+    const press = (key: string, mods: Record<string, boolean> = {}) => {
+      const e: any = {
+        key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, target: null, defaultPrevented: false,
+        preventDefault() { e.defaultPrevented = true; }, ...mods,
+      };
+      listeners.keydown(e);
+      return e;
+    };
+    try {
+      const page = await editing("IK.pdf");
+      await actions.selectImage(0, IMAGE(1), page.rev.peek());
+      expect(press("Escape").defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(state.selectedImage.value).toBeNull());
+      expect(state.editMode.value).toBe(true);
+      press("Escape");
+      await vi.waitFor(() => expect(state.editMode.value).toBe(false));
+
+      await actions.setEditMode(true);
+      await actions.selectImage(0, IMAGE(1), page.rev.peek());
+      await actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+      calls.length = 0;
+      press("z", { ctrlKey: true });
+      await vi.waitFor(() => expect(calls).toEqual(["undo"]));
+      await vi.waitFor(() => expect(state.selectedImage.value).toBeNull());
+      expect(state.editMode.value).toBe(true);
+    } finally {
+      uninstall();
+      g.addEventListener = saved.add;
+      g.removeEventListener = saved.remove;
+      g.HTMLElement = saved.element;
+    }
+  });
+});
+
+describe("U23 replacing an image", () => {
+  it("prepares the picture with a status, outside the engine's queue, then sends its bytes", async () => {
+    const page = await editing("IL.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
+    const seen: { name?: string; texts?: string[]; busy?: unknown; pending?: number } = {};
+    (globalThis as any).__prepare = async (file: File) => {
+      seen.name = file.name;
+      seen.texts = toastTexts();
+      seen.busy = state.busy.peek();
+      seen.pending = state.imageEditsPending.peek();
+      return { bytes, width: 4, height: 1 };
+    };
+    replacedBytes.length = 0;
+    await actions.replaceImage(page, IMAGE(1), page.rev.peek(), PICKED);
+    // Not in the engine's queue yet, but already an image edit on its way: the frame waits.
+    expect(seen).toEqual({ name: "photo.heic", texts: ["Preparing the picture…"], busy: null, pending: 1 });
+    expect(state.imageEditsPending.value).toBe(0);
+    expect(replacedBytes).toHaveLength(1);
+    expect(replacedBytes[0]).toBe(bytes); // the prepared buffer itself: the client transfers it
+    expect(calls).toEqual(["replaceImage:1"]);
+    expect(toastTexts()).toEqual([]); // the status went with the preparation
+    expect(state.history.value.editCount).toBe(1);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+  });
+
+  it("Replace… opens a picker for pictures (camera included) and replaces with the file chosen", async () => {
+    const page = await editing("IM.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 1, height: 1 });
+    const inputs: any[] = [];
+    const doc = (globalThis as any).document;
+    const createElement = doc.createElement;
+    doc.createElement = (tag: string) => {
+      const el: any = {
+        tag, listeners: {}, attrs: {}, clicked: false, removed: false,
+        addEventListener(type: string, fn: () => void) { el.listeners[type] = fn; },
+        setAttribute(name: string, value: string) { el.attrs[name] = value; },
+        click() { el.clicked = true; },
+        remove() { el.removed = true; },
+      };
+      inputs.push(el);
+      return el;
+    };
+    try {
+      actions.chooseReplacement(page, IMAGE(1), page.rev.peek());
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({ tag: "input", type: "file", accept: "image/*", hidden: true, clicked: true });
+      expect("capture" in inputs[0]).toBe(false); // with it, phones would offer the camera only
+      // Closed without a choice where "cancel" is not fired: the next Replace… removes that input.
+      actions.chooseReplacement(page, IMAGE(1), page.rev.peek());
+      expect(inputs[0].removed).toBe(true);
+      const input = inputs[1];
+      input.files = [PICKED];
+      input.listeners.change();
+      expect(input.removed).toBe(true);
+      await vi.waitFor(() => expect(state.history.value.editCount).toBe(1));
+      expect(calls).toEqual(["replaceImage:1"]);
+      // Cancelled where "cancel" is fired: removed at once.
+      actions.chooseReplacement(page, IMAGE(1), page.rev.peek());
+      inputs[2].listeners.cancel();
+      expect(inputs[2].removed).toBe(true);
+    } finally {
+      doc.createElement = createElement;
+    }
+  });
+
+  it("a keyboard move written while the picker is open does not make the replacement stale", async () => {
+    const page = await editing("IN.pdf");
+    (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 1, height: 1 });
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const rev = page.rev.peek();
+    const unregister = pendingMove(page);
+    await state.flushEditor(); // what chooseReplacement starts before the picker opens
+    unregister();
+    expect(page.rev.peek()).toBe(rev + 1);
+    await actions.replaceImage(page, IMAGE(1), rev, PICKED);
+    expect(calls).toEqual(["transformImage:1", "replaceImage:1"]);
+
+    // Another image selected meanwhile: the old revision is stale, nothing is written.
+    await actions.selectImage(0, IMAGE(0), page.rev.peek());
+    state.toasts.value = [];
+    await actions.replaceImage(page, IMAGE(1), rev, PICKED);
+    expect(calls).toEqual(["transformImage:1", "replaceImage:1"]);
+    expect(toastTexts()).toEqual(["Could not change this image."]);
+  });
+
+  it("a picture that is too big or unreadable says so and changes nothing", async () => {
+    const page = await editing("IO.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const { PictureError } = await import("../src/ui/imageFile");
+    (globalThis as any).__prepare = async () => { throw new PictureError("big", "too-big"); };
+    await actions.replaceImage(page, IMAGE(1), page.rev.peek(), PICKED);
+    expect(toastTexts()).toEqual(["This picture is too large (more than 50 MB)."]);
+
+    state.toasts.value = [];
+    (globalThis as any).__prepare = async () => { throw new PictureError("no decoder", "unreadable"); };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await actions.replaceImage(page, IMAGE(1), page.rev.peek(), PICKED);
+    warn.mockRestore();
+    expect(toastTexts()).toEqual(["This picture can't be read. Try a JPEG or PNG."]);
+    expect(calls).toEqual([]);
+    expect(state.dirty.value).toBe(false);
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+    expect(state.imageEditsPending.value).toBe(0);
+  });
+});
+
+describe("U24 details panel: the selected image", () => {
+  it("size in mm, pixels and resolution, rotation, in both languages", async () => {
+    const { imageFacts } = await import("../src/ui/DetailsPanel");
+    const i18n = await import("../src/i18n");
+    expect(imageFacts(IMAGE(0, { matrix: [144, 0, 0, 72, 0, 0], pixelWidth: 600, pixelHeight: 300 }))).toEqual({
+      size: "51 × 25 mm", pixels: "600 × 300 px · 300 ppi", rotation: "0°",
+    });
+    // Turned 90° clockwise, and small: one decimal below 10 mm.
+    const small = IMAGE(0, { matrix: [0, 20, -10, 0, 50, 50], pixelWidth: 100, pixelHeight: 50 });
+    expect(imageFacts(small)).toEqual({ size: "7.1 × 3.5 mm", pixels: "100 × 50 px · 360 ppi", rotation: "90°" });
+    expect(imageFacts(IMAGE(0, { matrix: [-50, 0, 0, -40, 60, 60] })).rotation).toBe("180°");
+    // A 1-px spacer picture (0.75 pt) is not "0 × 0 mm".
+    const spacer = IMAGE(0, { matrix: [0.75, 0, 0, 0.75, 10, 10], pixelWidth: 1, pixelHeight: 1 });
+    expect(imageFacts(spacer).size).toBe("0.3 × 0.3 mm");
+    i18n.setLocale("it");
+    expect(imageFacts(small).size).toBe("7,1 × 3,5 mm");
+    expect(imageFacts(spacer).size).toBe("0,3 × 0,3 mm");
+    i18n.setLocale("en");
+  });
+});
+
+describe("U25 image edits still on their way", () => {
+  it("a Delete waiting behind a download: no other image is selected meanwhile, and pressing it again is the same Delete", async () => {
+    fakePicker();
+    const page = await editing("IP.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const rev = page.rev.peek();
+    const held = hold("save");
+    const saving = actions.download();
+    const release = await held;
+    const before = { busy: state.busy.value, pending: state.imageEditsPending.value };
+    const first = actions.deleteImage(page, IMAGE(1), rev);
+    try {
+      expect(before).toEqual({ busy: "save", pending: 0 });
+      expect(state.imageEditsPending.value).toBe(1); // the frame shows it as pending (ImageLayer)
+      const second = actions.deleteImage(page, IMAGE(1), rev);
+      expect(second).toBe(first);
+      expect(state.imageEditsPending.value).toBe(1);
+      await actions.selectImage(0, IMAGE(3), rev); // a click on another image's box meanwhile
+      expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+    } finally {
+      release(); // a failure above must not leave the engine's queue held for the next tests
+    }
+    await saving;
+    await first;
+    expect(calls).toEqual(["save", "deleteImage:1"]);
+    expect(state.imageEditsPending.value).toBe(0);
+    expect(state.selectedImage.value).toBeNull();
+    expect(toastTexts()).toEqual(["Downloaded “IP-edited.pdf”."]); // not "Could not change this image."
+    expect(state.dirty.value).toBe(true); // the deletion came after the download
+
+    // Done: images can be selected again, and another Delete is a new one.
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+    await actions.deleteImage(page, IMAGE(1), page.rev.peek());
+    expect(calls).toEqual(["save", "deleteImage:1", "deleteImage:1"]);
+  });
+
+  it("after a delete, a selection on an image painted later moves up one place; others keep theirs", async () => {
+    const twoPages = [{ index: 0, bounds: [0, 0, 100, 100] }, { index: 1, bounds: [0, 0, 100, 100] }];
+    await openWith("IQ.pdf", { pageCount: 2, pages: twoPages });
+    await actions.setEditMode(true);
+    state.toasts.value = [];
+    const [page, other] = state.doc.value!.pages;
+
+    // Selected while another image's deletion was asked for (through the engine's API).
+    await actions.selectImage(0, IMAGE(3), page.rev.peek());
+    await actions.deleteImage(page, IMAGE(1), page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 2 }); // the same picture
+    // An image painted earlier, or one on another page, keeps its index.
+    await actions.selectImage(0, IMAGE(0), page.rev.peek());
+    await actions.deleteImage(page, IMAGE(1), page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 0 });
+    await actions.selectImage(1, IMAGE(3), other.rev.peek());
+    await actions.deleteImage(page, IMAGE(1), page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 1, index: 3 });
+    // A move or a replacement changes no index.
+    await actions.selectImage(0, IMAGE(3), page.rev.peek());
+    await actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 3 });
+    expect(calls).toEqual(["deleteImage:1", "deleteImage:1", "deleteImage:1", "transformImage:1"]);
+    expect(toastTexts()).toEqual([]);
+  });
+
+  it("each image edit counts until it has finished: written, refused, failed, or its document closed", async () => {
+    const page = await editing("IR.pdf");
+    // (What is seen while the engine is held is checked once it is let go, so that a failure
+    // does not leave the engine's queue held for the next tests.)
+    let held = hold("transformImage");
+    const moving = actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    const asked = state.imageEditsPending.value;
+    let release = await held;
+    const written = { busy: state.busy.value, pending: state.imageEditsPending.value };
+    release();
+    await moving;
+    expect([asked, written, state.imageEditsPending.value]).toEqual([1, { busy: "edit", pending: 1 }, 0]);
+
+    // Refused: the page changed since its images were read.
+    await actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek() - 1);
+    expect(toastTexts()).toEqual(["Could not change this image."]);
+    expect(state.imageEditsPending.value).toBe(0);
+
+    // Failed in the engine.
+    const { EngineError } = await import("../src/engine/client");
+    const remove = engineImpl.deleteImage;
+    engineImpl.deleteImage = async () => { throw new EngineError("stale entry", "edit-failed"); };
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await actions.deleteImage(page, IMAGE(1), page.rev.peek());
+    error.mockRestore();
+    engineImpl.deleteImage = remove;
+    expect(state.imageEditsPending.value).toBe(0);
+
+    // A picture that could not be prepared.
+    const { PictureError } = await import("../src/ui/imageFile");
+    (globalThis as any).__prepare = async () => { throw new PictureError("big", "too-big"); };
+    await actions.replaceImage(page, IMAGE(1), page.rev.peek(), PICKED);
+    expect(state.imageEditsPending.value).toBe(0);
+
+    // Closed while an edit waits behind another: neither reaches the engine afterwards.
+    calls.length = 0;
+    held = hold("transformImage");
+    const first = actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    const queued = actions.deleteImage(page, IMAGE(2), page.rev.peek());
+    release = await held;
+    const waiting = state.imageEditsPending.value;
+    const closing = actions.closeDocument();
+    try {
+      await answerConfirm(true); // the edits written before were not downloaded
+      await closing;
+    } finally {
+      release();
+    }
+    await first;
+    await queued;
+    expect(waiting).toBe(2);
+    expect(state.doc.value).toBeNull();
+    expect(calls).not.toContain("deleteImage:2");
+    expect(state.imageEditsPending.value).toBe(0);
+  });
+
+  it("no line opens while an image edit waits or an undo runs: the page read again would close it, typed text and all", async () => {
+    fakePicker();
+    const page = await editing("IS.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    const held = hold("save");
+    const saving = actions.download();
+    const release = await held;
+    const deleting = actions.deleteImage(page, IMAGE(1), page.rev.peek());
+    let during: unknown;
+    try {
+      await actions.openLine(0, LINE); // a click on a line box of the same page meanwhile
+      during = { line: state.editingLine.value, selected: state.selectedImage.value };
+    } finally {
+      release();
+    }
+    await saving;
+    await deleting;
+    expect(during).toEqual({ line: null, selected: { pageIndex: 0, index: 1 } });
+    expect(calls).toEqual(["save", "deleteImage:1"]);
+
+    // An undo being written: the same.
+    const undoing = hold("undo");
+    const stepping = actions.undo();
+    const letUndoGo = await undoing;
+    try {
+      await actions.openLine(0, LINE);
+      during = state.editingLine.value;
+    } finally {
+      letUndoGo();
+    }
+    await stepping;
+    expect(during).toBeNull();
+
+    // Done: the line opens.
+    await actions.openLine(0, LINE);
+    expect(state.editingLine.value).toEqual({ pageIndex: 0, line: LINE });
+  });
+
+  it("only the open document's image edits count: one queued when it closed warns about nothing afterwards", async () => {
+    fakePicker();
+    const page = await editing("IT.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    /** Lets a held engine call go on, once however often it is called. */
+    const once = (go: () => void) => {
+      let gone = false;
+      return () => {
+        if (!gone) go();
+        gone = true;
+      };
+    };
+    const held = hold("save");
+    const saving = actions.download();
+    const release = once(await held);
+    let afterClose: unknown, asked: unknown, selected: unknown, newCount: unknown;
+    let queued: Promise<void> = Promise.resolve();
+    let moving: Promise<void> = Promise.resolve();
+    let letMoveGo: () => void = () => undefined;
+    try {
+      queued = actions.deleteImage(page, IMAGE(1), page.rev.peek()); // waits behind the download
+      const closing = actions.closeDocument();
+      await answerConfirm(true); // the queued delete is all there is to lose
+      await closing;
+      afterClose = {
+        doc: state.doc.value, pending: state.imageEditsPending.value, unsaved: state.hasUnsavedWork(),
+        warn: actions.shouldWarnBeforeUnload(),
+      };
+      // The next file opens without a question about the one closed...
+      const opened = actions.openFile(fakeFile("IU.pdf", "IU"));
+      await vi.waitFor(() => expect(state.doc.value?.fileName === "IU.pdf" || state.dialog.value !== null).toBe(true));
+      asked = state.dialog.value?.kind ?? null;
+      if (asked) await answerConfirm(true);
+      await opened;
+      // ...and its images can be selected and edited, counted on their own.
+      await actions.setEditMode(true);
+      const next = state.doc.value!.pages[0];
+      await actions.selectImage(0, IMAGE(0), next.rev.peek());
+      selected = state.selectedImage.value;
+      const heldMove = hold("transformImage");
+      moving = actions.transformImage(next, IMAGE(0), MOVED, next.rev.peek());
+      newCount = state.imageEditsPending.value;
+      release(); // the old download ends, then the old delete, which finds its document gone
+      await saving;
+      await queued;
+      letMoveGo = once(await heldMove);
+    } finally {
+      release();
+      letMoveGo();
+    }
+    expect(afterClose).toEqual({ doc: null, pending: 0, unsaved: false, warn: false });
+    expect(asked).toBeNull();
+    expect(selected).toEqual({ pageIndex: 0, index: 0 });
+    expect(newCount).toBe(1);
+    // The old delete ended without taking the new document's edit off the count.
+    expect(state.imageEditsPending.value).toBe(1);
+    await moving;
+    expect(state.imageEditsPending.value).toBe(0);
+    expect(calls).not.toContain("deleteImage:1");
+    expect(calls.filter((c) => c.startsWith("transformImage"))).toEqual(["transformImage:0"]);
+
+    // A late edit of a page of the closed document (a frame going away late): neither counted nor sent.
+    calls.length = 0;
+    const late = actions.transformImage(page, IMAGE(1), MOVED, page.rev.peek());
+    expect(state.imageEditsPending.value).toBe(0);
+    await late;
+    expect(calls).toEqual([]);
+  });
+
+  it("a replacement still being prepared when its document closes stops counting", async () => {
+    const page = await editing("IV.pdf");
+    await actions.selectImage(0, IMAGE(1), page.rev.peek());
+    let finish!: () => void;
+    (globalThis as any).__prepare = () => new Promise((done) => {
+      finish = () => done({ bytes: new ArrayBuffer(3), width: 1, height: 1 });
+    });
+    const replacing = actions.replaceImage(page, IMAGE(1), page.rev.peek(), PICKED);
+    const during = { pending: state.imageEditsPending.value, unsaved: state.hasUnsavedWork() };
+    const closing = actions.closeDocument();
+    await answerConfirm(true);
+    await closing;
+    const afterClose = { pending: state.imageEditsPending.value, warn: actions.shouldWarnBeforeUnload() };
+    finish();
+    await replacing;
+    expect(during).toEqual({ pending: 1, unsaved: true });
+    expect(afterClose).toEqual({ pending: 0, warn: false });
+    expect(state.imageEditsPending.value).toBe(0);
+    expect(calls).toEqual(["close"]); // no replaceImage for the closed document
+  });
+});
+
+describe("U26 lengths in millimetres", () => {
+  it("whole millimetres, one decimal below 10 mm, the locale's decimal separator; no grouping, no -0", async () => {
+    const i18n = await import("../src/i18n");
+    const pt = (mm: number) => (mm * 72) / 25.4;
+    expect(i18n.formatMm(0.75)).toBe("0.3"); // a 1-px spacer picture
+    expect(i18n.formatMm(pt(3.54))).toBe("3.5");
+    expect(i18n.formatMm(pt(9.94))).toBe("9.9");
+    expect(i18n.formatMm(pt(9.96))).toBe("10");
+    expect(i18n.formatMm(pt(51.4))).toBe("51");
+    expect(i18n.formatMm(14400)).toBe("5080"); // MAX_IMAGE_SIDE
+    // Positions can be negative: a picture that starts left of the page.
+    expect(i18n.formatMm(pt(-4.24))).toBe("-4.2");
+    expect(i18n.formatMm(pt(-25.4))).toBe("-25");
+    expect(i18n.formatMm(-0.01)).toBe("0");
+    i18n.setLocale("it");
+    expect(i18n.formatMm(0.75)).toBe("0,3");
+    expect(i18n.formatMm(pt(3.54))).toBe("3,5");
+    expect(i18n.formatMm(14400)).toBe("5080");
+    expect(i18n.formatMm(pt(-4.24))).toBe("-4,2");
+    i18n.setLocale("en");
+  });
+});
+
+describe("U27 image texts", () => {
+  it("the details panel's hint names the grip by touch and the knob always, wherever the frame puts them; its shortcuts list every image key", async () => {
+    const panel = await import("../src/ui/DetailsPanel");
+    const { isMac } = await import("../src/ui/media");
+    const i18n = await import("../src/i18n");
+    // The grip goes below a small picture and the knob below one near the top of the page
+    // (ImageLayer's frameLayout): the hints say what they look like, not where they are.
+    expect(panel.imageHint(IMAGE(0), false))
+      .toBe("Drag it to move it, a corner to resize it, the small knob on the stem to rotate it.");
+    expect(panel.imageHint(IMAGE(0), true))
+      .toBe("Drag the round grip to move it, a corner to resize it, the small knob on the stem to rotate it.");
+    expect(panel.imageHint(IMAGE(0, { movable: false, reason: "cropped" }), true))
+      .toBe("Can't be moved: it is cropped by a frame that would not move with it.");
+    const keys = panel.imageShortcuts();
+    expect(keys.map(([key]) => key))
+      .toEqual(["←↑→↓", "Shift + ←↑→↓", `${isMac ? "⌥" : "Alt"} + ←↑→↓`, "+ / −", ", / .", "Delete", "Esc"]);
+    expect(keys[2][1]).toBe("Change its width or height");
+    expect(keys[4][1]).toBe("Turn it by 1° (Shift: 15°)");
+    i18n.setLocale("it");
+    expect(panel.imageHint(IMAGE(0), false))
+      .toBe("Trascinala per spostarla, un angolo per ridimensionarla, la manopola sullo stelo per ruotarla.");
+    expect(panel.imageHint(IMAGE(0), true))
+      .toBe("Trascina la maniglia tonda per spostarla, un angolo per ridimensionarla, la manopola sullo stelo per ruotarla.");
+    for (const locale of ["en", "it"] as const) {
+      i18n.setLocale(locale);
+      for (const hint of [panel.imageHint(IMAGE(0), false), panel.imageHint(IMAGE(0), true)]) {
+        expect(hint).not.toMatch(/(above|middle|centre|center|sopra|centro)/);
+      }
+    }
+    i18n.setLocale("it");
+    expect(panel.imageShortcuts().map(([key, action]) => `${key}: ${action}`).slice(2, 6)).toEqual([
+      `${isMac ? "⌥" : "Alt"} + ←↑→↓: Cambiane larghezza o altezza`, "+ / −: Ingrandiscila o rimpiccioliscila",
+      ", / .: Ruotala di 1° (Maiusc: 15°)", "Canc: Eliminala",
+    ]);
+    i18n.setLocale("en");
+  });
+
+  it("labels say which image it is; the bar's Deselect is not the edit banner's Done", async () => {
+    const i18n = await import("../src/i18n");
+    const reason = actions.lockReasonText("group");
+    expect(i18n.t("image.label", { n: 2, w: "28", h: "0.3" })).toBe("Image 2, 28 × 0.3 mm");
+    expect(i18n.t("image.lockedLabel", { n: 3, reason }))
+      .toBe("Image 3 can't be moved: it is joined to other content, such as a caption");
+    expect(i18n.t("image.status.placed", { w: "28", h: "21", x: "12", y: "40", deg: 15 }))
+      .toBe("28 × 21 mm, 12 mm from the left, 40 mm from the top, 15°");
+    for (const locale of ["en", "it"] as const) {
+      i18n.setLocale(locale);
+      expect(i18n.t("image.done")).not.toBe(i18n.t("edit.done"));
+      expect(i18n.t("image.selectedLabel", { n: 1, w: "5", h: "5" })).not.toMatch(/[{}]/);
+    }
+    expect(i18n.t("image.lockedLabel", { n: 3, reason: actions.lockReasonText("group") }))
+      .toBe("L'immagine 3 non si può spostare: è unita ad altro contenuto, per esempio una didascalia");
+    expect(i18n.t("image.status.placed", { w: "28", h: "21", x: "12", y: "40", deg: 15 }))
+      .toBe("28 × 21 mm, a 12 mm da sinistra e 40 mm dall'alto, 15°");
+    i18n.setLocale("en");
+  });
+
+  it("every Italian text has the placeholders of the English one", async () => {
+    const { en } = await import("../src/i18n/en");
+    const { it: italian } = await import("../src/i18n/it");
+    const names = (text: string) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort();
+    for (const key of Object.keys(en) as (keyof typeof en)[]) {
+      expect({ key, names: names(italian[key]) }).toEqual({ key, names: names(en[key]) });
+    }
   });
 });
