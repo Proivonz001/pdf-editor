@@ -1,8 +1,8 @@
-/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the Fill & sign strip and banner
-   (ui/fill/FillBar.tsx), the bottom sheets (ui/Sheet.tsx), the rows of the "More" sheet
-   (ui/PhoneSheets.tsx) and the download options sheet (ui/DownloadOptions.tsx). The thumbnails
-   inside the pages sheet are styled by pages.css; this file only gives them their room. Colours
-   only from tokens.css.
+/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the strip and banner of Edit and
+   Fill & sign (ui/EditBar.tsx, ui/fill/FillBar.tsx, ui/SubTools.tsx), the bottom sheets
+   (ui/Sheet.tsx), the rows of the "More" sheet (ui/PhoneSheets.tsx) and the download options
+   sheet (ui/DownloadOptions.tsx). The thumbnails inside the pages sheet are styled by pages.css;
+   this file only gives them their room. Colours only from tokens.css.
 
    The tab bar and the sheets take pans only, no pinch or double-tap zoom: zooming the page from
    there would leave the bars out of view once a sheet closes, and the viewer keeps pinches for
@@ -158,13 +158,13 @@
   left: calc(50% + 6px);
 }
 
-/* --- Fill & sign strip ----------------------------------------------------------------------
-   Fill mode's sub-tools (FillStrip), 48 px tall, right above the tab bar: an icon over a short
-   label each, sharing the width; where seven do not fit (below about 350 px) each keeps 48 px
-   and the strip scrolls sideways. The lit one is tinted with the ink border and a bolder label,
-   as the tabs. Pans only, like the tab bar. */
+/* --- Tool strip -----------------------------------------------------------------------------
+   The sub-tools of Edit mode (EditStrip) or Fill mode (FillStrip), 48 px tall, right above the
+   tab bar: an icon over a short label each, sharing the width; where they do not fit (very large
+   text) each keeps 48 px and the strip scrolls sideways. The lit one is tinted with the ink
+   border and a bolder label, as the tabs. Pans only, like the tab bar. */
 
-.fill-strip {
+.tool-strip {
   flex: none;
   height: 48px;
   padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
@@ -177,18 +177,18 @@
   touch-action: pan-x;
 }
 
-.fill-strip::-webkit-scrollbar {
+.tool-strip::-webkit-scrollbar {
   display: none;
 }
 
-.fill-tools.is-strip {
+.sub-tools.is-strip {
   width: max-content;
   min-width: 100%;
   height: 100%;
   padding: 2px 4px;
 }
 
-.fill-tools.is-strip .fill-tool {
+.sub-tools.is-strip .sub-tool {
   flex: 1 0 auto;
   flex-direction: column;
   gap: 2px;
@@ -201,44 +201,40 @@
   line-height: 13px;
 }
 
-.fill-tools.is-strip .fill-tool[aria-pressed="true"] {
+.sub-tools.is-strip .sub-tool[aria-pressed="true"] {
   color: var(--active-fg);
 }
 
-.fill-tools.is-strip .fill-tool .icon {
+.sub-tools.is-strip .sub-tool .icon {
   width: 20px;
   height: 20px;
 }
 
-.fill-tools.is-strip .fill-tool:focus-visible {
+.sub-tools.is-strip .sub-tool:focus-visible {
   outline-offset: -2px; /* inside the strip, which clips what stands out */
 }
 
 /* The toasts sit above the strip too (overlays.css puts them above the tab bar). */
-.app[data-layout="phone"].has-doc:has(.fill-strip) .toast-stack {
+.app[data-layout="phone"].has-doc:has(.tool-strip) .toast-stack {
   bottom: calc(var(--tab-h) + 48px + env(safe-area-inset-bottom) + 12px);
 }
 
-/* --- Fill & sign banner ---------------------------------------------------------------------
-   The hint (with the field count and "Next empty field" under it) beside "Put it in the middle",
-   an icon there, and Done; while a signature waits to be placed, "Put it in the middle" with its
-   words, Cancel and Done go to a row of their own under the hint, which keeps the whole width. */
+/* --- The tools' banners ---------------------------------------------------------------------
+   The hint (in Fill mode with the field count and "Next empty field" under it) beside "Put it in
+   the middle" (an icon: in Fill mode, and in Edit mode with Add text) and Done; when they do not
+   fit beside it (a signature waiting to be placed adds Cancel), the buttons go to a row of their
+   own under the hint, which keeps the whole width. */
 
-.app[data-layout="phone"] .edit-banner.is-fill {
+.app[data-layout="phone"] .edit-banner.is-tools {
   column-gap: 8px;
 }
 
-.app[data-layout="phone"] .fill-banner-info {
+.app[data-layout="phone"] .tool-banner-info {
   flex-basis: 12em;
 }
 
-.app[data-layout="phone"] .fill-banner-actions {
+.app[data-layout="phone"] .tool-banner-actions {
   gap: 4px;
-}
-
-/* The icon alone: as wide as the button is tall at least (36 px, 44 px by touch: --btn). */
-.app[data-layout="phone"] .fill-banner-btn.is-icon {
-  padding: 0;
 }
 
 .app[data-layout="phone"] .fill-banner-form {
@@ -644,7 +640,7 @@
     outline: 2px solid currentColor;
   }
 
-  .fill-strip {
+  .tool-strip {
     border-top-color: CanvasText;
   }
 

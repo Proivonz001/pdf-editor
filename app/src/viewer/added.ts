@@ -1,8 +1,9 @@
 // Texts the app wrote on a page (addText: words, ticks, crosses, dates), read from the engine on
-// demand (fill mode, page near the viewport) and cached in page.added until the page changes
-// (invalidatePages() drops the cache), like the lines in lines.ts. The fill layer draws a box over
-// each one, so a tap reopens it in the text writer; their ids are stable across edits, undo and
-// redo (AddedText.id), so a box read before an edit still names the same text after it.
+// demand (wherever the text writer is on: Compila e firma, Modifica with Aggiungi testo; for a
+// page near the viewport) and cached in page.added until the page changes (invalidatePages()
+// drops the cache), like the lines in lines.ts. The fill layer draws a box over each one, so a
+// tap reopens it in the text writer; their ids are stable across edits, undo and redo
+// (AddedText.id), so a box read before an edit still names the same text after it.
 //
 // Also, for what the user added: the words screen readers say for a picture they placed (a
 // signature's description), and the app's requests to move the keyboard focus onto something

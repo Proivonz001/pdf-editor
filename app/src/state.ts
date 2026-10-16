@@ -1,9 +1,11 @@
 // App-wide state, all in @preact/signals: the engine, the open document, the edit history
-// (and whether it has been downloaded), the viewer settings (the tool: Modifica or Compila e
-// firma; the line being edited, the selected image and the image edits still on their way),
-// what Compila e firma holds (its sub-tool, the text writer, the signatures of this session, a
-// signature waiting to be placed, the focused form field and whether it takes typing, where the
-// keyboard focus is to go next), toasts and dialogs (the download options, the PDF/A questions,
+// (and whether it has been downloaded), the viewer settings (the tool: Modifica, with its
+// sub-tool Cambia or Aggiungi testo, or Compila e firma; where the text writer is on and what a
+// tap writes there; the line being edited, the selected image and the image edits still on their
+// way), the text writer (Compila e firma's, and Modifica's with Aggiungi testo: writerOn,
+// writerKind), what Compila e firma holds (its sub-tool, the signatures of this session, a
+// signature waiting to be placed, the focused form field and whether it takes typing), where the
+// keyboard focus is to go next, toasts and dialogs (the download options, the PDF/A questions,
 // the signature sheet and the fill-and-sign questions among them).
 // The actions that change it live in src/ui/actions.ts.
 import { batch, computed, signal } from "@preact/signals";
@@ -196,9 +198,10 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
 }
 
 /**
- * The tool that is on: "edit" (Modifica: the document's own lines and images), "fill" (Compila e
- * firma: form fields, text written anywhere, signatures, pictures), or none (browse, where the
- * form fields still work). One at a time; changed only through setTool (actions.ts).
+ * The tool that is on: "edit" (Modifica: the document's own lines and images, and new text and
+ * pictures), "fill" (Compila e firma: form fields, text written anywhere, marks, the date,
+ * signatures), or none (browse, where the form fields still work). One at a time; changed only
+ * through setTool (actions.ts).
  */
 export type Tool = "edit" | "fill" | null;
 export const tool = signal<Tool>(null);
@@ -206,6 +209,27 @@ export const tool = signal<Tool>(null);
 export const editMode = computed(() => tool.value === "edit");
 /** True in Compila e firma. */
 export const fillMode = computed(() => tool.value === "fill");
+
+/**
+ * What a tap does in Modifica: "change" (the default: open a line to change it, select an image
+ * to move it) or "addText" (write a new text where the user taps, with the same writer as Testo
+ * in Compila e firma). "Aggiungi immagine" is an action (the picture picker), never left on.
+ * Back to "change" whenever the tool changes (setTool).
+ */
+export type EditTool = "change" | "addText";
+export const editTool = signal<EditTool>("change");
+
+/**
+ * The text writer can be used: in Compila e firma, and in Modifica with Aggiungi testo. Its
+ * taps, the boxes over what the user wrote and the writer itself (FillLayer) are on the pages.
+ */
+export const writerOn = computed(() => tool.value === "fill" || (tool.value === "edit" && editTool.value === "addText"));
+
+/**
+ * What a tap on the page writes while the writer is on: Compila e firma's sub-tool, or Testo in
+ * Modifica (Aggiungi testo writes text only).
+ */
+export const writerKind = computed<FillTool>(() => (tool.value === "edit" ? "text" : fillTool.value));
 
 export interface EditingLine {
   pageIndex: number;
@@ -220,10 +244,11 @@ export interface SelectedImage {
   index: number;
 }
 /**
- * The image selected in Modifica, or in Compila e firma a picture the user added (moved,
- * resized, rotated... with its frame and context bar). One at a time, and never together with an
- * open line editor or text writer: selecting one closes the other. After an edit of the image it
- * follows the image's new index; undo, redo and a change of tool clear it.
+ * The image selected (moved, resized, rotated... with its frame and context bar): any image in
+ * Modifica with Cambia, only a picture the user added wherever the text writer is on (Compila e
+ * firma, Modifica with Aggiungi testo: writerOn). One at a time, and never together with an open
+ * line editor or text writer: selecting one closes the other. After an edit of the image it
+ * follows the image's new index; undo, redo and a change of tool or of Modifica's sub-tool clear it.
  */
 export const selectedImage = signal<SelectedImage | null>(null);
 /**
@@ -263,14 +288,14 @@ export function countImageEdit(): () => void {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Compila e firma
+// Compila e firma, and the text writer (also Modifica's, with Aggiungi testo)
 
 /**
  * The sub-tool a tap uses in Compila e firma: write text (the default), a tick, a cross, today's
- * date, a signature, initials, a picture. Tick, cross and date stay on after use; Firma and Sigla
- * go back to Testo after one placement. "image" is an action (the picture picker), never left on.
+ * date, a signature, initials. Tick, cross and date stay on after use; Firma and Sigla go back to
+ * Testo after one placement. Pictures are added from Modifica (Aggiungi immagine).
  */
-export type FillTool = "text" | "check" | "cross" | "date" | "signature" | "initials" | "image";
+export type FillTool = "text" | "check" | "cross" | "date" | "signature" | "initials";
 export const fillTool = signal<FillTool>("text");
 
 /** The two inks of what the user writes and signs: black (the default) and ballpoint blue. */
@@ -284,8 +309,9 @@ export const INK: Record<InkColor, [number, number, number]> = {
 export const writerStyle = signal<{ size: number; color: InkColor }>({ size: 11, color: "black" });
 
 /**
- * The text writer open on a page: a new text (or a mark, or a date) at `origin`, or one written
- * before, reopened (`editing`). The writer component holds what is typed; commitWriter writes it.
+ * The text writer open on a page (Compila e firma, or Modifica with Aggiungi testo, which writes
+ * text only): a new text (or a mark, or a date) at `origin`, or one written before, reopened
+ * (`editing`). The writer component holds what is typed; commitWriter writes it.
  */
 export interface OpenWriter {
   pageIndex: number;
@@ -353,7 +379,8 @@ export interface FocusRequest {
  * A request to move the keyboard focus to something just placed or written (a mark or a date put
  * in the middle with "Put it in the middle", a signature placed from the keyboard, a text written
  * from the keyboard). The viewer layers honour it once the element exists (also after the page is
- * read again) and then clear it. Cleared too by a change of tool and by another document.
+ * read again) and then clear it. Cleared too by a change of tool or of Modifica's sub-tool, and by
+ * another document.
  */
 export const focusRequest = signal<FocusRequest | null>(null);
 
@@ -364,8 +391,8 @@ export const focusRequest = signal<FocusRequest | null>(null);
  */
 export const initialsSource = signal<{ docId: number; pageIndex: number; imageIndex: number; sig: Signature } | null>(null);
 
-export type SheetKind = "pages" | "more";
-/** The bottom sheet open on phones (page thumbnails, or the "More" actions). */
+export type SheetKind = "pages" | "more" | "details";
+/** The bottom sheet open on phones (page thumbnails, the "More" actions, or the details). */
 export const sheet = signal<SheetKind | null>(null);
 /**
  * The engine could not restore the document after a failed edit ("broken"): editing, undo and
@@ -381,7 +408,7 @@ export const signedNoticeDismissed = signal<number | null>(null);
 /**
  * What the open line editor offers to the rest of the app (see LineLayer). The selected image
  * registers one too while a keyboard move or resize of it waits to be written (ImageLayer), and
- * so does the open text writer of Compila e firma (FillLayer: commitWriter).
+ * so does the open text writer, wherever it is on (FillLayer: commitWriter).
  */
 export interface LineEditorHandle {
   /** The typed text differs from the line (surrounding spaces aside), or the image was moved. */
@@ -402,7 +429,8 @@ export function registerEditor(handle: LineEditorHandle): () => void {
 
 /**
  * Write what the open line editor or text writer holds (or the image's keyboard move), so a
- * download, share, open, close, update, undo, redo or a change of tool includes it.
+ * download, share, open, close, update, undo, redo or a change of tool or of Modifica's sub-tool
+ * includes it.
  */
 export async function flushEditor() {
   await openEditor?.commit();

@@ -1,0 +1,15 @@
+/* The details in their phone sheet (ui/PhoneSheets.tsx, opened from the More sheet; the content
+   is ui/DetailsPanel.tsx's). shell.css styles the docked panel of the desktop layout and the
+   content both frames share: sections, rows, steps, legend, keys. Colours only from tokens.css.
+
+   The same sections under the sheet's own header, at its 20 px margins, in slightly larger text
+   than on the desktop. */
+
+.sheet-details .sheet-content {
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px;
+  color: var(--text);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+}

@@ -1,13 +1,15 @@
 // What the buttons, shortcuts, the line editor, the image frame and the fill layer do: open,
-// close, the tools (Modifica, Compila e firma), edit a line, select, move, delete or replace an
-// image, write text anywhere, fill form fields, place signatures, initials (on every page too) and
-// pictures (with a tap, or in the middle from the keyboard), keep signatures on the device and say
-// when that fails, undo/redo, download (one tap, or with options: PDF/A,
-// password; asking first about empty required fields), share, update. Engine changes run one at
-// a time (a promise chain), so an Undo clicked while an edit is being written applies after it,
-// never in between. Download, share, open, close, update, undo, redo and changing the tool first
-// write what is still typed in the line editor or the text writer, or an image's keyboard move
-// still waiting (flushEditor), so it is neither left out of the file nor lost without a warning.
+// close, the tools (Modifica with its sub-tools Cambia and Aggiungi testo, and its Aggiungi
+// immagine; Compila e firma), edit a line, select, move, delete or replace an image, add a
+// picture, write text anywhere (Compila e firma, and Modifica with Aggiungi testo), fill form
+// fields, place signatures and initials (on every page too; with a tap, or in the middle from the
+// keyboard), keep signatures on the device and say when that fails, undo/redo, download (one tap,
+// or with options: PDF/A, password; asking first about empty required fields; never leaving an
+// empty file where the save failed), share, update. Engine changes run one at a time (a promise
+// chain), so an Undo clicked while an edit is being written applies after it, never in between.
+// Download, share, open, close, update, undo, redo and changing the tool or Modifica's sub-tool
+// first write what is still typed in the line editor or the text writer, or an image's keyboard
+// move still waiting (flushEditor), so it is neither left out of the file nor lost without a warning.
 import { batch, effect } from "@preact/signals";
 import { EngineError } from "../engine/client";
 import {
@@ -20,12 +22,12 @@ import { formatMm, locale, t } from "../i18n";
 import { applyUpdate } from "../platform/pwa";
 import {
   busy, confirmDialog, countImageEdit, currentPage, dialog, dismissToast, doc, downloadRunning, editingLine,
-  editingStopped, editMode, engine, engineStatus, fillMode, fillTool, fitMode, flushEditor, focusedField, focusRequest,
-  hasUnsavedWork, history, imageEditsPending, INK, initialsSource, markSaved, opening, openWriter, pendingPlacement,
-  recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage, sessionSignatures, sheet, showDialog,
-  showToast, tool, typingField, writerStyle, zoom,
-  type BusyKind, type DialogState, type FillTool, type InkColor, type OpenWriter, type SavePurpose, type Signature,
-  type Tool,
+  editingStopped, editMode, editTool, engine, engineStatus, fillMode, fillTool, fitMode, flushEditor, focusedField,
+  focusRequest, hasUnsavedWork, history, imageEditsPending, INK, initialsSource, markSaved, opening, openWriter,
+  pendingPlacement, recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage, sessionSignatures, sheet,
+  showDialog, showToast, tool, typingField, writerKind, writerOn, writerStyle, zoom,
+  type BusyKind, type DialogState, type EditTool, type FillTool, type InkColor, type OpenWriter, type SavePurpose,
+  type Signature, type Tool,
 } from "../state";
 import { createPages, type OpenDoc, type PageModel } from "../viewer/model";
 import { goToPage } from "../viewer/zoom";
@@ -158,7 +160,7 @@ function clearOpenWork(forStep = false) {
     pendingPlacement.value = null;
     focusedField.value = null;
     const sub = fillTool.peek();
-    if (sub === "signature" || sub === "initials" || sub === "image") fillTool.value = "text";
+    if (sub === "signature" || sub === "initials") fillTool.value = "text";
   });
 }
 
@@ -303,7 +305,8 @@ export async function closeDocument() {
  * editor or the text writer holds (a tap on a tab does not always take the focus away from the
  * field, so blur cannot be relied on), or the selected image's keyboard move; then the line
  * editor, the image selection, the writer, a signature waiting to be placed and the focused field
- * close. A tool is refused without a document or once editing has stopped; turning off always works.
+ * close. Modifica always starts on Cambia. A tool is refused without a document or once editing
+ * has stopped; turning off always works.
  */
 export async function setTool(next: Tool): Promise<void> {
   const before = document.activeElement;
@@ -312,16 +315,64 @@ export async function setTool(next: Tool): Promise<void> {
     clearOpenWork();
     focusRequest.value = null; // the layers it was for change with the tool
     tool.value = next !== null && doc.peek() !== null && !editingStopped.peek() ? next : null;
+    editTool.value = "change";
     if (tool.peek() === "edit") typingField.value = false; // no form controls in Modifica
   });
   // The control that did it may go with the change (Done in the edit banner, Edit text in the
   // details panel, a line box when Esc leaves edit mode): keep the focus on the document.
-  if (before && before !== document.body) rescueFocus(viewerScroller);
+  if (before && before !== document.body) rescueFocus(focusAfterLayers(before));
+}
+
+/**
+ * Where the focus goes when the layers on the pages swap under `before`, the element that had it
+ * (a change of tool or of Modifica's sub-tool): for rescueFocus, which runs on the next frame,
+ * after the re-render, and only if the focus fell to <body>. An image box (data-image) hands it to
+ * the box of the same picture on the same page in the new layer, when there is one (a picture the
+ * user added is in both); anything else, or a picture the new layer does not show, to the scroller.
+ */
+function focusAfterLayers(before: Element): () => HTMLElement | null {
+  const image = before.getAttribute("data-image");
+  const pageEl = image === null ? null : before.closest(".page");
+  return () => {
+    const box = pageEl?.isConnected ? pageEl.querySelector<HTMLElement>(`[data-image="${image}"]`) : null;
+    return box ?? viewerScroller();
+  };
 }
 
 /** Modifica on or off (kept for the existing callers): setTool("edit") or setTool(null). */
 export function setEditMode(on: boolean): Promise<void> {
   return setTool(on ? "edit" : null);
+}
+
+/**
+ * Modifica's sub-tool: Cambia (a tap opens a line to change it, or selects an image to move it)
+ * or Aggiungi testo (a tap opens the text writer, as Testo in Compila e firma). What the line
+ * editor or the writer holds is written first (or an image's keyboard move), then what is open
+ * closes. Refused without a document, outside Modifica or once editing has stopped; nothing when
+ * that sub-tool is on already.
+ */
+export async function setEditTool(next: EditTool): Promise<void> {
+  const can = () => doc.peek() !== null && editMode.peek() && !editingStopped.peek() && editTool.peek() !== next;
+  if (!can()) return;
+  const before = document.activeElement;
+  await flushEditor();
+  if (can()) switchEditTool(next, before);
+}
+
+/**
+ * Put Modifica on the sub-tool `next` now: what is open closes, nothing is written (flushEditor
+ * first for that). The layers on the pages change with it (Cambia's lines and images, Aggiungi
+ * testo's writer and added pictures), so the box that had the focus (`before`) hands it on, not
+ * to <body>: a picture's box to the same picture's box in the new layer, anything else to the
+ * scroller (focusAfterLayers). This rescue is asked for before the boxes' own, so it decides.
+ */
+function switchEditTool(next: EditTool, before: Element | null) {
+  batch(() => {
+    clearOpenWork();
+    focusRequest.value = null; // the layers it was for change with the sub-tool
+    editTool.value = next;
+  });
+  if (before && before !== document.body) rescueFocus(focusAfterLayers(before));
 }
 
 /**
@@ -382,17 +433,17 @@ export const undo = () => historyStep("undo");
 export const redo = () => historyStep("redo");
 
 /**
- * Open the line editor on `line` (a click or tap on its box), deselecting the selected image. A
- * keyboard move of that image still waiting is written first; if it changed this page, the
- * line's index may be stale, so no editor opens (the line is clicked again). As for images,
- * nothing opens while an edit, undo or redo is being written or an image edit waits for its turn
- * (a Delete behind a download, say): when it lands the page is read again, which closes the
- * editor and would drop what was typed in it without a word.
+ * Open the line editor on `line` (a click or tap on its box, in Modifica with Cambia),
+ * deselecting the selected image. A keyboard move of that image still waiting is written first;
+ * if it changed this page, the line's index may be stale, so no editor opens (the line is clicked
+ * again). As for images, nothing opens while an edit, undo or redo is being written or an image
+ * edit waits for its turn (a Delete behind a download, say): when it lands the page is read
+ * again, which closes the editor and would drop what was typed in it without a word.
  */
 export async function openLine(pageIndex: number, line: LineInfo): Promise<void> {
   const d = doc.peek();
   const page = d?.pages[pageIndex];
-  const canOpen = () => editMode.peek() && !editingStopped.peek() && !changing();
+  const canOpen = () => editMode.peek() && editTool.peek() === "change" && !editingStopped.peek() && !changing();
   if (!d || !page || !canOpen()) return;
   if (selectedImage.peek()) {
     const rev = page.rev.peek();
@@ -413,17 +464,20 @@ export async function openLine(pageIndex: number, line: LineInfo): Promise<void>
 // ---------------------------------------------------------------------------------------------
 // Images
 //
-// In edit mode an image is selected with a click or a tap (in Compila e firma, only the pictures
-// the user added: signatures, initials, photos), then moved, resized, rotated (all three are
-// transformImage), deleted or replaced. Each change is one edit in the history, made like a line
-// edit: one at a time, refused when the page changed since its images were read.
+// In edit mode an image is selected with a click or a tap (where the text writer is on, in
+// Compila e firma and in Modifica with Aggiungi testo, only the pictures the user added:
+// signatures, initials, photos), then moved, resized, rotated (all three are transformImage),
+// deleted or replaced. Each change is one edit in the history, made like a line edit: one at a
+// time, refused when the page changed since its images were read. Modifica's Aggiungi immagine
+// adds a picture (chooseNewPicture).
 // The selection is an index in the page's image list, which an edit can change: it follows the
 // edited image to its new index (none after a delete), and after a delete a selection on an
-// image painted later moves one place up with it; undo, redo, changing the tool, open and close
-// clear it. An image edit counts from the moment it is asked for (imageEditsPending), even when
-// it waits behind a download: until it is done no other image is selected and no line opened, so
-// nothing is picked on indices about to change, and a second Delete of the same image is the
-// first one. Only the open document's edits count: opening or closing one starts again from 0.
+// image painted later moves one place up with it; undo, redo, changing the tool or Modifica's
+// sub-tool, open and close clear it. An image edit counts from the moment it is asked for
+// (imageEditsPending), even when it waits behind a download: until it is done no other image is
+// selected and no line opened, so nothing is picked on indices about to change, and a second
+// Delete of the same image is the first one. Only the open document's edits count: opening or
+// closing one starts again from 0.
 
 /** Why an image cannot be moved, in words (for the toast, the box's label, the details panel). */
 export function lockReasonText(reason: ImageLockReason | null): string {
@@ -472,9 +526,10 @@ function isSelected(page: PageModel, image: ImageInfo) {
  * the writer's text or an image's keyboard move still waiting is written first; if that changed
  * the page (its images were read at `rev`), their indices may be stale, so the selection is
  * cleared instead. A locked image says why and is not selected. Selecting closes the line editor
- * and the writer. Nothing is selected in browse mode, in Compila e firma unless the user added
- * it, while another change is being written (as for lines), or while an image edit waits for
- * its turn (behind a download, say). Deselecting always works.
+ * and the writer. Nothing is selected in browse mode, where the writer is on (Compila e firma,
+ * Aggiungi testo) unless the user added it, while another change is being written (as for
+ * lines), or while an image edit waits for its turn (behind a download, say). Deselecting always
+ * works.
  */
 export async function selectImage(pageIndex: number, image: ImageInfo | null, rev?: number): Promise<void> {
   const d = doc.peek();
@@ -485,8 +540,7 @@ export async function selectImage(pageIndex: number, image: ImageInfo | null, re
     selectedImage.value = null;
     return;
   }
-  const on = tool.peek();
-  if (on === null || (on === "fill" && !image.added) || editingStopped.peek() || changing()) return;
+  if (tool.peek() === null || (writerOn.peek() && !image.added) || editingStopped.peek() || changing()) return;
   const page = d.pages[pageIndex];
   if (!page || (rev !== undefined && page.rev.peek() !== rev)) {
     selectedImage.value = null;
@@ -673,8 +727,10 @@ function pickPicture(onPick: (file: File) => void): void {
 //
 // A tap in Compila e firma fills in a form field, reopens what the user wrote (a text, a mark, a
 // date; a picture they added is selected instead), or uses the current sub-tool there: a text
-// writer, a tick or a cross, today's date, the signature or initials chosen, a picture. Each of
-// them is one edit in the history, made like a line edit: one at a time, through the engine's
+// writer, a tick or a cross, today's date, the signature or initials chosen. The text writer also
+// works in Modifica with Aggiungi testo (writerOn): a tap there opens it, always for text
+// (writerKind), or reopens what the user wrote. Each of them is one edit in the history, made
+// like a line edit: one at a time, through the engine's
 // queue, recorded with recordHistory (which drops the pages' fields and added texts, so they are
 // read again). An edit of an added text (by its id) or of a field (by its name) is refused when
 // the page changed between the moment it was read (`rev`) and the moment the user acted: ids and
@@ -761,9 +817,9 @@ const reopenedStyle = new WeakMap<OpenWriter, TextStyle>();
 const writerDoc = new WeakMap<OpenWriter, OpenDoc>();
 
 /**
- * Turn on a sub-tool of Compila e firma. Firma and Sigla open the signature sheet (the choice
- * then waits to be placed: useSignature); Immagine opens the picture picker and stays off
- * (addPictureFromFile). What the writer holds is written first.
+ * Turn on a sub-tool of Compila e firma: Testo, ✓, ✗, Data, Firma or Sigla. Firma and Sigla open
+ * the signature sheet (the choice then waits to be placed: useSignature). What the writer holds
+ * is written first. (Pictures are added in Modifica: chooseNewPicture.)
  */
 export function setFillTool(next: FillTool): void {
   if (!doc.peek() || !fillMode.peek() || editingStopped.peek()) return;
@@ -771,10 +827,6 @@ export function setFillTool(next: FillTool): void {
   if (sheetFor && dialog.peek()) return;
   void flushEditor();
   writerAsks++; // a writer still on its way (a text reopened during an undo) does not open after this
-  if (next === "image") {
-    pickPicture((file) => void addPictureFromFile(file));
-    return;
-  }
   batch(() => {
     pendingPlacement.value = null;
     fillTool.value = next;
@@ -810,8 +862,9 @@ interface WriterOptions {
 }
 
 /**
- * A tap in Compila e firma with Testo, ✓, ✗ or Data (`kind`) at `origin` (the baseline start,
- * page space). The writer still open is written first (a tap elsewhere: write it, then a new
+ * A tap in Compila e firma with Testo, ✓, ✗ or Data (`kind`), or in Modifica with Aggiungi testo
+ * (Testo), at `origin` (the baseline start, page space); refused where the writer is not on
+ * (writerOn). The writer still open is written first (a tap elsewhere: write it, then a new
  * writer there). "text" opens the writer with `text` (empty by default), in the last size and
  * ink used; a mark (✓ or ✗, 1.1 × that size) or the date (today's, unless `text`) is written at
  * once, one tap. A new one is kept on the page (originOnPage). `opts.editing` reopens a text
@@ -843,7 +896,7 @@ async function openOrWrite(
   pageIndex: number, origin: [number, number], kind: OpenWriter["kind"], text: string | undefined, opts: WriterOptions,
 ): Promise<Opened | null> {
   const d = doc.peek();
-  const can = () => doc.peek() === d && fillMode.peek() && !editingStopped.peek();
+  const can = () => doc.peek() === d && writerOn.peek() && !editingStopped.peek();
   if (!d || !d.pages[pageIndex] || !can()) return null;
   const page = d.pages[pageIndex];
   const ask = ++writerAsks;
@@ -1009,7 +1062,7 @@ export function writeAndNewLine(
   const written = commitWriter(w, text, origin, size, color);
   const d = doc.peek();
   const page = d?.pages[w.pageIndex];
-  if (d && page && (writerDoc.get(w) ?? d) === d && fillMode.peek() && !editingStopped.peek()) {
+  if (d && page && (writerDoc.get(w) ?? d) === d && writerOn.peek() && !editingStopped.peek()) {
     const below: [number, number] = [origin[0], origin[1] + LINE_STEP * size];
     if (below[1] + DESCENT * size > page.bounds[3]) {
       showToast("info", t("writer.noRoomBelow"));
@@ -1488,7 +1541,7 @@ const PICTURE_PPI = 150;
 
 /**
  * The part of page `pageIndex` on screen (page space), or the whole page when it cannot be told
- * (not laid out, no viewer): where "Put it in the middle" and Immagine place things.
+ * (not laid out, no viewer): where "Put it in the middle" and Aggiungi immagine place things.
  */
 export function visiblePart(pageIndex: number): Rect {
   const page = doc.peek()?.pages[pageIndex];
@@ -1532,9 +1585,33 @@ export function pictureMatrix(view: Rect, bounds: Rect, width: number, height: n
 }
 
 /**
- * Immagine: the picture in `file` is prepared (upright, scaled down, JPEG or PNG), placed in the
- * middle of what shows of the current page (pictureMatrix), and selected with its frame. One
- * edit; it counts as pending from the moment it is chosen.
+ * "Aggiungi immagine" in Modifica: the system picker for a picture, opened right here, within the
+ * click (iOS opens pickers only then); then addPictureFromFile with the file chosen. What the line
+ * editor or the writer holds is written first. When the file comes, Aggiungi testo gives way to
+ * Cambia (before the picture is sent), so the new picture is selected in the full image frame.
+ * Cancelled, nothing changes. Only in Modifica, with a document, until editing stops.
+ */
+export function chooseNewPicture(): void {
+  const d = doc.peek();
+  if (!d || !editMode.peek() || editingStopped.peek()) return;
+  void flushEditor();
+  writerAsks++; // a writer still on its way does not open over the picker
+  pickPicture((file) => {
+    if (doc.peek() !== d) return; // chosen for a document closed since
+    if (editMode.peek() && editTool.peek() === "addText") {
+      const before = document.activeElement;
+      void flushEditor(); // a writer opened since is written (its text is taken at once), not dropped
+      switchEditTool("change", before);
+    }
+    void addPictureFromFile(file);
+  });
+}
+
+/**
+ * Modifica's "Aggiungi immagine" (chooseNewPicture): the picture in `file` is prepared (upright,
+ * scaled down, JPEG or PNG), placed in the middle of what shows of the current page
+ * (pictureMatrix), and selected with its frame. One edit; it counts as pending from the moment
+ * it is chosen.
  */
 export function addPictureFromFile(file: File): Promise<void> {
   const d = doc.peek();
@@ -1574,15 +1651,16 @@ export function addPictureFromFile(file: File): Promise<void> {
  * - Testo: a writer opens there and takes the focus;
  * - ✓, ✗ and Data: written there at once, as a tap would, kept on the page; a toast says what and
  *   where in one sentence (mark.placedAt, writer.doneAt), and the focus goes to its box (focusRequest);
- * - Firma and Sigla with nothing chosen: the chooser; Immagine: the picture picker (opened right
- *   here, within the click, as iOS wants; the picture goes in the middle anyway).
- * Resolves once done.
+ * - Firma and Sigla with nothing chosen: the chooser.
+ * Only where the writer is on (writerOn); in Modifica, with Aggiungi testo, it is always Testo,
+ * whatever `kind` says. Resolves once done.
  */
-export async function placeAtCentre(kind: FillTool = fillTool.peek()): Promise<void> {
+export async function placeAtCentre(kind: FillTool = writerKind.peek()): Promise<void> {
   const d = doc.peek();
-  if (!d || !d.pages.length || !fillMode.peek() || editingStopped.peek()) return;
+  if (!d || !d.pages.length || !writerOn.peek() || editingStopped.peek()) return;
+  if (editMode.peek()) kind = "text"; // Aggiungi testo writes text only
   const sig = pendingPlacement.peek();
-  if (!sig && (kind === "signature" || kind === "initials" || kind === "image")) {
+  if (!sig && (kind === "signature" || kind === "initials")) {
     setFillTool(kind);
     return;
   }
@@ -1864,7 +1942,10 @@ function doneMessage(choice: DownloadChoice, name: string): string {
  * the download options, or else the one-tap choice. With the File System Access API the user
  * picks where, asked while the click still counts as a user gesture (the click that started it,
  * or the one that answered a PDF/A question); otherwise, or when the gesture has expired
- * meanwhile, it is a normal download. Afterwards the edits count as saved.
+ * meanwhile, it is a normal download. When the file cannot be written where the user chose, it is
+ * downloaded normally instead, and a toast says so. The empty file the save dialog made (or
+ * emptied) is never left behind when nothing went into it (writeDownload). Afterwards the edits
+ * count as saved.
  *
  * One download at a time: a second click or Ctrl+S while the save dialog is open is ignored
  * (Chrome would refuse a second dialog, and that must not turn into an extra plain download).
@@ -1923,6 +2004,14 @@ async function deliver(d: OpenDoc, choice: DownloadChoice, purpose: SavePurpose)
   return dropsProtection(d, regular) ? "choose-password" : deliver(d, regular, purpose);
 }
 
+/**
+ * One download (see download). The save dialog makes the file as soon as the user picks where
+ * (Chromium creates it, or empties a file picked to be overwritten, as the dialog closes): if
+ * nothing is written into it afterwards (another document was opened meanwhile, the engine failed,
+ * or refused the PDF/A, after which deliver offers a normal PDF and asks where again), it is
+ * removed while empty (removeIfEmpty). If writing it fails, the PDF already built is downloaded
+ * normally instead (downloaded as the name the user chose), and the toast says so.
+ */
 async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"blocked" | void> {
   const name = outputName(d.fileName, choice.format);
   const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
@@ -1946,27 +2035,77 @@ async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"block
     }
   }
   await flushEditor();
-  return exclusive("save", async () => {
+  /** The bytes were built and went to the dialog's file, or were downloaded instead. */
+  let delivered = false;
+  const outcome = await exclusive("save", async () => {
     if (doc.peek() !== d) return;
     const key = saveKey();
     const bytes = await buildPdf(choice);
     if (bytes === "blocked") return "blocked";
     if (!bytes) return;
-    try {
-      if (handle) {
-        const writable = await handle.createWritable();
-        await writable.write(bytes);
-        await writable.close();
-      } else {
-        downloadBlob(new Blob([bytes], { type: "application/pdf" }), name);
-      }
+    delivered = true;
+    if (handle && (await writeToHandle(handle, bytes))) {
       markSaved(key); // ignored if another file was opened while writing
-      showToast("info", doneMessage(choice, handle?.name ?? name));
+      showToast("info", doneMessage(choice, handle.name));
+      return;
+    }
+    const downloadName = handle?.name || name;
+    try {
+      downloadBlob(new Blob([bytes], { type: "application/pdf" }), downloadName);
     } catch (e) {
       console.error(e);
       showToast("error", t("download.failed"));
+      return;
     }
+    markSaved(key);
+    if (handle) showToast("warn", t("download.savedInstead", { name: downloadName }));
+    else showToast("info", doneMessage(choice, name));
   });
+  if (handle && !delivered) await removeIfEmpty(handle);
+  return outcome;
+}
+
+/**
+ * Write `bytes` into the file the save dialog made. False when that failed: what was written is
+ * dropped (abort: the browser writes to a swap file, so the file stays as it was before this
+ * write, which in Chromium is empty, even for a file picked to be overwritten), and the file is
+ * removed if it is empty (removeIfEmpty).
+ */
+async function writeToHandle(handle: FileSystemFileHandle, bytes: ArrayBuffer): Promise<boolean> {
+  let writable: FileSystemWritableFileStream | null = null;
+  try {
+    writable = await handle.createWritable();
+    await writable.write(bytes);
+    await writable.close();
+    return true;
+  } catch (e) {
+    console.error(e);
+    try {
+      await writable?.abort();
+    } catch {
+      // Closed or broken already: nothing more to drop.
+    }
+    await removeIfEmpty(handle);
+    return false;
+  }
+}
+
+/**
+ * Remove the file the save dialog made, if it is empty: the user is not left with an empty PDF
+ * where they chose. That is on purpose also for a file picked to be overwritten: Chromium empties
+ * it as the dialog closes (file_system_access_manager_impl.cc), so after a failure its old content
+ * is gone already, and an empty file under its name helps no one. A file with something in it (a
+ * browser or a path that does not empty it first) is never removed. FileSystemHandle.remove is
+ * Chromium's only: elsewhere the file stays.
+ */
+async function removeIfEmpty(handle: FileSystemFileHandle): Promise<void> {
+  const removable = handle as FileSystemFileHandle & { remove?: () => Promise<void> };
+  if (typeof removable.remove !== "function") return;
+  try {
+    if ((await handle.getFile()).size === 0) await removable.remove();
+  } catch (e) {
+    console.warn("The empty file could not be removed", e);
+  }
 }
 
 async function writeShare(d: OpenDoc, choice: DownloadChoice): Promise<"blocked" | void> {

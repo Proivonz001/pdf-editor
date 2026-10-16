@@ -1,11 +1,12 @@
 // The fill viewer's own rules, without a browser: the touch targets of dense check boxes (each box
 // is always its own control's, findings 45), the pages Tab goes on to (25; pages whose widgets
 // take no focus passed over), the focus staying within a date field and its "Today" (26), the
-// name of a picture the user added (54), and the app's focus requests and when something may take
-// the focus (19, 24, 47, 49).
+// name of a picture the user added (54), the app's focus requests and when something may take
+// the focus (19, 24, 47, 49), and the layers of Modifica's sub-tools: what a tap does with
+// Aggiungi testo, and which overlays a page mounts with Cambia and with Aggiungi testo.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { signal } from "@preact/signals";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
 import type { FieldWidget, Rect } from "../src/engine/protocol";
 import type { PageFields } from "../src/viewer/model";
@@ -18,11 +19,15 @@ vi.mock("../src/engine/client.ts", () => ({
 let fields: typeof import("../src/viewer/fields");
 let added: typeof import("../src/viewer/added");
 let state: typeof import("../src/state");
+let pageView: typeof import("../src/viewer/PageView");
+let fillLayer: typeof import("../src/viewer/FillLayer");
 
 beforeAll(async () => {
   fields = await import("../src/viewer/fields");
   added = await import("../src/viewer/added");
   state = await import("../src/state");
+  pageView = await import("../src/viewer/PageView");
+  fillLayer = await import("../src/viewer/FillLayer");
 });
 
 // --- Touch targets -------------------------------------------------------------------------------
@@ -363,5 +368,71 @@ describe("focus requests and taking the focus", () => {
     } finally {
       now.mockRestore();
     }
+  });
+});
+
+// --- Modifica's sub-tools --------------------------------------------------------------------------
+
+describe("Modifica's sub-tools: Aggiungi testo writes as Testo does, Cambia keeps the lines and images", () => {
+  afterEach(() => {
+    state.tool.value = null;
+    state.editTool.value = "change";
+    state.fillTool.value = "text";
+    state.selectedImage.value = null;
+    state.pendingPlacement.value = null;
+    state.editingStopped.value = false;
+  });
+
+  it("a page mounts the writer's layers with Aggiungi testo, the lines and images with Cambia, form fields never in Modifica", () => {
+    expect(pageView.layersFor("edit", "change", false)).toEqual({ edit: true, writer: false, fields: false });
+    expect(pageView.layersFor("edit", "addText", false)).toEqual({ edit: false, writer: true, fields: false });
+    // Compila e firma and browse as before (the sub-tool of Modifica does not matter there).
+    expect(pageView.layersFor("fill", "change", false)).toEqual({ edit: false, writer: true, fields: true });
+    expect(pageView.layersFor("fill", "addText", false)).toEqual({ edit: false, writer: true, fields: true });
+    expect(pageView.layersFor(null, "addText", false)).toEqual({ edit: false, writer: false, fields: true });
+    // Editing stopped: no writer and no fields; Modifica's lines and images as they always were.
+    expect(pageView.layersFor("fill", "change", true)).toEqual({ edit: false, writer: false, fields: false });
+    expect(pageView.layersFor("edit", "addText", true)).toEqual({ edit: false, writer: false, fields: false });
+    expect(pageView.layersFor("edit", "change", true)).toEqual({ edit: true, writer: false, fields: false });
+  });
+
+  it("a tap in Modifica with Aggiungi testo opens a text writer even when Compila e firma's sub-tool is ✓", () => {
+    state.fillTool.value = "check";
+    state.tool.value = "edit";
+    state.editTool.value = "addText";
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "write" });
+    for (const sub of ["cross", "date", "signature", "initials"] as const) {
+      state.fillTool.value = sub;
+      expect(fillLayer.tapIntent(false)).toEqual({ do: "write" });
+    }
+    // The same tap in Compila e firma does what its sub-tool says.
+    state.tool.value = "fill";
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "choose", kind: "initials" });
+    state.fillTool.value = "check";
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "mark", mark: "check" });
+    state.fillTool.value = "date";
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "date" });
+    state.fillTool.value = "text";
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "write" });
+  });
+
+  it("with Aggiungi testo a tap first deselects a picture the user added, as in Compila e firma", () => {
+    state.tool.value = "edit";
+    state.editTool.value = "addText";
+    state.selectedImage.value = { pageIndex: 0, index: 2 };
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "deselect" });
+    state.selectedImage.value = null;
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "write" });
+  });
+
+  it("no writer, no tap: Cambia, browse, and once editing has stopped", () => {
+    state.tool.value = "edit";
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "nothing" }); // Cambia
+    state.tool.value = null;
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "nothing" });
+    state.tool.value = "edit";
+    state.editTool.value = "addText";
+    state.editingStopped.value = true;
+    expect(fillLayer.tapIntent(false)).toEqual({ do: "nothing" });
   });
 });

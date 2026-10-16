@@ -9,7 +9,10 @@
 // initials on every page, pictures, saved signatures, Escape and undo), and the fixes after its
 // review (a picture landing while the writer is open, a text reopened while a change is on its
 // way, new texts kept on the page, what keeping or forgetting a signature really did, failed
-// placements, "Put it in the middle", "Next empty field", the focus asked for, Enter on the page).
+// placements, "Put it in the middle", "Next empty field", the focus asked for, Enter on the page),
+// and the small fixes after the owner's test (Modifica's sub-tools Cambia, Aggiungi testo and
+// Aggiungi immagine, with their Escape and Enter and where the focus goes when they swap the
+// layers; no empty file left where a save failed).
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
@@ -2447,6 +2450,25 @@ describe("U35 initials on every page", () => {
   });
 });
 
+/** document.createElement making inputs whose listeners a test can call (the picture picker's). */
+function pickerInputs() {
+  const inputs: any[] = [];
+  const doc = (globalThis as any).document;
+  const createElement = doc.createElement;
+  doc.createElement = (tag: string) => {
+    const el: any = {
+      tag, listeners: {}, clicked: false, removed: false,
+      addEventListener(type: string, fn: () => void) { el.listeners[type] = fn; },
+      setAttribute() { /* aria-hidden */ },
+      click() { el.clicked = true; },
+      remove() { el.removed = true; },
+    };
+    inputs.push(el);
+    return el;
+  };
+  return { inputs, restore: () => { doc.createElement = createElement; } };
+}
+
 describe("U36 a picture from a file", () => {
   it("prepared, placed in the middle of the page at most 60 % of its width, selected", async () => {
     await filling("FS.pdf", { pages: [{ index: 0, bounds: [0, 0, 600, 800] }] });
@@ -2465,34 +2487,21 @@ describe("U36 a picture from a file", () => {
     expect(actions.pictureMatrix(view, view, 1000, 4000)).toEqual([120, 0, 0, 480, 240, 160]);
   });
 
-  it("Immagine opens the picture picker, keeps the sub-tool, and adds the picture chosen", async () => {
-    await filling("FT.pdf");
+  it("Aggiungi immagine in Modifica opens the picture picker, and adds the picture chosen, selected", async () => {
+    await editing("FT.pdf");
     (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 100, height: 100 });
-    state.fillTool.value = "date";
-    const inputs: any[] = [];
-    const doc = (globalThis as any).document;
-    const createElement = doc.createElement;
-    doc.createElement = (tag: string) => {
-      const el: any = {
-        tag, listeners: {}, clicked: false, removed: false,
-        addEventListener(type: string, fn: () => void) { el.listeners[type] = fn; },
-        setAttribute() { /* aria-hidden */ },
-        click() { el.clicked = true; },
-        remove() { el.removed = true; },
-      };
-      inputs.push(el);
-      return el;
-    };
+    const { inputs, restore } = pickerInputs();
     try {
-      actions.setFillTool("image");
+      actions.chooseNewPicture();
       expect(inputs).toHaveLength(1);
       expect(inputs[0]).toMatchObject({ tag: "input", type: "file", accept: "image/*", clicked: true });
-      expect(state.fillTool.value).toBe("date");
       inputs[0].files = [PICKED];
       inputs[0].listeners.change();
       await vi.waitFor(() => expect(calls).toEqual(["addImage:0"]));
+      await vi.waitFor(() => expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 5 }));
+      expect(state.editMode.value).toBe(true);
     } finally {
-      doc.createElement = createElement;
+      restore();
     }
   });
 });
@@ -2832,7 +2841,7 @@ describe("U43 Put it in the middle", () => {
     expect(state.focusRequest.value).toBeNull();
   });
 
-  it("Testo opens a writer there; a signature waiting is placed there and selected; Firma and Immagine open their chooser", async () => {
+  it("Testo opens a writer there; a signature waiting is placed there and selected; Firma opens its chooser", async () => {
     const page = await filling("GC0.pdf");
     state.writerStyle.value = { size: 10, color: "black" };
     const geometry = await import("../src/ui/fill/geometry");
@@ -2851,9 +2860,11 @@ describe("U43 Put it in the middle", () => {
     await actions.placeAtCentre("signature");
     expect(state.dialog.value).toEqual({ kind: "signature", mode: "signature", forField: null });
     state.showDialog(null);
+    // Pictures come from Modifica's Aggiungi immagine: its picker opens right within the click.
     const created = (globalThis as any).__created as { tag: string; clicked?: boolean; type?: string }[];
     created.length = 0;
-    await actions.placeAtCentre("image");
+    await actions.setTool("edit");
+    actions.chooseNewPicture();
     expect(created).toMatchObject([{ tag: "input", type: "file", clicked: true }]);
     await actions.setTool(null);
     await actions.placeAtCentre("check"); // not in Compila e firma: nothing
@@ -3150,5 +3161,429 @@ describe("U52 mark and date texts", () => {
     for (const key of ["mark.placedAt", "writer.doneAt", "form.lastEmpty"] as const) {
       expect({ key, en: en[key].endsWith("."), it: italian[key].endsWith(".") }).toEqual({ key, en: true, it: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Release 3, small fixes after the owner's test
+
+describe("U53 Modifica's sub-tools", () => {
+  it("Modifica always starts on Cambia; Aggiungi testo only in Modifica, with a document, until editing stops", async () => {
+    const page = await editing("HA.pdf");
+    expect(state.editTool.value).toBe("change");
+    expect(state.writerOn.value).toBe(false);
+    await actions.setEditTool("addText");
+    expect([state.editTool.value, state.writerOn.value, state.writerKind.value]).toEqual(["addText", true, "text"]);
+    await actions.setTool("fill");
+    expect(state.editTool.value).toBe("change");
+    await actions.setEditTool("addText"); // not in Compila e firma
+    expect(state.editTool.value).toBe("change");
+    await actions.setTool("edit");
+    await actions.setEditTool("addText");
+    await actions.setTool("edit"); // Modifica again: on Cambia again
+    expect(state.editTool.value).toBe("change");
+    await actions.setEditTool("addText");
+    await actions.setTool(null);
+    expect(state.editTool.value).toBe("change");
+    await actions.setEditTool("addText"); // browse
+    expect(state.editTool.value).toBe("change");
+
+    await actions.setTool("edit");
+    const { EngineError } = await import("../src/engine/client");
+    const replace = engineImpl.replaceLine;
+    engineImpl.replaceLine = async () => { throw new EngineError("lost", "broken"); };
+    await actions.replaceLine(page, LINE, "x", page.rev.peek());
+    engineImpl.replaceLine = replace;
+    state.showDialog(null);
+    state.tool.value = "edit"; // as if still in Modifica
+    await actions.setEditTool("addText");
+    expect(state.editTool.value).toBe("change");
+    await actions.closeDocument();
+    state.tool.value = "edit";
+    await actions.setEditTool("addText");
+    expect(state.editTool.value).toBe("change");
+    state.tool.value = null;
+  });
+
+  it("switching writes what the writer or the line editor holds first, then closes it; no line opens with Aggiungi testo", async () => {
+    state.writerStyle.value = { size: 11, color: "black" };
+    const page = await editing("HB.pdf");
+    await actions.setEditTool("addText");
+    await actions.openWriterAt(0, [10, 50], "text");
+    const unregister = typing(state.openWriter.value!, "Nuovo");
+    await actions.setEditTool("change");
+    unregister();
+    expect(calls).toEqual(["addText:0:Nuovo"]);
+    expect([state.openWriter.value, state.editTool.value]).toEqual([null, "change"]);
+
+    await actions.openLine(0, LINE);
+    expect(state.editingLine.value).toEqual({ pageIndex: 0, line: LINE });
+    const unregisterLine = state.registerEditor({
+      changed: () => true,
+      commit: () => actions.replaceLine(page, LINE, "typed", page.rev.peek()),
+    });
+    await actions.setEditTool("addText");
+    unregisterLine();
+    expect(calls).toEqual(["addText:0:Nuovo", "replaceLine"]);
+    expect(state.editingLine.value).toBeNull();
+    await actions.openLine(0, LINE); // lines are changed with Cambia
+    expect(state.editingLine.value).toBeNull();
+
+    calls.length = 0;
+    await actions.openWriterAt(0, [10, 80], "text");
+    const again = typing(state.openWriter.value!, "Ancora");
+    await actions.setEditTool("addText"); // on already: nothing written, nothing closed
+    again();
+    expect(calls).toEqual([]);
+    expect(state.openWriter.value).not.toBeNull();
+    actions.cancelWriter();
+  });
+
+  it("the writer opens in Modifica with Aggiungi testo, always for text; not with Cambia", async () => {
+    state.writerStyle.value = { size: 10, color: "black" };
+    await editing("HC.pdf"); // 100 × 100, no viewer: the whole page shows
+    expect(await actions.openWriterAt(0, [10, 50], "text")).toBeNull();
+    expect(state.openWriter.value).toBeNull();
+    await actions.setEditTool("addText");
+    expect(await actions.openWriterAt(0, [10, 50], "text")).toEqual([10, 50]);
+    const w = state.openWriter.value!;
+    expect(w).toMatchObject({ kind: "text", editing: null });
+    // Line below works here too.
+    const writing = actions.writeAndNewLine(w, "Riga 1", w.origin, 10, "black");
+    expect(state.openWriter.value).toMatchObject({ origin: [10, 50 + 1.25 * 10], text: "", kind: "text" });
+    await writing;
+    actions.cancelWriter();
+
+    // Put it in the middle: Testo, whatever Compila e firma's sub-tool is.
+    const { writerOrigin } = await import("../src/ui/fill/geometry");
+    state.fillTool.value = "check";
+    try {
+      expect(state.writerKind.value).toBe("text");
+      await actions.placeAtCentre();
+      expect(state.openWriter.value).toMatchObject({ kind: "text", editing: null, origin: writerOrigin([50, 50], 10) });
+      actions.cancelWriter();
+      await actions.placeAtCentre("check");
+      expect(state.openWriter.value).toMatchObject({ kind: "text", editing: null });
+      actions.cancelWriter();
+      expect(calls).toEqual(["addText:0:Riga 1"]); // no ✓ written
+      await actions.setEditTool("change");
+      await actions.placeAtCentre(); // Cambia: nothing
+      expect(state.openWriter.value).toBeNull();
+    } finally {
+      state.fillTool.value = "text";
+    }
+  });
+
+  it("Escape: the writer, then the image, then back to Cambia, then out of Modifica; Enter on the page writes only with Aggiungi testo", async () => {
+    const { press, restore } = await keyboard();
+    const g = globalThis as any;
+    const scroller = { tag: "scroller" };
+    const query = g.document.querySelector;
+    g.document.querySelector = (sel: string) => (sel === ".viewer .scroller" ? scroller : null);
+    try {
+      const page = await editing("HD.pdf");
+      state.writerStyle.value = { size: 10, color: "black" };
+      expect(press("Enter", { target: scroller }).defaultPrevented).toBe(false); // Cambia
+      await actions.setEditTool("addText");
+      expect(press("Enter", { target: scroller }).defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(state.openWriter.value).not.toBeNull());
+      expect(state.openWriter.value).toMatchObject({ kind: "text", editing: null });
+      const unregister = typing(state.openWriter.value!, "typed");
+      expect(press("Escape").defaultPrevented).toBe(true);
+      expect(state.openWriter.value).toBeNull();
+      await state.flushEditor(); // asked before the writer has unregistered: it writes nothing
+      unregister();
+      expect(calls).toEqual([]);
+      expect(state.editTool.value).toBe("addText");
+
+      // With Aggiungi testo, only the pictures the user added are selected, as in Compila e firma.
+      await actions.selectImage(0, IMAGE(0), page.rev.peek());
+      expect(state.selectedImage.value).toBeNull();
+      await actions.selectImage(0, IMAGE(1, { added: true }), page.rev.peek());
+      expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 1 });
+      press("Escape");
+      await vi.waitFor(() => expect(state.selectedImage.value).toBeNull());
+      expect(state.editTool.value).toBe("addText");
+      press("Escape");
+      await vi.waitFor(() => expect(state.editTool.value).toBe("change"));
+      expect(state.editMode.value).toBe(true);
+      press("Escape");
+      await vi.waitFor(() => expect(state.editMode.value).toBe(false));
+    } finally {
+      g.document.querySelector = query;
+      restore();
+    }
+  });
+
+  it("switching the sub-tool hands the focus of a picture's box to the same picture's box in the new layer; anything else to the scroller", async () => {
+    const { press, restore } = await keyboard();
+    const g = globalThis as any;
+    const focusable = (tag: string) => ({ tag, focused: 0, focus() { this.focused++; } });
+    const scroller = focusable("scroller");
+    /** The boxes the page shows after the switch, by data-image. */
+    const shown = new Map<string, any>();
+    const pageEl = {
+      isConnected: true,
+      querySelector: (sel: string) => shown.get(/^\[data-image="(\d+)"\]$/.exec(sel)?.[1] ?? "") ?? null,
+    };
+    /** A box on the page: a picture's (data-image) or, with null, anything else (a line, a text). */
+    const box = (image: string | null) => ({
+      ...focusable(`box ${image}`),
+      getAttribute: (name: string) => (name === "data-image" ? image : null),
+      closest: (sel: string) => (sel === ".page" ? pageEl : null),
+    });
+    // The element with the focus, on the layer of `layer`: once the sub-tool changes, that layer
+    // is gone with it, and the focus is on <body> (as after Preact's re-render).
+    let focused: any = null;
+    let layer = "addText";
+    const query = g.document.querySelector;
+    g.document.querySelector = (sel: string) => (sel === ".viewer .scroller" ? scroller : null);
+    Object.defineProperty(g.document, "activeElement", {
+      configurable: true,
+      get: () => (state.editTool.peek() === layer ? focused : g.document.body),
+    });
+    try {
+      await editing("HF.pdf");
+      await actions.setEditTool("addText");
+
+      // Esc on the box of a picture the user added: Cambia's full layer has it too.
+      focused = box("6");
+      const same = focusable("box 6 in Cambia");
+      shown.set("6", same);
+      press("Escape");
+      await vi.waitFor(() => expect(same.focused).toBe(1));
+      expect(state.editTool.value).toBe("change");
+      expect(scroller.focused).toBe(0);
+
+      // A picture of the document's own: Aggiungi testo does not show it, so the scroller.
+      layer = "change";
+      focused = box("2");
+      shown.clear();
+      await actions.setEditTool("addText");
+      await vi.waitFor(() => expect(scroller.focused).toBe(1));
+
+      // Anything else (a text the user wrote): the scroller, even with a picture's box there.
+      layer = "addText";
+      focused = box(null);
+      shown.set("6", same);
+      await actions.setEditTool("change");
+      await vi.waitFor(() => expect(scroller.focused).toBe(2));
+      expect(same.focused).toBe(1);
+    } finally {
+      Object.defineProperty(g.document, "activeElement", { configurable: true, writable: true, value: null });
+      g.document.querySelector = query;
+      restore();
+      await actions.setTool(null);
+    }
+  });
+
+  it("Aggiungi immagine: only in Modifica; a file chosen goes to Cambia first, then is placed and selected; cancelled, nothing", async () => {
+    await filling("HE.pdf");
+    (globalThis as any).__prepare = async () => ({ bytes: new ArrayBuffer(2), width: 100, height: 100 });
+    const { inputs, restore } = pickerInputs();
+    try {
+      actions.chooseNewPicture(); // Compila e firma
+      await actions.setTool(null);
+      actions.chooseNewPicture(); // browse
+      expect(inputs).toHaveLength(0);
+
+      await actions.setTool("edit");
+      await actions.setEditTool("addText");
+      actions.chooseNewPicture();
+      expect(inputs).toHaveLength(1);
+      expect(inputs[0]).toMatchObject({ tag: "input", type: "file", accept: "image/*", clicked: true });
+      inputs[0].listeners.cancel();
+      expect(state.editTool.value).toBe("addText");
+
+      actions.chooseNewPicture();
+      await actions.openWriterAt(0, [10, 50], "text"); // where "cancel" is not fired, a tap meanwhile
+      const unregister = typing(state.openWriter.value!, "Scritto");
+      inputs[1].files = [PICKED];
+      inputs[1].listeners.change();
+      expect(state.editTool.value).toBe("change"); // at once, before the picture is sent
+      expect(state.openWriter.value).toBeNull();
+      unregister();
+      await vi.waitFor(() => expect(calls).toEqual(["addText:0:Scritto", "addImage:0"]));
+      await vi.waitFor(() => expect(state.selectedImage.value).toEqual({ pageIndex: 0, index: 5 }));
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("U54 a save that fails leaves no empty file", () => {
+  /**
+   * A save dialog whose file holds `size` bytes (0: the file the dialog made, or a file picked to
+   * be overwritten, which Chromium empties as the dialog closes); `fail` is the step of writing it
+   * that fails. Returns the file's handle, with spies.
+   */
+  function savePicker(size: number, fail: "none" | "create" | "write" = "write") {
+    const handle: any = {
+      name: "Chosen.pdf",
+      getFile: vi.fn(async () => ({ size })),
+      remove: vi.fn(async () => undefined),
+      abort: vi.fn(async () => undefined),
+      createWritable: async () => {
+        if (fail === "create") throw new DOMException("The disk is full", "QuotaExceededError");
+        return {
+          write: async () => {
+            if (fail === "write") throw new DOMException("The disk is full", "QuotaExceededError");
+          },
+          close: async () => undefined,
+          abort: handle.abort,
+        };
+      },
+    };
+    (globalThis as any).showSaveFilePicker = async () => handle;
+    return handle;
+  }
+  const created = () => (globalThis as any).__created as { tag: string; clicked?: boolean; download?: string }[];
+  /** The plain downloads started (a link clicked), with their names. */
+  const downloads = () => created().filter((e) => e.tag === "a" && e.clicked).map((e) => e.download);
+
+  /** Open `name` with one edit not downloaded yet, ready for a download. */
+  async function edited(name: string, info: Record<string, unknown> = {}) {
+    await openWith(name, info);
+    const page = state.doc.value!.pages[0];
+    await actions.replaceLine(page, LINE, "new", page.rev.peek());
+    calls.length = 0;
+    saves.length = 0;
+    created().length = 0;
+    state.toasts.value = [];
+  }
+
+  it("a write that fails: the empty file is removed, and the PDF is downloaded instead, said so", async () => {
+    const handle = savePicker(0);
+    await edited("SA.pdf");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      await actions.download();
+    } finally {
+      error.mockRestore();
+      delete (globalThis as any).showSaveFilePicker;
+    }
+    expect(handle.abort).toHaveBeenCalledTimes(1);
+    expect(handle.remove).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(["save"]); // built once: the download uses the same bytes
+    expect(downloads()).toEqual(["Chosen.pdf"]);
+    expect(toastTexts()).toEqual(["Couldn't save it where you chose, so it was downloaded as “Chosen.pdf” instead."]);
+    expect(state.dirty.value).toBe(false);
+
+    const { en } = await import("../src/i18n/en");
+    const { it: italian } = await import("../src/i18n/it");
+    for (const text of [en["download.savedInstead"], italian["download.savedInstead"]]) {
+      expect(text).toContain("“{name}”");
+      expect(text.endsWith(".")).toBe(true);
+    }
+  });
+
+  it("a file with something in it is never removed; without remove() the file stays; a writable that cannot be made is not aborted", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      // A file that still has content: a browser or a path that does not empty a file picked to
+      // be overwritten (Chromium does, and then the file is empty, as below).
+      let handle = savePicker(10);
+      await edited("SB.pdf");
+      await actions.download();
+      expect(handle.getFile).toHaveBeenCalled();
+      expect(handle.remove).not.toHaveBeenCalled();
+      expect(downloads()).toEqual(["Chosen.pdf"]);
+      expect(state.dirty.value).toBe(false);
+
+      handle = savePicker(0, "create");
+      await edited("SC.pdf");
+      await actions.download();
+      expect(handle.abort).not.toHaveBeenCalled();
+      expect(handle.remove).toHaveBeenCalledTimes(1);
+      expect(downloads()).toEqual(["Chosen.pdf"]);
+
+      handle = savePicker(0);
+      delete handle.remove; // not Chromium
+      await edited("SD.pdf");
+      await actions.download();
+      expect(handle.getFile).not.toHaveBeenCalled();
+      expect(downloads()).toEqual(["Chosen.pdf"]);
+
+      // The plain download fails too: the usual error, and the edits are still not downloaded.
+      savePicker(0);
+      await edited("SE.pdf");
+      const createObjectURL = URL.createObjectURL;
+      URL.createObjectURL = () => { throw new Error("no blob URLs here"); };
+      try {
+        await actions.download();
+      } finally {
+        URL.createObjectURL = createObjectURL;
+      }
+      expect(toastTexts()).toEqual(["Could not create the PDF."]);
+      expect(state.dirty.value).toBe(true);
+    } finally {
+      error.mockRestore();
+      delete (globalThis as any).showSaveFilePicker;
+    }
+  });
+
+  it("the engine failing or refusing the PDF/A, or another document opened meanwhile: the empty file is removed", async () => {
+    const { EngineError } = await import("../src/engine/client");
+    const save = engineImpl.save;
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let handle = savePicker(0, "none");
+      await edited("SF.pdf");
+      engineImpl.save = async () => { throw new EngineError("boom", "engine"); };
+      await actions.download();
+      engineImpl.save = save;
+      expect(handle.remove).toHaveBeenCalledTimes(1);
+      expect(toastTexts()).toEqual(["Could not create the PDF."]);
+      expect(downloads()).toEqual([]);
+
+      // Refused when written: removed before the question that offers a normal PDF.
+      handle = savePicker(0, "none");
+      await edited("SG.pdf", { pdfa: "2B" });
+      pdfaReport = CLEAN;
+      engineImpl.save = async (o: any) => {
+        if (o.format === "pdfa-2b") throw new EngineError("self-check failed", "pdfa-blocked");
+        return save(o);
+      };
+      const p = actions.download();
+      await vi.waitFor(() => expect(state.dialog.value?.kind).toBe("pdfa-blocked"));
+      expect(handle.remove).toHaveBeenCalledTimes(1);
+      await answerDialog("pdfa-blocked", false);
+      await p;
+      engineImpl.save = save;
+      expect(handle.remove).toHaveBeenCalledTimes(1);
+
+      // Another document opened while the save dialog was open: nothing is written for it.
+      handle = savePicker(0, "none");
+      await edited("SH.pdf");
+      const picker = (globalThis as any).showSaveFilePicker;
+      (globalThis as any).showSaveFilePicker = async () => {
+        await actions.openFile(fakeFile("SI.pdf", "SI"), { confirmed: true });
+        return picker();
+      };
+      await actions.download();
+      expect(handle.remove).toHaveBeenCalledTimes(1);
+      expect(calls).toEqual(["open:SI"]); // no save
+      expect(state.doc.value?.fileName).toBe("SI.pdf");
+    } finally {
+      engineImpl.save = save;
+      error.mockRestore();
+      delete (globalThis as any).showSaveFilePicker;
+    }
+  });
+
+  it("the happy path removes nothing", async () => {
+    const handle = savePicker(0, "none");
+    try {
+      await edited("SJ.pdf");
+      await actions.download();
+    } finally {
+      delete (globalThis as any).showSaveFilePicker;
+    }
+    expect(handle.getFile).not.toHaveBeenCalled();
+    expect(handle.remove).not.toHaveBeenCalled();
+    expect(handle.abort).not.toHaveBeenCalled();
+    expect(downloads()).toEqual([]);
+    expect(toastTexts()).toEqual(["Downloaded “Chosen.pdf”."]);
+    expect(state.dirty.value).toBe(false);
   });
 });

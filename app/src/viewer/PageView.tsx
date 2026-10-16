@@ -1,10 +1,14 @@
 // One page: a box sized from the page bounds × zoom, a canvas while the page is near the
-// viewport, and the overlays of the tool that is on: in Modifica its text lines and its images;
-// in Compila e firma its form fields, the fill layer (taps, the text writer, what the user wrote)
-// and the pictures the user added; with no tool on (browse), its form fields alone. Overlays are
-// mounted for near pages, and also for a page far away that holds what is open or focused, what
-// the app asks to focus (focusRequest), or, for its form fields, the next or previous page with
-// fields from the field focused last (so Tab and Shift+Tab reach them: fields.ts).
+// viewport, and the overlays of the tool that is on (layersFor): in Modifica with Cambia its text
+// lines and its images; wherever the text writer is on (Compila e firma, and Modifica with
+// Aggiungi testo) the fill layer (taps, the writer, what the user wrote) and the pictures the user
+// added, and in Compila e firma its form fields too; with no tool on (browse), its form fields
+// alone. Form fields never show in Modifica. Overlays are mounted for near pages, and also for a
+// page far away that holds what is open or focused, what the app asks to focus (focusRequest), or,
+// for its form fields, the next or previous page with fields from the field focused last (so Tab
+// and Shift+Tab reach them: fields.ts). Switching Modifica's sub-tool swaps the layers: a box
+// that had the keyboard focus hands it to the same picture's box in the new layer when there is
+// one, else to the scroller, never to <body> (ui/actions.ts, focusAfterLayers).
 //
 // Rendering: at zoom × devicePixelRatio (capped in pixels on touch devices), through the shared
 // render queue. On a zoom change the old bitmap stays, stretched by CSS, and the new one is
@@ -13,7 +17,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
 import {
-  devicePixelRatio, editingLine, editingStopped, focusedField, focusRequest, openWriter, selectedImage, tool,
+  devicePixelRatio, editingLine, editingStopped, editTool, focusedField, focusRequest, openWriter, selectedImage, tool,
+  type EditTool, type Tool,
 } from "../state";
 import { nextToFieldFocus, pageHasFields } from "./fields";
 import { everyPageAction, FillLayer } from "./FillLayer";
@@ -43,6 +48,29 @@ export function renderScale(page: PageModel, zoom: number, ratio: number): numbe
   return Math.max(1, scale < wanted ? Math.floor(scale * 1000) : Math.round(scale * 1000)) / 1000;
 }
 
+/** The overlays a tool calls for on a page (PageView then mounts them on the pages that need them). */
+export interface PageLayers {
+  /** LineLayer and the full ImageLayer: Modifica with Cambia. */
+  edit: boolean;
+  /** FillLayer and the ImageLayer of the pictures the user added: wherever the text writer is on. */
+  writer: boolean;
+  /** FormLayer: Compila e firma and browse, never Modifica. */
+  fields: boolean;
+}
+
+/**
+ * Which overlays the tool `on` calls for, with Modifica's sub-tool `sub`. Once editing has
+ * stopped there is no writer and there are no form fields (the tool goes off then too).
+ */
+export function layersFor(on: Tool, sub: EditTool, stopped: boolean): PageLayers {
+  const writer = on === "fill" || (on === "edit" && sub === "addText");
+  return {
+    edit: on === "edit" && sub === "change",
+    writer: writer && !stopped,
+    fields: on !== "edit" && !stopped,
+  };
+}
+
 export interface PageViewProps {
   page: PageModel;
   left: number;
@@ -67,24 +95,24 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
   const keep = page.keep.value || near;
   const rev = page.rev.value;
   const ratio = devicePixelRatio.value;
-  const on = tool.value;
-  const stopped = editingStopped.value;
+  const layers = layersFor(tool.value, editTool.value, editingStopped.value);
   /** What is open on this page: kept mounted even if the page scrolled away (unmounting would lose it). */
   const here = (x: { pageIndex: number } | null) => x?.pageIndex === page.index;
   const sel = selectedImage.value;
   const request = focusRequest.value;
   const asked = here(request);
-  // Modifica: near pages, and the page whose line editor is open or that holds the selected image
-  // (or an image the app asks to focus).
-  const editOverlays = on === "edit" && (near || here(editingLine.value) || here(sel) || (asked && request?.kind === "image"));
-  // Compila e firma: near pages, and the page with the writer, the selected picture, the focused
-  // field, or a text or picture the app asks to focus.
-  const fillOverlays = on === "fill" && !stopped &&
+  // Modifica with Cambia: near pages, and the page whose line editor is open or that holds the
+  // selected image (or an image the app asks to focus).
+  const editOverlays = layers.edit &&
+    (near || here(editingLine.value) || here(sel) || (asked && request?.kind === "image"));
+  // The writer (Compila e firma, Modifica with Aggiungi testo): near pages, and the page with the
+  // writer, the selected picture, the focused field, or a text or picture the app asks to focus.
+  const fillOverlays = layers.writer &&
     (near || here(openWriter.value) || here(sel) || here(focusedField.value) || (asked && request?.kind !== "field"));
-  // Form fields: in Compila e firma and in browse mode, never in Modifica; also the page whose
-  // field has (or is asked to get) the focus, and the pages with fields just before and after the
-  // one whose field had it last (Tab and Shift+Tab go on to them).
-  const formOverlay = on !== "edit" && !stopped && pageHasFields(page.index) &&
+  // Form fields: in Compila e firma and in browse mode; also the page whose field has (or is asked
+  // to get) the focus, and the pages with fields just before and after the one whose field had it
+  // last (Tab and Shift+Tab go on to them).
+  const formOverlay = layers.fields && pageHasFields(page.index) &&
     (near || here(focusedField.value) || (asked && request?.kind === "field") || nextToFieldFocus(page.index));
 
   useEffect(() => {

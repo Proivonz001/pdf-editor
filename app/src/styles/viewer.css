@@ -1,7 +1,8 @@
 /* Document viewer: the workspace and its pages, the edit banner and the signed-PDF notice, the
    page indicator, the busy bar, edit mode (text lines, the line editor and its context bar;
    images, the selection frame and its context bar), and fill and sign (form fields, the tap
-   catcher, the text writer and what the user wrote; at the end).
+   catcher, the text writer and what the user wrote, which Modifica's Aggiungi testo uses too; at
+   the end).
    Colours only from tokens.css. PDF pages are white in both themes, so what is drawn on a page
    (lines, editor, their focus rings) must read on white in dark mode too: there --focus is
    tuned for dark surfaces, so on-page rings use --accent, which is the same colour in the light
@@ -948,7 +949,8 @@
 }
 
 /* --- Fill and sign -------------------------------------------------------------------------
-   Compila e firma (FillLayer.tsx) and the form fields of fill and browse modes (FormLayer.tsx).
+   The text writer's layer of Compila e firma and of Modifica's Aggiungi testo (FillLayer.tsx),
+   and the form fields of fill and browse modes (FormLayer.tsx).
    Stacking on a page: the fill layer's tap catcher at the bottom (no z-index), then the form
    fields (2), the pictures the user added above them (2 too, later in the page: a signature put
    over a field can still be selected, and the field under it is reached with Tab), the boxes of
@@ -1373,8 +1375,9 @@
   border-left: 1.5px solid currentColor;
 }
 
-/* Compila e firma: the added pictures' layer lets taps through to the catcher between them. Its
-   boxes, and the picture being moved (its sprite and ghost), stack above the form fields. */
+/* Compila e firma and Aggiungi testo: the added pictures' layer lets taps through to the catcher
+   between them. Its boxes, and the picture being moved (its sprite and ghost), stack above the
+   form fields. */
 .images.is-added-only {
   pointer-events: none;
 }

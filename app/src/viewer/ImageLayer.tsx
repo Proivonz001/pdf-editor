@@ -33,14 +33,18 @@
 // While any image edit waits or runs (imageEditsPending: a Delete queued behind a download, say)
 // the frame shows as pending and takes no gesture, key or click.
 //
-// In Compila e firma the layer shows only the pictures the user added (only="added": signatures,
-// initials, photos), stacked above the form fields (viewer.css) and named by what they are
-// ("Firma: Mario Rossi", else "Immagine N" counting those pictures only), lets taps through to the
-// fill layer under it everywhere else, and its context bar may carry one more action ("On every
-// page…" on the initials placed last: extraAction). A frame that comes with a new selection takes
-// the keyboard focus unless the user is typing somewhere (a form field, the text writer): a
-// signature landing never pulls the focus (and a phone's keyboard) out of what is being filled.
-// The app's focusRequest for an image of the page is taken here too.
+// Wherever the text writer is on (Compila e firma, and Modifica with Aggiungi testo) the layer
+// shows only the pictures the user added (only="added": signatures, initials, photos), stacked
+// above the form fields (viewer.css) and named by what they are ("Firma: Mario Rossi", else
+// "Immagine N" counting those pictures only), lets taps through to the fill layer under it
+// everywhere else, and its context bar may carry one more action ("On every page…" on the
+// initials placed last: extraAction); nothing there depends on which of the two tools is on. A
+// frame that comes with a new selection takes the keyboard focus unless the user is typing
+// somewhere (a form field, the text writer): a signature landing never pulls the focus (and a
+// phone's keyboard) out of what is being filled. The app's focusRequest for an image of the page
+// is taken here too. When Modifica's sub-tool (or the tool) changes, this layer and the full one
+// swap: a box with the focus hands it to the same picture's box in the other one, else to the
+// scroller (the action that changed it sees to that first: ui/actions.ts, focusAfterLayers).
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
@@ -1110,9 +1114,9 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
 /**
  * The box over an image that is not selected: a real button (a click, Enter or Space selects
  * it). When it goes while it has the keyboard focus (its picture deleted or undone, the layer
- * gone with the tool), the focus goes on to a box of the same image if there is one again, else
- * to the scroller, instead of <body>; a frame that comes for it (the image selected) takes the
- * focus itself.
+ * gone with the tool or with Modifica's sub-tool), the focus goes on to a box of the same image
+ * if there is one again (the other layer's), else to the scroller, instead of <body>; a frame
+ * that comes for it (the image selected) takes the focus itself.
  */
 function ImageBox({ index, box, label, locked, onSelect }: {
   index: number; box: Box; label: string; locked: boolean; onSelect: () => void;
@@ -1145,7 +1149,10 @@ export interface ImageLayerProps {
   page: PageModel;
   zoom: number;
   canvasRev: number;
-  /** "added": only the pictures the user added (Compila e firma); "all" (Modifica) by default. */
+  /**
+   * "added": only the pictures the user added (Compila e firma, Modifica with Aggiungi testo);
+   * "all" (Modifica with Cambia) by default.
+   */
   only?: "all" | "added";
   /** One more action for the selected image's context bar, or null for that image. */
   extraAction?: (image: ImageInfo) => ImageAction | null;
@@ -1175,9 +1182,9 @@ export function ImageLayer({ page, zoom, canvasRev, only = "all", extraAction }:
   const selectedIndex = selected && selected.pageIndex === page.index ? selected.index : null;
 
   /**
-   * How a picture is named: in Compila e firma a signature or initials by their description, any
+   * How a picture is named: with only="added" a signature or initials by their description, any
    * other picture by its number among the pictures the user added on the page (the only ones
-   * shown there); in Modifica by its number among all the page's images.
+   * shown there); with all the images (Cambia) by its number among all the page's images.
    */
   const ranks = useRef(new Map<number, number>());
   if (signatures && images) ranks.current = new Map(images.map((image, i) => [image.index, i + 1]));

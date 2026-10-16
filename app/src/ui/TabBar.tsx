@@ -17,13 +17,14 @@ import { setTool } from "./actions";
 import { IconEditText, IconMore, IconPages, IconSign } from "./icons";
 
 /**
- * The bars at the bottom of a phone (the tab bar, the Fill & sign strip, the page indicator) make
- * room for the on-screen keyboard: a line editor or a writer is open, or a form control that
- * brings up the keyboard (a text field, a text area) holds the focus. That last one is
- * `typingField`, which the form layer sets from each control's own focus and blur, so it follows
- * the control that really has the focus, however it got there (a tap, Tab, the keyboard's
- * "next", "Next empty field"). Check boxes, radio buttons, lists and "Sign here" raise no
- * keyboard, though Android keeps the focus on them after a tap: then the bars stay. Reactive.
+ * The bars at the bottom of a phone (the tab bar, the sub-tools strip of Modifica and of Compila e
+ * firma, the page indicator) make room for the on-screen keyboard: a line editor or a writer is
+ * open, or a form control that brings up the keyboard (a text field, a text area) holds the
+ * focus. That last one is `typingField`, which the form layer sets from each control's own focus
+ * and blur, so it follows the control that really has the focus, however it got there (a tap,
+ * Tab, the keyboard's "next", "Next empty field"). Check boxes, radio buttons, lists and "Sign
+ * here" raise no keyboard, though Android keeps the focus on them after a tap: then the bars
+ * stay. Reactive.
  */
 export function bottomBarsHidden(): boolean {
   return editingLine.value !== null || openWriter.value !== null || typingField.value;
@@ -89,7 +90,7 @@ export function TabBar() {
   if (bottomBarsHidden()) return null;
   const current = tool.value;
   const stopped = editingStopped.value;
-  const open = sheet.value;
+  const open = sheet.value; // the details sheet is opened from More: More stays expanded
   return (
     <nav class="tabbar" aria-label={t("tools.label")}>
       <Tab
@@ -119,7 +120,7 @@ export function TabBar() {
       <Tab
         icon={<IconMore />}
         label={t("tools.more")}
-        expanded={open === "more"}
+        expanded={open === "more" || open === "details"}
         badge={updateReady.value ? t("toolbar.update") : undefined}
         onClick={(e) => openSheet(e, "more")}
       />

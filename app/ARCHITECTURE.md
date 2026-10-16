@@ -33,11 +33,24 @@ repository root keeps working; it replaces it once it does everything the old on
 - **UI** (`src/ui/`, `src/app.tsx`), in the "Carta + giallo" style. `app.tsx` lays out a grid
   (`styles/layout.css`) and marks the root `data-layout="phone"` below 640 px, `"desktop"` from
   640 px (`ui/media.ts`):
-  - desktop: top bar, tool rail (Browse, Edit, the panel toggles), thumbnails panel,
-    viewer, details panel (from 1200 px). The panels follow the window width until the user
-    toggles one; that choice is remembered on the device (`ui/panels.ts`);
+  - desktop: top bar, tool rail (Browse, Edit, Fill & sign, the panel toggles), thumbnails
+    panel, viewer, details panel. Both panels are docked in their own columns at every width,
+    so the viewer gets narrower when one opens. Each follows the window width (thumbnails open
+    by default from 1024 px, details from 1200 px) until the user toggles it; that one choice is
+    remembered on the device (`ui/panels.ts`);
   - phone: compact top bar, the viewer, a tab bar at the bottom and bottom sheets for the
-    thumbnails and the other actions (`ui/TabBar.tsx`, `ui/Sheet.tsx`, `ui/PhoneSheets.tsx`).
+    thumbnails, the other actions and the details (a row of the More sheet, with the panel's
+    content, `DetailsContent`) (`ui/TabBar.tsx`, `ui/Sheet.tsx`, `ui/PhoneSheets.tsx`).
+
+  The tools (`tool` in `src/state.ts`, changed only through `setTool`, which first writes what
+  is still typed): Edit ("Modifica") has three sub-tools on its bar (`ui/EditBar.tsx`,
+  `editTool`, `setEditTool`): Change ("Cambia", where it starts: a line to change, a picture to
+  move), Add text ("Aggiungi testo") and Add image ("Aggiungi immagine": the picker; the picture
+  lands in the middle of what shows, selected, back on Change). Fill & sign ("Compila e firma",
+  `ui/fill/FillBar.tsx`) has Text, Tick, Cross, Date, Sign and Initials, and no picture of its
+  own. The two bars share one toolbar (`ui/SubTools.tsx`). The text writer and the boxes of the
+  text the user wrote (`viewer/FillLayer.tsx`) serve Fill & sign and Add text alike: `writerOn`
+  says when they are on, `writerKind` what a tap writes (always text in Edit).
 
   `ui/actions.ts` holds what the controls do and `src/state.ts` the signals they share.
   Styles are in `src/styles/`: `index.css` imports the tokens, the base, the grid and one file
@@ -142,6 +155,12 @@ Invalid options are refused ("bad-request") before anything is done. The origina
 never changed: every download is a new file, so the digital signatures of a signed file
 (`DocInfo.signatures`, signature fields holding a value) are no longer valid in it; the UI
 says so.
+
+Where the browser has a save dialog (`showSaveFilePicker`), the file is there as soon as the
+user picks where, and Chromium empties a file picked to be overwritten right then. So when
+nothing is written into it afterwards (the engine failed or refused the PDF/A, another document
+was opened), `writeDownload` (`ui/actions.ts`) removes it while it is still empty; when writing
+into it fails, the bytes already built are downloaded normally instead. No empty PDF is left.
 
 The edit list is plain data, so it can later be stored for "resume session".
 

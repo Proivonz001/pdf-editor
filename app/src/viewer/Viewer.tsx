@@ -1,9 +1,9 @@
 // The document viewer: a scroller with the pages stacked vertically, laid out from their sizes
 // in points × zoom. Only pages near the viewport are rendered (see PageView). Above it, for a
-// digitally signed PDF, a notice until it is dismissed, and in Edit or Fill mode the banner of
-// that tool (what to do, and "Done"; in Fill mode also its sub-tools on desktop, ui/fill/
-// FillBar.tsx); over it, the page indicator and the busy bar. On phones in Fill mode, the strip
-// of sub-tools sits below it, right above the tab bar. When a document with a form opens, a
+// digitally signed PDF, a notice until it is dismissed, and in Modifica or Compila e firma the
+// banner of that tool (its sub-tools on desktop, the hint, "Done": ui/EditBar.tsx, ui/fill/
+// FillBar.tsx); over it, the page indicator and the busy bar. On phones in either tool, the strip
+// of its sub-tools sits below it, right above the tab bar. When a document with a form opens, a
 // toast says so, once.
 //
 // Zoom keeps a point in place: every zoom change records an anchor (a point on a page, in
@@ -13,14 +13,14 @@ import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
 import {
-  busy, currentPage, editingStopped, editMode, engine, fillMode, fitMode, pendingPlacement, selectedImage,
+  busy, currentPage, editingStopped, editMode, editTool, engine, fillMode, fitMode, pendingPlacement, selectedImage,
   signedNoticeDismissed, zoom,
 } from "../state";
-import { setEditMode } from "../ui/actions";
+import { EditBanner, EditStrip } from "../ui/EditBar";
 import { announceForm, FillBanner, FillStrip } from "../ui/fill/FillBar";
 import { rescueFocus, viewerScroller } from "../ui/focus";
-import { IconCheck, IconInfo } from "../ui/icons";
-import { isCoarse, isNarrow, prefersReducedMotion } from "../ui/media";
+import { IconInfo } from "../ui/icons";
+import { isNarrow, prefersReducedMotion } from "../ui/media";
 import { bottomBarsHidden } from "../ui/TabBar";
 import { installZoomGestures, type Anchor } from "./gestures";
 import { clampZoom, computeLayout, fitWidthZoom, pageIndexAt, spacing, type Layout } from "./layout";
@@ -32,14 +32,23 @@ import { PageVisibility } from "./visibility";
 
 type View = [number, number];
 
-type BannerKind = "edit" | "fill" | "stopped";
+export type BannerKind = "edit" | "fill" | "stopped";
 
 /**
- * The bar above the pages: in edit mode, how to edit and a "Done" button; in Fill mode the
- * tool's own bar (FillBanner); once editing has stopped for this file (see actions.ts), why, in
- * the danger colours and with no button.
+ * The strip of sub-tools below the viewer, right above the tab bar: on phones in either tool (the
+ * `banner` of that tool), hidden like the tab bar while a line editor or a writer is open or a
+ * field takes typing (the keyboard needs the room).
  */
-function EditBanner({ kind, doc, elRef }: { kind: BannerKind; doc: OpenDoc; elRef: RefObject<HTMLDivElement> }) {
+export function stripFor(banner: BannerKind | null): "edit" | "fill" | null {
+  return (banner === "edit" || banner === "fill") && isNarrow.value && !bottomBarsHidden() ? banner : null;
+}
+
+/**
+ * The bar above the pages: the bar of the tool that is on (EditBanner in Modifica, FillBanner in
+ * Compila e firma); once editing has stopped for this file (see actions.ts), why, in the danger
+ * colours and with no button.
+ */
+function ToolBanner({ kind, doc, elRef }: { kind: BannerKind; doc: OpenDoc; elRef: RefObject<HTMLDivElement> }) {
   if (kind === "stopped") {
     return (
       <div ref={elRef} class="edit-banner is-stopped">
@@ -49,21 +58,7 @@ function EditBanner({ kind, doc, elRef }: { kind: BannerKind; doc: OpenDoc; elRe
     );
   }
   if (kind === "fill") return <FillBanner doc={doc} elRef={elRef} />;
-  return (
-    <div ref={elRef} class="edit-banner">
-      <span class="edit-banner-mark" aria-hidden="true" />
-      <p class="edit-banner-text" role="note">{t(isCoarse.value ? "edit.hintTouch" : "edit.hint")}</p>
-      <button
-        type="button"
-        class="btn btn-secondary edit-banner-done"
-        title={t("edit.doneTip", { key: t("key.esc") })}
-        onClick={() => void setEditMode(false)}
-      >
-        <IconCheck />
-        <span>{t("edit.done")}</span>
-      </button>
-    </div>
-  );
+  return <EditBanner doc={doc} elRef={elRef} />;
 }
 
 /**
@@ -129,15 +124,14 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
     : editMode.value ? "edit" : fillMode.value ? "fill" : null;
   const bannerRef = useRef<HTMLDivElement>(null);
   /**
-   * Fill mode's banner changes height when a signature waits to be placed (its Cancel and "Put
-   * it in the middle"): that counts as a new banner for the scroll compensation below.
+   * The banner can change height without going: Fill mode's when a signature waits to be placed
+   * (its hint, its Cancel), Modifica's with the sub-tool (its hint, "Put it in the middle"). That
+   * counts as a new banner for the scroll compensation below.
    */
-  const bannerShape = banner === "fill" && pendingPlacement.value ? "fill-pending" : banner;
-  /**
-   * Phones in Fill mode: the sub-tools in a strip above the tab bar, hidden like the tab bar while
-   * a line editor or a writer is open or a field takes typing (the keyboard needs the room).
-   */
-  const strip = banner === "fill" && isNarrow.value && !bottomBarsHidden();
+  const bannerShape = banner === "fill" && pendingPlacement.value
+    ? "fill-pending"
+    : banner === "edit" ? `edit-${editTool.value}` : banner;
+  const strip = stripFor(banner);
   const signedNotice = doc.info.signatures > 0 && signedNoticeDismissed.value !== doc.id;
   const noticeRef = useRef<HTMLDivElement>(null);
   /**
@@ -290,7 +284,7 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
   return (
     <div class="viewer">
       {signedNotice && <SignedNotice docId={doc.id} elRef={noticeRef} />}
-      {banner && <EditBanner kind={banner} doc={doc} elRef={bannerRef} />}
+      {banner && <ToolBanner kind={banner} doc={doc} elRef={bannerRef} />}
       <div class="viewer-body">
         <div ref={scrollerRef} class="scroller" tabIndex={0} role="region" aria-label={t("viewer.label")}>
           {services && (
@@ -314,7 +308,8 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
         <PageIndicator count={doc.pages.length} />
         {busy.value && <div class="busy-bar" role="progressbar" aria-label={t("viewer.working")} />}
       </div>
-      {strip && <FillStrip />}
+      {strip === "fill" && <FillStrip />}
+      {strip === "edit" && <EditStrip />}
     </div>
   );
 }

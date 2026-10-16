@@ -1,10 +1,12 @@
-/* All styles, in cascade order: tokens, base, the app grid, then one file per area (fill.css:
-   the signature sheet and pad of Fill & sign). phone.css comes after the desktop files so that
-   its rules win below 640 px. */
+/* All styles, in cascade order: tokens, base, the app grid, then one file per area (details.css:
+   the details' phone sheet, after shell.css, which styles the docked panel and its content;
+   fill.css: the signature sheet and pad of Fill & sign). phone.css comes after the desktop files
+   so that its rules win below 640 px. */
 @import "./tokens.css";
 @import "./base.css";
 @import "./layout.css";
 @import "./shell.css";
+@import "./details.css";
 @import "./pages.css";
 @import "./viewer.css";
 @import "./home.css";

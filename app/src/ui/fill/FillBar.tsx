@@ -1,43 +1,41 @@
 // The chrome of the "Fill & sign" tool (phase 3, release 3), around the pages:
 // - FillBanner, the bar above the pages in Fill mode. On desktop, a first row with the tool's
-//   name, its sub-tools (Text, ✓, ✗, Date, Sign, Initials, Image: a toolbar, icons only when the
-//   bar is narrower than 900 px), "Put it in the middle" (the keyboard path for placing:
-//   placeAtCentre places it, says what and where, and moves the focus onto it) and "Done"; a
-//   second with the hint, the form's field count with "Next empty field" (from the field the
-//   user is in, never back to it; it reads the pages' fields only when pressed, and only as far
-//   as the next empty one) and the
-//   form's notes (its scripts never run here, XFA). On phones: the hint, the count, "Put it in
-//   the middle" (an icon beside Done: the path for screen readers and switch access, where a tap
-//   on the page cannot be aimed) and "Done"; the sub-tools are in FillStrip, and the notes come
-//   once as toasts, so the bar keeps to a line or two.
-// - FillStrip, the phone strip of sub-tools: 48 px, right above the tab bar, scrolling sideways
-//   when the screen is too narrow for all seven. It is not a tab: the tab bar stays as it is.
+//   name, its sub-tools (Text, ✓, ✗, Date, Sign, Initials: the toolbar Modifica's bar uses too,
+//   ui/SubTools.tsx, icons only when the bar is narrow), "Put it in the middle" (an icon, the
+//   keyboard path for placing: placeAtCentre places it, says what and where, and moves the focus
+//   onto it) and "Done"; a second with the hint, the form's field count with "Next empty field"
+//   (from the field the user is in, never back to it; it reads the pages' fields only when
+//   pressed, and only as far as the next empty one) and the form's notes (its scripts never run
+//   here, XFA). On phones: the hint, the count, "Put it in the middle" (the path for screen
+//   readers and switch access, where a tap on the page cannot be aimed) and "Done"; the sub-tools
+//   are in FillStrip, and the notes come once as toasts, so the bar keeps to a line or two.
+// - FillStrip, the phone strip of sub-tools: 48 px, right above the tab bar, as Modifica's. It is
+//   not a tab: the tab bar stays as it is.
 // - What the form offers (fillableFields): the fields the user can fill in, as FormInfo counts
 //   them when the document opens (nothing reads every page for it: on a form of hundreds of pages
 //   that kept the engine busy for seconds); a digitally signed PDF or a read-only form has fields,
 //   but none to fill in.
 // - The form notice, once per document when it opens (announceForm).
 // - What "Saved signatures (N)" in the More menu and sheet opens (openSavedSignatures).
-// A sub-tool is chosen with setFillTool: Sign and Initials open the signature dialog, Image the
-// picture picker (from within the click, so iOS opens it). While a signature waits to be placed,
-// the hint says where to tap, with "Put it in the middle" and Cancel.
+// A sub-tool is chosen with setFillTool: Sign and Initials open the signature dialog. Pictures are
+// added in Modifica (Aggiungi immagine). While a signature waits to be placed, the hint says where
+// to tap, with "Put it in the middle" and Cancel.
 // Styled by styles/shell.css (the banner's tools) and styles/phone.css (the strip).
-import { effect, signal } from "@preact/signals";
+import { effect, signal, untracked } from "@preact/signals";
 import type { FunctionComponent, RefObject } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
 import type { FormInfo } from "../../engine/protocol";
 import { t } from "../../i18n";
 import {
-  currentPage, doc, editingStopped, fillTool, flushEditor, focusedField, pendingPlacement, showDialog, showToast,
-  tool, type FillTool, type Signature,
+  currentPage, doc, editingStopped, fillMode, fillTool, flushEditor, focusedField, pendingPlacement, showDialog,
+  showToast, tool, type FillTool, type Signature,
 } from "../../state";
 import type { OpenDoc } from "../../viewer/model";
-import { cancelPlacement, focusNextField, placeAtCentre, setFillTool, setTool, todayText } from "../actions";
+import { cancelPlacement, focusNextField, setFillTool, setTool, todayText } from "../actions";
 import {
-  IconCalendar, IconCheck, IconClose, IconCrossBox, IconFont, IconImage, IconInitials, IconNextField, IconSignature,
-  IconTarget, IconTickBox,
+  IconCalendar, IconCheck, IconClose, IconCrossBox, IconFont, IconInitials, IconNextField, IconSignature, IconTickBox,
 } from "../icons";
 import { isCoarse, isNarrow } from "../media";
+import { PlaceCentreButton, SubTools, ToolStrip, type SubToolItem } from "../SubTools";
 
 // ---------------------------------------------------------------------------------------------
 // What the form offers
@@ -100,20 +98,14 @@ export function fillHint(fillable: boolean, pending: Signature | null, touch: bo
 // ---------------------------------------------------------------------------------------------
 // The sub-tools
 
-interface SubTool {
-  id: FillTool;
-  Icon: FunctionComponent;
-}
-
-/** In the order of the bar. Image is last: it is an action (the picker), not a way of tapping. */
-const SUB_TOOLS: readonly SubTool[] = [
+/** In the order of the bar. Each one changes what a tap on the page does: all are toggles. */
+const FILL_TOOLS: readonly { id: FillTool; Icon: FunctionComponent }[] = [
   { id: "text", Icon: IconFont },
   { id: "check", Icon: IconTickBox },
   { id: "cross", Icon: IconCrossBox },
   { id: "date", Icon: IconCalendar },
   { id: "signature", Icon: IconSignature },
   { id: "initials", Icon: IconInitials },
-  { id: "image", Icon: IconImage },
 ];
 
 function subToolLabel(id: FillTool): string {
@@ -124,7 +116,6 @@ function subToolLabel(id: FillTool): string {
     case "date": return t("fill.date");
     case "signature": return t("fill.signature");
     case "initials": return t("fill.initials");
-    case "image": return t("fill.image");
   }
 }
 
@@ -136,73 +127,27 @@ function subToolTip(id: FillTool, touch: boolean): string {
     case "date": return t("fill.dateTip", { date: todayText() });
     case "signature": return t("fill.signatureTip");
     case "initials": return t("fill.initialsTip");
-    case "image": return t("fill.imageTip");
   }
 }
 
 /**
- * The sub-tools as a toolbar: one Tab stop, the arrow keys (Home, End) move between them. The
- * ones that change what a tap does are toggles, the lit one aria-pressed (✓, ✗ and Date stay lit
- * for ticking many boxes; Sign and Initials until one is placed); Image only opens the picker.
- * The name is always on the button, so the icons-only bar keeps it, with the tooltip.
+ * The sub-tools of Compila e firma as its toolbar shows them (ui/SubTools.tsx), `current` lit:
+ * ✓, ✗ and Date stay lit for ticking many boxes, Sign and Initials until one is placed.
  */
-function FillTools({ variant }: { variant: "banner" | "strip" }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const current = fillTool.value;
-  const touch = isCoarse.value;
-  /** The item that holds the Tab stop: the last one focused, else the lit one. */
-  const [focused, setFocused] = useState<number | null>(null);
-  const lit = SUB_TOOLS.findIndex((s) => s.id === current);
-  const tabStop = focused ?? Math.max(0, lit);
-
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
-    const buttons = [...(ref.current?.querySelectorAll<HTMLButtonElement>(".fill-tool") ?? [])];
-    const i = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    if (i < 0 || !buttons.length) return;
-    let next = -1;
-    if (e.key === "ArrowRight") next = (i + 1) % buttons.length;
-    else if (e.key === "ArrowLeft") next = (i - 1 + buttons.length) % buttons.length;
-    else if (e.key === "Home") next = 0;
-    else if (e.key === "End") next = buttons.length - 1;
-    if (next < 0) return;
-    e.preventDefault();
-    buttons[next].focus();
-    buttons[next].scrollIntoView?.({ block: "nearest", inline: "nearest" }); // the phone strip scrolls
-  };
-
-  return (
-    <div ref={ref} class={`fill-tools is-${variant}`} role="toolbar" aria-label={t("fill.toolbar")} onKeyDown={onKeyDown}>
-      {SUB_TOOLS.map(({ id, Icon }, i) => {
-        const label = subToolLabel(id);
-        return (
-          <button
-            key={id}
-            type="button"
-            class="btn fill-tool"
-            aria-label={label}
-            title={subToolTip(id, touch)}
-            aria-pressed={id === "image" ? undefined : current === id}
-            tabIndex={i === tabStop ? 0 : -1}
-            onFocus={() => setFocused(i)}
-            onClick={() => setFillTool(id)}
-          >
-            <Icon />
-            <span class="fill-tool-label" aria-hidden="true">{label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
+export function fillToolItems(current: FillTool, touch: boolean): SubToolItem[] {
+  return FILL_TOOLS.map(({ id, Icon }) => ({
+    id,
+    Icon,
+    label: subToolLabel(id),
+    tip: subToolTip(id, touch),
+    pressed: current === id,
+    onChoose: () => setFillTool(id),
+  }));
 }
 
 /** Phones: the sub-tools in a strip right above the tab bar (Viewer decides when it shows). */
 export function FillStrip() {
-  return (
-    <div class="fill-strip">
-      <FillTools variant="strip" />
-    </div>
-  );
+  return <ToolStrip label={t("fill.toolbar")} items={fillToolItems(fillTool.value, isCoarse.value)} />;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -283,7 +228,7 @@ const keepFocus = (e: Event) => e.preventDefault();
 // ---------------------------------------------------------------------------------------------
 // The banner
 
-/** Notes said once per document on phones, as toasts, when Fill mode is first turned on. */
+/** The document whose notes were said as toasts (once per document, the first time Fill mode is on in the phone layout). */
 let notedDoc = -1;
 
 function toastNotesOnce(d: OpenDoc) {
@@ -292,37 +237,29 @@ function toastNotesOnce(d: OpenDoc) {
   for (const note of formNotes(d.info.form, fillableFields(d) !== null)) showToast("warn", note);
 }
 
-/**
- * "Put it in the middle" (placeAtCentre: placed, said and focused) is offered for every sub-tool
- * that places something with a tap, on phones too (screen readers and switch access cannot aim a
- * tap), and for the signature waiting to be placed. Image needs none: the picture lands in the
- * middle by itself.
- */
-export function placeCenterShown(pending: boolean, current: FillTool): boolean {
-  return pending || current !== "image";
-}
+// The phone's bar has no room for the form's notes: they are said as toasts, once per document,
+// when Fill mode is on in the phone layout (turned on there, or the window narrowed while it is).
+effect(() => {
+  const d = doc.value;
+  if (d && fillMode.value && isNarrow.value) untracked(() => toastNotesOnce(d));
+});
 
-/** Fill mode's bar above the pages (Viewer.tsx mounts it as the edit banner of this mode). */
+/**
+ * Fill mode's bar above the pages (Viewer.tsx mounts it as the banner of this mode). "Put it in
+ * the middle" is there for every sub-tool (each places something with a tap) and for the
+ * signature waiting to be placed.
+ */
 export function FillBanner({ doc: d, elRef }: { doc: OpenDoc; elRef: RefObject<HTMLDivElement> }) {
   const narrow = isNarrow.value;
   const touch = isCoarse.value;
   const pending = pendingPlacement.value;
-  const current = fillTool.value;
   const form = d.info.form;
   const fields = fillableFields(d);
   const notes = narrow ? [] : formNotes(form, fields !== null);
-  const middleShown = placeCenterShown(pending !== null, current);
-  // Phones: an icon beside Done, so the bar keeps to its line; with a signature waiting, its
-  // words, on the row the buttons then have to themselves.
-  const middleIcon = narrow && !pending;
   const seeking = seekingEmpty.value;
 
-  useEffect(() => {
-    if (narrow) toastNotesOnce(d);
-  }, [narrow, d]);
-
   const info = (
-    <div class="fill-banner-info">
+    <div class="tool-banner-info">
       {/* A status: the hint changes while a signature waits to be placed, and that is said. */}
       <p class="edit-banner-text" role="status">{fillHint(fields !== null, pending, touch)}</p>
       {fields && !pending && (
@@ -351,32 +288,21 @@ export function FillBanner({ doc: d, elRef }: { doc: OpenDoc; elRef: RefObject<H
   // Desktop: the tools and the buttons on the first row, so they never move; the hint on the
   // second. Phones: the hint first, Done beside it. The DOM follows what is seen (Tab order).
   return (
-    <div ref={elRef} class={narrow ? "edit-banner is-fill is-compact" : "edit-banner is-fill"}>
+    <div ref={elRef} class={narrow ? "edit-banner is-tools is-fill is-compact" : "edit-banner is-tools is-fill"}>
       {!narrow && (
-        <div class="fill-banner-lead">
+        <div class="tool-banner-lead">
           <span class="edit-banner-mark" aria-hidden="true" />
-          <span class="fill-banner-title">{t("tools.fill")}</span>
-          <FillTools variant="banner" />
+          <span class="tool-banner-title">{t("tools.fill")}</span>
+          <SubTools variant="banner" label={t("fill.toolbar")} items={fillToolItems(fillTool.value, touch)} />
         </div>
       )}
       {narrow && info}
-      <div class="fill-banner-actions">
-        {middleShown && (
-          <button
-            type="button"
-            class={middleIcon ? "btn btn-secondary fill-banner-btn is-icon" : "btn btn-secondary fill-banner-btn"}
-            title={t(touch ? "fill.placeCenterTipTouch" : "fill.placeCenterTip")}
-            aria-label={middleIcon ? t("fill.placeCenter") : undefined}
-            onClick={() => void placeAtCentre(fillTool.peek())}
-          >
-            <IconTarget />
-            {!middleIcon && <span>{t("fill.placeCenter")}</span>}
-          </button>
-        )}
+      <div class="tool-banner-actions">
+        <PlaceCentreButton />
         {pending && (
           <button
             type="button"
-            class="btn btn-secondary fill-banner-btn"
+            class="btn btn-secondary tool-banner-btn"
             title={t("edit.cancelTip", { key: t("key.esc") })}
             onClick={cancelPlacement}
           >
@@ -384,6 +310,8 @@ export function FillBanner({ doc: d, elRef }: { doc: OpenDoc; elRef: RefObject<H
             <span>{t("common.cancel")}</span>
           </button>
         )}
+        {/* Esc leaves Compila e firma with every sub-tool once nothing is open (it first closes
+            the writer, cancels the signature waiting or deselects the picture): the tooltip names it. */}
         <button
           type="button"
           class="btn btn-secondary edit-banner-done"

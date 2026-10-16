@@ -1,12 +1,14 @@
-// Compila e firma overlay of one page (fill mode): the tap catcher under everything else, a box
-// over each text the user wrote (a tap reopens it), the text writer, and the copies that keep
-// what was just written on screen until the page's canvas shows it. The form fields (FormLayer)
-// and the pictures the user added (ImageLayer, only="added") stack above the catcher, so a tap on
-// one of them goes to it (viewer.css).
+// The text writer's overlay of one page, wherever the writer is on (writerOn): in Compila e firma,
+// and in Modifica with Aggiungi testo. The tap catcher under everything else, a box over each text
+// the user wrote (a tap reopens it), the text writer, and the copies that keep what was just
+// written on screen until the page's canvas shows it. The form fields (FormLayer, Compila e firma
+// only) and the pictures the user added (ImageLayer, only="added") stack above the catcher, so a
+// tap on one of them goes to it (viewer.css).
 //
 // A tap is one pointer, a few px of travel, at most 600 ms and no scroll in between (isTap): one
 // finger still scrolls the page (the catcher has touch-action: pan-x pan-y) and two fingers still
-// zoom it (gestures.ts). What it does, by sub-tool: Testo opens a writer, its baseline 0.2 em above
+// zoom it (gestures.ts). What it does (tapIntent), by what a tap writes (writerKind: Compila e
+// firma's sub-tool, always Testo in Modifica): Testo opens a writer, its baseline 0.2 em above
 // the tap (writerOrigin), in the size of a label on the same row (8–14 pt), else the last size
 // used; ✓ and ✗ are written centred on the tap, and Data writes today's date there, at once (near
 // an edge they are moved onto the page, and the copy shown meanwhile and what is said follow them
@@ -32,14 +34,15 @@
 // The keyboard focus never falls to <body> here: a text written from the keyboard gives it to its
 // box, and so does the app's focusRequest (a mark put in the middle of the page); while the texts
 // are read again after an edit, undo or redo the boxes stay as they were, so a focused one keeps
-// it; a box that goes while it has it (its text deleted or undone) hands it to the scroller.
+// it; a box that goes while it has it (its text deleted or undone) hands it to the scroller, and
+// so does the layer when it goes with the focus inside (Modifica back to Cambia, say).
 import { batch } from "@preact/signals";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { AddedText, ImageInfo, LineInfo, Rect } from "../engine/protocol";
 import { formatFontSize, formatMm, locale, t } from "../i18n";
 import {
-  doc, editingStopped, fillMode, fillTool, fitMode, focusRequest, INK, initialsSource, openWriter, pendingPlacement,
-  registerEditor, selectedImage, writerStyle, zoom, type InkColor, type OpenWriter, type Signature,
+  doc, editingStopped, fitMode, focusRequest, INK, initialsSource, openWriter, pendingPlacement, registerEditor,
+  selectedImage, writerKind, writerOn, writerStyle, zoom, type InkColor, type OpenWriter, type Signature,
 } from "../state";
 import {
   commitWriter, deleteAdded, openWriterAt, originOnPage, placeInitialsOnPages, placeSignature, reopenAdded, selectImage,
@@ -206,7 +209,7 @@ function labelSize(lines: readonly LineInfo[] | null, [x, y]: Point): number | n
   return Math.round(Math.min(LABEL_SIZE_MAX, Math.max(LABEL_SIZE_MIN, best.size)) * 2) / 2;
 }
 
-/** The lines of `page` as read for its current revision (fill mode reads them for the label size). */
+/** The lines of `page` as read for its current revision (the layer reads them for the label size). */
 function currentLines(page: PageModel): readonly LineInfo[] | null {
   const cached = page.lines.peek();
   return cached && cached.rev === page.rev.peek() ? cached.lines : null;
@@ -890,8 +893,8 @@ function Ghost({ page, zoom, at, sig, sigUrl }: {
     const r = signatureRect(page.bounds, sig.kind, aspectOf(sig), at);
     return <img class="fill-ghost is-picture" src={sigUrl} alt="" aria-hidden="true" style={px(rectBox(page, r, zoom))} />;
   }
-  const sub = fillTool.value;
-  if (sub === "signature" || sub === "initials" || sub === "image") return null;
+  const sub = writerKind.value;
+  if (sub === "signature" || sub === "initials") return null;
   const style = writerStyle.value;
   const mark = sub === "check" || sub === "cross";
   const size = mark ? style.size * MARK_SCALE : style.size;
@@ -973,6 +976,37 @@ interface PressState {
   off: () => void;
 }
 
+/** What a tap on the page itself does (tapIntent). */
+export type TapIntent =
+  | { do: "nothing" }
+  | { do: "deselect" }
+  | { do: "leave-field" }
+  | { do: "place"; sig: Signature }
+  | { do: "mark"; mark: "check" | "cross" }
+  | { do: "date" }
+  | { do: "choose"; kind: "signature" | "initials" }
+  | { do: "write" };
+
+/**
+ * What a tap on the page does now (`inField`: a form field had the focus when it began): nothing
+ * while the writer is off or editing has stopped; else it deselects the selected picture, leaves
+ * the field, or places the signature or initials waiting; else what writerKind says: a ✓ or a ✗,
+ * the date, the signature sheet (Firma or Sigla with nothing chosen yet), or a text writer
+ * ("write": Testo, and always in Modifica's Aggiungi testo, whatever Compila e firma's sub-tool is).
+ */
+export function tapIntent(inField: boolean): TapIntent {
+  if (!writerOn.peek() || editingStopped.peek()) return { do: "nothing" };
+  if (selectedImage.peek()) return { do: "deselect" };
+  if (inField) return { do: "leave-field" };
+  const sig = pendingPlacement.peek();
+  if (sig) return { do: "place", sig };
+  const sub = writerKind.peek();
+  if (sub === "check" || sub === "cross") return { do: "mark", mark: sub };
+  if (sub === "date") return { do: "date" };
+  if (sub === "signature" || sub === "initials") return { do: "choose", kind: sub };
+  return { do: "write" };
+}
+
 /** The focus is in a form field's control (FormLayer). */
 const fieldHasFocus = () => {
   const active = document.activeElement;
@@ -1002,7 +1036,7 @@ export function FillLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: nu
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
 
-  // Fill mode reads the page's added texts (their boxes) and its lines (a label's size).
+  // The layer reads the page's added texts (their boxes) and its lines (a label's size).
   useEffect(() => {
     ensureAdded(page);
     ensureLines(page);
@@ -1047,11 +1081,14 @@ export function FillLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: nu
       layer.current?.querySelector<HTMLElement>(`.added-box[data-added="${id}"]`) ?? null);
   }, [request, fresh, w]);
 
-  // Leaving fill mode or the page going away: no press left listening.
+  // The writer going off (another tool, Modifica back to Cambia) or the page going away: no press
+  // left listening, and a focus on the phone's hidden field (a writer on its way) goes on to the
+  // scroller, not to <body>. (The boxes and the writer hand theirs on themselves.)
   useEffect(() => () => {
     press.current?.off();
     press.current = null;
     if (hoverFrame.current) cancelAnimationFrame(hoverFrame.current);
+    if (keeper.current && document.activeElement === keeper.current) rescueFocus(viewerScroller);
   }, []);
 
   const pointAt = (clientX: number, clientY: number): Point => {
@@ -1128,50 +1165,50 @@ export function FillLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: nu
 
   // --- Taps ------------------------------------------------------------------------------------
 
-  /** A tap at `at` (page space) on the page itself: what the sub-tool does there. */
+  /** A tap at `at` (page space) on the page itself: what tapIntent says it does there. */
   const tap = (at: Point, touch: boolean, inField: boolean) => {
-    if (!fillMode.peek() || editingStopped.peek()) return;
-    // A picture selected: the tap deselects it. A field with the focus: the tap leaves it.
-    if (selectedImage.peek()) {
-      void selectImage(page.index, null);
-      return;
-    }
-    if (inField) {
-      if (fieldHasFocus()) (document.activeElement as HTMLElement).blur(); // its blur writes it
-      return;
-    }
-    const pending = pendingPlacement.peek();
-    if (pending) {
-      void placeSignature(page.index, pending, rectMatrix(signatureRect(page.bounds, pending.kind, aspectOf(pending), at)));
-      return;
-    }
-    const sub = fillTool.peek();
+    const intent = tapIntent(inField);
     const style = writerStyle.peek();
-    if (sub === "check" || sub === "cross") {
-      const size = style.size * MARK_SCALE;
-      const origin = markOrigin(at, size);
-      const text = sub === "check" ? "✓" : "✗";
-      const copy = { text, origin: writtenAt(page, origin, text, size, true), size, color: style.color };
-      track(copy, openWriterAt(page.index, origin, sub, text, { size }), "mark");
-      return;
+    switch (intent.do) {
+      case "nothing":
+        return;
+      case "deselect":
+        void selectImage(page.index, null);
+        return;
+      case "leave-field":
+        if (fieldHasFocus()) (document.activeElement as HTMLElement).blur(); // its blur writes it
+        return;
+      case "place": {
+        const sig = intent.sig;
+        void placeSignature(page.index, sig, rectMatrix(signatureRect(page.bounds, sig.kind, aspectOf(sig), at)));
+        return;
+      }
+      case "mark": {
+        const size = style.size * MARK_SCALE;
+        const origin = markOrigin(at, size);
+        const text = intent.mark === "check" ? "✓" : "✗";
+        const copy = { text, origin: writtenAt(page, origin, text, size, true), size, color: style.color };
+        track(copy, openWriterAt(page.index, origin, intent.mark, text, { size }), "mark");
+        return;
+      }
+      case "date": {
+        const text = todayText();
+        const origin = writerOrigin(at, style.size);
+        const copy = { text, origin: writtenAt(page, origin, text, style.size, false), size: style.size, color: style.color };
+        track(copy, openWriterAt(page.index, origin, "date", text), "date");
+        return;
+      }
+      case "choose":
+        setFillTool(intent.kind); // nothing chosen yet: the chooser again
+        return;
+      case "write": {
+        if (touch) holdKeyboard(at);
+        const label = labelSize(currentLines(page), at);
+        const size = label ?? style.size;
+        void openWriterAt(page.index, writerOrigin(at, size), "text", undefined, label === null ? {} : { size: label })
+          .then(afterOpen, afterOpen);
+      }
     }
-    if (sub === "date") {
-      const text = todayText();
-      const origin = writerOrigin(at, style.size);
-      const copy = { text, origin: writtenAt(page, origin, text, style.size, false), size: style.size, color: style.color };
-      track(copy, openWriterAt(page.index, origin, "date", text), "date");
-      return;
-    }
-    if (sub === "signature" || sub === "initials") {
-      setFillTool(sub); // nothing chosen yet: the chooser again
-      return;
-    }
-    // Testo (Immagine never stays on).
-    if (touch) holdKeyboard(at);
-    const label = labelSize(currentLines(page), at);
-    const size = label ?? style.size;
-    void openWriterAt(page.index, writerOrigin(at, size), "text", undefined, label === null ? {} : { size: label })
-      .then(afterOpen, afterOpen);
   };
 
   const endPress = () => {
@@ -1243,7 +1280,7 @@ export function FillLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: nu
 
   /** A tap or click on a text the user wrote: reopen it (or place the signature waiting there). */
   const onAddedClick = (e: MouseEvent, added: AddedText) => {
-    if (!fillMode.peek() || editingStopped.peek()) return;
+    if (!writerOn.peek() || editingStopped.peek()) return;
     const pending = pendingPlacement.peek();
     if (pending) {
       const [x0, y0, x1, y1] = added.bbox;

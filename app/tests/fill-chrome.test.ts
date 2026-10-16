@@ -1,10 +1,14 @@
-// The chrome of Compila e firma against the app's real modules with a fake engine (no browser):
-// what a form offers, from FormInfo's counts with no page read at open (a signed PDF and a
-// read-only form are not forms to fill in), the form notice, "Next empty field" from the field
-// the user was in, reading only the pages it gets to and busy while it reads, the bars at the
-// bottom that follow typingField, "Put it in the middle" on phones, the details panel's keys
-// while writing, the missing-fields question about one field, the singulars, the full stops of
-// the marks' toasts, and the Browse tooltip.
+// The chrome of Compila e firma and Modifica against the app's real modules with a fake engine
+// (no browser): what a form offers, from FormInfo's counts with no page read at open (a signed
+// PDF and a read-only form are not forms to fill in), the form notice, "Next empty field" from
+// the field the user was in, reading only the pages it gets to and busy while it reads, the bars
+// at the bottom that follow typingField, the details panel's keys while writing, the
+// missing-fields question about one field, the singulars, the full stops of the marks' toasts,
+// the Browse tooltip; and the tools' bars (the components are called as functions and their
+// trees read, nothing is rendered): Compila e firma's six sub-tools, Modifica's three and what
+// they call, "Put it in the middle" as an icon alone on desktop and phones, the strips on phones,
+// Done's tooltip naming Esc only where Esc leaves, the form's notes as toasts on phones once per
+// document.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
@@ -303,14 +307,6 @@ describe("C3 the bars at the bottom on phones", () => {
 });
 
 describe("C4 texts", () => {
-  it("'Put it in the middle' for every sub-tool that places with a tap, on phones too", () => {
-    for (const sub of ["text", "check", "cross", "date", "signature", "initials"] as const) {
-      expect(bar.placeCenterShown(false, sub)).toBe(true);
-    }
-    expect(bar.placeCenterShown(false, "image")).toBe(false);
-    expect(bar.placeCenterShown(true, "image")).toBe(true);
-  });
-
   it("the writer's keys do not list Tab, which goes to the writer's own bar there", async () => {
     const { fillShortcuts } = await import("../src/ui/DetailsPanel");
     expect(fillShortcuts("writer").map(([key]) => key)).toEqual(["Enter", "Shift + Enter", "Esc"]);
@@ -377,5 +373,260 @@ describe("C4 texts", () => {
     i18n.setLocale("it");
     expect(i18n.t("initials.workingOne")).toBe("Metto la sigla su 1 pagina…");
     expect(i18n.t("fill.imagePlacedTouch", { page: 2 })).toBe("Immagine aggiunta a pagina 2. Trascina la maniglia tonda per spostarla.");
+  });
+});
+
+describe("C5 the tools' bars", () => {
+  let sub: typeof import("../src/ui/SubTools");
+  let edit: typeof import("../src/ui/EditBar");
+  let media: typeof import("../src/ui/media");
+  let icons: typeof import("../src/ui/icons");
+
+  beforeAll(async () => {
+    sub = await import("../src/ui/SubTools");
+    edit = await import("../src/ui/EditBar");
+    media = await import("../src/ui/media");
+    icons = await import("../src/ui/icons");
+  });
+
+  /** Every element and component in the tree of `node` (components are not called: they show as themselves). */
+  function nodes(node: any): any[] {
+    if (node == null || typeof node !== "object") return [];
+    if (Array.isArray(node)) return node.flatMap(nodes);
+    return [node, ...nodes(node.props?.children)];
+  }
+  const ofType = (node: any, type: unknown) => nodes(node).filter((n) => n.type === type);
+  const statusText = (node: any) => nodes(node).find((n) => n.props?.role === "status")?.props.children;
+  const elRef = { current: null };
+  /** Lets an action that awaits flushEditor end. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /** Run `fn` in the phone layout (and with a touch screen when `touch`), then back to the desktop. */
+  function onPhone(fn: () => void, touch = false) {
+    media.isNarrow.value = true;
+    media.isCoarse.value = touch;
+    try {
+      fn();
+    } finally {
+      media.isNarrow.value = false;
+      media.isCoarse.value = false;
+    }
+  }
+
+  it("Compila e firma has six sub-tools, none of them Immagine, all toggles, in the banner and in the strip", async () => {
+    const d = await open("six.pdf", [[]]);
+    await actions.setTool("fill");
+    const ids = ["text", "check", "cross", "date", "signature", "initials"];
+    const items = bar.fillToolItems("check", false);
+    expect(items.map((x) => x.id)).toEqual(ids);
+    expect(items.map((x) => x.pressed)).toEqual([false, true, false, false, false, false]);
+
+    const [tools] = ofType(bar.FillBanner({ doc: d, elRef }), sub.SubTools);
+    expect(tools.props.label).toBe("Fill & sign tools");
+    expect(tools.props.items.map((x: any) => x.id)).toEqual(ids);
+    expect(bar.FillStrip().props.items.map((x: any) => x.id)).toEqual(ids);
+    // On phones the sub-tools are in the strip, not in the banner.
+    onPhone(() => expect(ofType(bar.FillBanner({ doc: d, elRef }), sub.SubTools)).toEqual([]));
+
+    const { en } = await import("../src/i18n/en");
+    expect(Object.keys(en).filter((key) => key === "fill.image" || key === "fill.imageTip")).toEqual([]);
+    await actions.setTool(null);
+  });
+
+  it("'Put it in the middle' is an icon alone, named and with its tooltip, for every sub-tool and a waiting signature, on desktop and phones", async () => {
+    const d = await open("middle.pdf", [[]]);
+    await actions.setTool("fill");
+
+    const button = sub.PlaceCentreButton();
+    expect(button.type).toBe("button");
+    expect(button.props["aria-label"]).toBe("Put it in the middle");
+    expect(button.props.title).toBe(i18n.t("fill.placeCenterTip"));
+    expect(button.props.children.type).toBe(icons.IconTarget); // the icon, and no words beside it
+    onPhone(() => expect(sub.PlaceCentreButton().props.title).toBe(i18n.t("fill.placeCenterTipTouch")), true);
+
+    const middles = () => ofType(bar.FillBanner({ doc: d, elRef }), sub.PlaceCentreButton).length;
+    for (const id of ["text", "check", "cross", "date", "signature", "initials"] as const) {
+      state.fillTool.value = id;
+      expect({ id, middles: middles() }).toEqual({ id, middles: 1 });
+      onPhone(() => expect({ id, middles: middles() }).toEqual({ id, middles: 1 }));
+    }
+    state.fillTool.value = "signature";
+    state.pendingPlacement.value = {
+      id: "s1", kind: "signature", png: new Blob([]), width: 10, height: 4, description: "Signature", source: "draw", savedAt: null,
+    };
+    try {
+      expect(middles()).toBe(1);
+      onPhone(() => expect(middles()).toBe(1));
+    } finally {
+      state.pendingPlacement.value = null;
+      state.fillTool.value = "text";
+    }
+    await actions.setTool(null);
+  });
+
+  it("Modifica's sub-tools: Change and Add text are toggles that follow editTool, Add image opens the picker within the click", async () => {
+    const d = await open("edit.pdf", [[]]);
+    await actions.setTool("edit");
+    expect(state.editTool.value).toBe("change");
+
+    const toolsOf = () => ofType(edit.EditBanner({ doc: d, elRef }), sub.SubTools)[0];
+    let tools = toolsOf();
+    expect(tools.props.label).toBe("Editing tools");
+    expect(tools.props.items.map((x: any) => [x.id, x.pressed])).toEqual([["change", true], ["addText", false], ["addImage", undefined]]);
+    expect(statusText(edit.EditBanner({ doc: d, elRef }))).toBe("Click a line to change it, or an image to move it.");
+
+    tools.props.items[1].onChoose();
+    await settle();
+    expect(state.editTool.value).toBe("addText");
+    tools = toolsOf();
+    expect(tools.props.items.map((x: any) => x.pressed)).toEqual([false, true, undefined]);
+    expect(statusText(edit.EditBanner({ doc: d, elRef }))).toBe("Click where you want to write, or on a text you wrote to change it.");
+
+    // The buttons: aria-pressed on the toggles only, the name on the button with its tooltip.
+    const button = (item: any) => sub.SubToolButton({ item, tabbable: item.pressed === true, onFocus: () => undefined });
+    expect(tools.props.items.map((x: any) => button(x).props["aria-pressed"])).toEqual([false, true, undefined]);
+    const addText = button(tools.props.items[1]);
+    expect([addText.props["aria-label"], addText.props.title, addText.props.tabIndex]).toEqual(["Add text", "Write new text where you click", 0]);
+    expect(ofType(addText, "span")[0].props.children).toBe("Add text");
+
+    // Aggiungi immagine: the picker, opened right there; nothing changes until a picture is chosen.
+    expect(tools.props.items[2].onChoose).toBe(actions.chooseNewPicture);
+    const created = (globalThis as any).__created as { tag: string; clicked?: boolean }[];
+    const before = created.length;
+    tools.props.items[2].onChoose();
+    expect(created.slice(before).filter((el) => el.tag === "input" && el.clicked)).toHaveLength(1);
+    expect(state.editTool.value).toBe("addText");
+
+    tools.props.items[0].onChoose();
+    await settle();
+    expect(state.editTool.value).toBe("change");
+
+    // Done leaves Modifica.
+    const done = nodes(edit.EditBanner({ doc: d, elRef })).find((n) => n.props?.class?.includes("edit-banner-done"));
+    done.props.onClick();
+    await settle();
+    expect(state.tool.value).toBeNull();
+  });
+
+  it("'Put it in the middle' in Modifica only with Add text, on desktop and phones; the hint follows the sub-tool there too", async () => {
+    const d = await open("middle-edit.pdf", [[]]);
+    await actions.setTool("edit");
+    const banner = () => edit.EditBanner({ doc: d, elRef });
+    const middles = () => ofType(banner(), sub.PlaceCentreButton).length;
+    expect(middles()).toBe(0);
+    onPhone(() => {
+      expect(middles()).toBe(0);
+      expect(ofType(banner(), sub.SubTools)).toEqual([]); // in the strip on phones
+      expect(statusText(banner())).toBe("Tap a line to change it, or an image to move it.");
+    }, true);
+    await actions.setEditTool("addText");
+    expect(middles()).toBe(1);
+    onPhone(() => {
+      expect(middles()).toBe(1);
+      expect(statusText(banner())).toBe("Tap where you want to write, or a text you wrote to change it.");
+    }, true);
+    i18n.setLocale("it");
+    expect(statusText(banner())).toBe("Fai clic dove vuoi scrivere, o su un testo che hai scritto per cambiarlo.");
+    await actions.setTool(null);
+  });
+
+  it("the strip of sub-tools on phones: Modifica's or Compila e firma's, away while the keyboard is up", async () => {
+    const { stripFor } = await import("../src/viewer/Viewer");
+    await open("strip.pdf", [[]]);
+    await actions.setTool("edit");
+    const strip = edit.EditStrip();
+    expect(strip.props.label).toBe("Editing tools");
+    expect(strip.props.items.map((x: any) => [x.id, x.pressed])).toEqual([["change", true], ["addText", false], ["addImage", undefined]]);
+
+    expect([stripFor("edit"), stripFor("fill")]).toEqual([null, null]); // desktop: in the banner
+    onPhone(() => {
+      expect([stripFor("edit"), stripFor("fill"), stripFor("stopped"), stripFor(null)]).toEqual(["edit", "fill", null, null]);
+      state.openWriter.value = { pageIndex: 0, origin: [10, 10], text: "", size: 11, color: "black", kind: "text", editing: null, rev: 0 };
+      try {
+        expect(stripFor("edit")).toBeNull();
+      } finally {
+        state.openWriter.value = null;
+      }
+    });
+    await actions.setTool(null);
+  });
+
+  it("Done names Esc where Esc leaves: Modifica with Change and Compila e firma, not Modifica with Add text", async () => {
+    const d = await open("done.pdf", [[]]);
+    const doneTip = (banner: any) => nodes(banner).find((n) => n.props?.class?.includes("edit-banner-done")).props.title;
+    await actions.setTool("edit");
+    expect(doneTip(edit.EditBanner({ doc: d, elRef }))).toBe("Stop editing (Esc)");
+    await actions.setEditTool("addText"); // there Esc goes back to Change first
+    expect(doneTip(edit.EditBanner({ doc: d, elRef }))).toBe("Stop editing");
+    onPhone(() => expect(doneTip(edit.EditBanner({ doc: d, elRef }))).toBe("Stop editing"), true);
+    i18n.setLocale("it");
+    expect(doneTip(edit.EditBanner({ doc: d, elRef }))).toBe("Esci dalla modifica");
+    await actions.setEditTool("change");
+    expect(doneTip(edit.EditBanner({ doc: d, elRef }))).toBe("Esci dalla modifica (Esc)");
+
+    // Compila e firma: at rest Esc leaves with every sub-tool.
+    i18n.setLocale("en");
+    await actions.setTool("fill");
+    for (const id of ["text", "check", "cross", "date", "signature", "initials"] as const) {
+      state.fillTool.value = id;
+      expect({ id, tip: doneTip(bar.FillBanner({ doc: d, elRef })) }).toEqual({ id, tip: "Stop filling in (Esc)" });
+    }
+    state.fillTool.value = "text";
+    await actions.setTool(null);
+  });
+
+  it("on phones the form's notes are two toasts, once per document, when Compila e firma is on there; none on desktop", async () => {
+    const noted = FORM([1], 0, { xfa: "static", scripts: true });
+    const notes = [["warn", i18n.t("form.xfaStatic")], ["warn", i18n.t("form.calculations")]];
+    const said = () => state.toasts.value.map((x) => [x.kind, x.text]);
+    const bannerNotes = (d: any) =>
+      nodes(bar.FillBanner({ doc: d, elRef })).filter((n) => n.props?.class === "fill-banner-note").map((n) => n.props.children);
+
+    media.isNarrow.value = true;
+    try {
+      // Turned on in the phone layout: the two notes, as toasts, and not in the banner.
+      const first = await open("notes.pdf", [[FIELD("a")]], noted);
+      expect(said()).toEqual([]);
+      await actions.setTool("fill");
+      expect(said()).toEqual(notes);
+      expect(bannerNotes(first)).toEqual([]);
+
+      // Not again for this document: off and on, wide and narrow again. The toasts on screen go
+      // first, or they would hide a repeat (the same toast is never shown twice at once).
+      state.toasts.value = [];
+      await actions.setTool(null);
+      await actions.setTool("fill");
+      media.isNarrow.value = false;
+      media.isNarrow.value = true;
+      expect(said()).toEqual([]);
+      await actions.setTool(null);
+
+      // A new document: once more.
+      await open("notes-2.pdf", [[FIELD("a")]], noted);
+      await actions.setTool("fill");
+      expect(said()).toEqual(notes);
+      await actions.setTool(null);
+
+      // Desktop: the notes are in the banner, no toast. Narrowed while on, they come as toasts.
+      media.isNarrow.value = false;
+      const third = await open("notes-3.pdf", [[FIELD("a")]], noted);
+      await actions.setTool("fill");
+      expect(said()).toEqual([]);
+      expect(bannerNotes(third)).toEqual(notes.map(([, text]) => text));
+      media.isNarrow.value = true;
+      expect(said()).toEqual(notes);
+    } finally {
+      media.isNarrow.value = false;
+      state.toasts.value = [];
+      await actions.setTool(null);
+    }
+  });
+
+  it("the tooltips of Modifica say it adds text and images too", () => {
+    expect(i18n.t("tools.editTextTip")).toBe("Edit: change text, move images, add text or images");
+    expect(i18n.t("edit.addImageTip")).toBe("Add an image or a photo");
+    i18n.setLocale("it");
+    expect(i18n.t("tools.editTextTip")).toBe("Modifica: cambia il testo, sposta le immagini, aggiungi testo o immagini");
+    expect([i18n.t("edit.change"), i18n.t("edit.addText"), i18n.t("edit.addImage")]).toEqual(["Cambia", "Aggiungi testo", "Aggiungi immagine"]);
   });
 });

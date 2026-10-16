@@ -3,12 +3,14 @@
 // label under it ("Compila e firma" wraps to two lines); the tooltip says what it does. The tools
 // are exclusive and always go through setTool, so text still typed in the line editor or a writer
 // is written before leaving it. Browse stays on the rail (on phones no tool lit is browsing).
+// Details is there at every desktop width: it opens and closes the docked panel, one choice
+// remembered on this device (open by default from 1200 px, closed by default below: panels.ts).
 import type { ComponentChildren } from "preact";
 import { t } from "../i18n";
 import { editingStopped, tool } from "../state";
 import { setTool } from "./actions";
 import { IconDetails, IconEditText, IconPages, IconPointer, IconSign } from "./icons";
-import { detailsPanelAvailable, detailsPanelOpen, pagesPanelOpen, toggleDetailsPanel, togglePagesPanel } from "./panels";
+import { detailsPanelOpen, pagesPanelOpen, toggleDetailsPanel, togglePagesPanel } from "./panels";
 
 interface RailButtonProps {
   icon: ComponentChildren;
@@ -82,16 +84,14 @@ export function ToolRail() {
           controls={pagesOpen ? "pages-panel" : undefined}
           onClick={togglePagesPanel}
         />
-        {detailsPanelAvailable.value && (
-          <RailButton
-            icon={<IconDetails />}
-            label={t("tools.details")}
-            tip={t("tools.detailsTip")}
-            pressed={detailsOpen}
-            controls={detailsOpen ? "details-panel" : undefined}
-            onClick={toggleDetailsPanel}
-          />
-        )}
+        <RailButton
+          icon={<IconDetails />}
+          label={t("tools.details")}
+          tip={t("tools.detailsTip")}
+          pressed={detailsOpen}
+          controls={detailsOpen ? "details-panel" : undefined}
+          onClick={toggleDetailsPanel}
+        />
       </div>
     </nav>
   );

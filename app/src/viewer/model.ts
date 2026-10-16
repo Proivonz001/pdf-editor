@@ -42,19 +42,26 @@ export interface PageModel {
   /** Size in points. */
   width: number;
   height: number;
-  /** Within about one screen of the viewport: gets a rendered bitmap (and lines in edit mode). */
+  /** Within about one screen of the viewport: gets a rendered bitmap (and lines in Modifica with Cambia). */
   near: Signal<boolean>;
   /** Within about three screens: keeps its canvas. Pages further away release it. */
   keep: Signal<boolean>;
   /** Bumped whenever the page's appearance changes (edit, undo, redo). */
   rev: Signal<number>;
-  /** Cached text lines (edit mode). Null = not read yet or dropped after a change. */
+  /** Cached text lines (Modifica with Cambia). Null = not read yet or dropped after a change. */
   lines: Signal<PageLines | null>;
-  /** Cached images (edit mode; the added ones in fill mode). Null = not read yet or dropped after a change. */
+  /**
+   * Cached images, all of the page's (Modifica with Cambia shows them all; wherever the text
+   * writer is on, Compila e firma and Modifica with Aggiungi testo, only the ones the user added
+   * show). Null = not read yet or dropped after a change.
+   */
   images: Signal<PageImages | null>;
   /** Cached form field widgets (fill and browse modes). Null = not read yet or dropped after a change. */
   fields: Signal<PageFields | null>;
-  /** Cached texts the app wrote (fill mode). Null = not read yet or dropped after a change. */
+  /**
+   * Cached texts the app wrote, read wherever the text writer is on (Compila e firma, Modifica
+   * with Aggiungi testo). Null = not read yet or dropped after a change.
+   */
   added: Signal<PageAdded | null>;
 }
 

@@ -1,14 +1,17 @@
 // Phone bottom sheets, driven by the `sheet` signal: "pages" (the thumbnail grid; picking a page
-// closes it) and "more" (open another PDF, share, download with options, zoom, the signatures
-// saved on this device when there are any, language, update, close document, then the privacy
-// note and the source link). On phones they stand in for the desktop's thumbnails panel, zoom
-// controls, More menu and the chevron of the Download button. Styled by styles/phone.css
-// (.sheet-pages, .sheet-more).
+// closes it), "more" (open another PDF, share, download with options, details, zoom, the
+// signatures saved on this device when there are any, language, update, close document, then the
+// privacy note and the source link) and "details" (what the desktop's details panel says, live,
+// without the shortcuts). On phones they stand in for the desktop's thumbnails panel, zoom
+// controls, More menu, the chevron of the Download button and the details panel. Styled by
+// styles/phone.css (.sheet-pages, .sheet-more) and styles/details.css (.sheet-details).
 //
 // Open, Share, Download with options, Saved signatures and Close document close the sheet first:
 // they lead somewhere else (the file picker, the share sheet, the download options sheet, the
-// signature chooser, the home page). Zoom, language and update keep it open, so their effect
-// shows behind it (an update that needs a confirmation asks above it).
+// signature chooser, the home page). Details swaps the More sheet for the details sheet, whose
+// Edit and Fill & sign buttons close it before starting their tool. Zoom, language and update
+// keep the More sheet open, so their effect shows behind it (an update that needs a
+// confirmation asks above it).
 import type { ComponentChildren } from "preact";
 import { useEffect, useId } from "preact/hooks";
 import { LOCALE_NAMES, otherLocale, pageCount, t, toggleLocale } from "../i18n";
@@ -20,11 +23,12 @@ import type { OpenDoc } from "../viewer/model";
 import { PageThumbnails } from "../viewer/Thumbnails";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
 import { closeDocument, openDownloadOptions, share, updateApp } from "./actions";
+import { DetailsContent } from "./DetailsPanel";
 import { openFilePicker } from "./filePicker";
 import { openSavedSignatures, savedKind } from "./fill/FillBar";
 import {
-  IconClose, IconCode, IconDownload, IconFitWidth, IconGlobe, IconMinus, IconOpen, IconPlus, IconShare, IconShield,
-  IconSignature, IconUpdate, IconZoom,
+  IconClose, IconCode, IconDetails, IconDownload, IconFitWidth, IconGlobe, IconMinus, IconOpen, IconPlus, IconShare,
+  IconShield, IconSignature, IconUpdate, IconZoom,
 } from "./icons";
 import { canSharePdf, shortcuts } from "./media";
 import { Sheet } from "./Sheet";
@@ -138,7 +142,8 @@ function SavedSignaturesRow() {
   );
 }
 
-function MoreActions() {
+/** The rows of the More sheet (exported for the tests: they cannot render it). */
+export function MoreActions() {
   const next = otherLocale();
   return (
     <>
@@ -168,6 +173,16 @@ function MoreActions() {
           onClick={(e) => {
             leaveSheet(e);
             openDownloadOptions();
+          }}
+        />
+        {/* Swaps the sheets: the More sheet goes at once and the details sheet comes up. Both give
+            the focus back to the More tab when they go. */}
+        <Row
+          icon={<IconDetails />}
+          label={t("tools.details")}
+          opensDialog
+          onClick={() => {
+            sheet.value = "details";
           }}
         />
       </div>
@@ -234,6 +249,13 @@ export function PhoneSheets({ doc }: { doc: OpenDoc }) {
     return (
       <Sheet key="more" title={t("more.title")} class="sheet-more" onClose={closeSheet}>
         <MoreActions />
+      </Sheet>
+    );
+  }
+  if (kind === "details") {
+    return (
+      <Sheet key="details" title={t("details.label")} class="sheet-details" onClose={closeSheet}>
+        <DetailsContent doc={doc} leaveSheet={leaveSheet} />
       </Sheet>
     );
   }
