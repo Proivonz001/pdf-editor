@@ -24,7 +24,13 @@
 // - XMP metadata (pdfaid part 2, conformance B, in step with the Info dictionary; none on other
 //   objects), a file /ID, annotation appearances and flags, and the small structural fixes (LZW,
 //   Interpolate, transfer functions, rendering intents, optional content names, font
-//   dictionaries).
+//   dictionaries);
+// - form fields (release 3): where MuPDF would draw a field's appearance wrongly (a value outside
+//   WinAnsi, a list box's selection, a combo box's export value, buttons without appearance
+//   states), forms.ts draws it as a field edit does, with embedded fallback fonts; an unsigned
+//   signature field gets an empty appearance, never MuPDF's "SIGN" placeholder; a password field
+//   is never drawn from its value (MuPDF would write it in clear): it keeps its appearance, or
+//   gets its frame only.
 //
 // Which fonts are "used" is decided the way veraPDF decides it: a font selected with Tf in a
 // content stream (pages, form XObjects, every annotation appearance state, patterns, soft masks,
@@ -38,6 +44,8 @@
 // receive are destroyed explicitly (ARCHITECTURE.md rule 5). PDFObject wrappers are left to the
 // garbage collector, as everywhere else in the engine.
 import type * as MuPDF from "mupdf";
+import { subsetFallbackFonts } from "./core.js";
+import { drawFieldsWithWriter, fieldTypeOf, hidePasswords, isPasswordField } from "./forms";
 import { SRGB_PROFILE_NAME, srgbProfile } from "./icc";
 import type { PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaReport, PdfaWarningCode } from "./protocol";
 
@@ -1351,7 +1359,9 @@ function fixNormalAppearance(doc: Doc, o: Obj, subtype: string | null, empty: ()
   const n = ap.get("N");
   if (n.isNull()) return false;
   const as = o.get("AS");
-  const state = as.isName() ? as.asName() : null;
+  // Names are used as the objects they are: MuPDF.js reads names as UTF-8, and would write one
+  // that is not (an older producer's Latin-1 "Sì", /S#EC) back as other bytes.
+  const state = as.isName() ? as.resolve() : null;
   if (subtype === "Widget" && isButton(o)) {
     if (n.isDictionary() && !n.isStream() && hasStream(n)) return false;
     const ff = inheritedField(o, "Ff");
@@ -1359,11 +1369,11 @@ function fixNormalAppearance(doc: Doc, o: Obj, subtype: string | null, empty: ()
     const v = inheritedField(o, "V");
     // The state shown, else a push button's usual "On", or a check box's value (a radio button's
     // value names another button of the group).
-    const name = state ?? (flags & FF_PUSHBUTTON ? "On" : !(flags & FF_RADIO) && v?.isName() ? v.asName() : "Off");
+    const name = state ?? (flags & FF_PUSHBUTTON ? doc.newName("On") : !(flags & FF_RADIO) && v?.isName() ? v.resolve() : doc.newName("Off"));
     const states = n.isDictionary() && !n.isStream() ? n : doc.newDictionary();
-    states.put(doc.newName(name), n.isStream() ? n : empty());
+    states.put(name, n.isStream() ? n : empty());
     ap.put("N", states);
-    if (state === null) o.put("AS", doc.newName(name));
+    if (state === null) o.put("AS", name);
     return true;
   }
   if (n.isStream()) return false;
@@ -1443,7 +1453,21 @@ export function convertToPdfA(mupdf: MuPDFModule, doc: Doc, options: ConvertOpti
 
   // 3. Annotations: forbidden and hidden ones go, hidden fields show, appearances are created.
   // Before the font step: MuPDF's appearances use non-embedded standard fonts that it embeds.
-  convertAnnotations(doc, acro, out, attachments, empty);
+  // Form fields MuPDF would draw wrongly (a value outside WinAnsi lands under the box or uses a
+  // font it does not embed; a list box shows no selection; a combo box shows an option's export
+  // value; buttons without appearance states all get one on state) are drawn first by forms.ts,
+  // as a field edit draws them: all of them in a form with /NeedAppearances (its appearances may
+  // be stale), else those without an appearance. The fallback fonts the writer embeds whole are
+  // subset at once (a font already subset is left as it is). A password widget without an
+  // appearance gets its frame first: MuPDF would draw its value in clear.
+  if (hidePasswords(mupdf, doc).length) out.fixes++;
+  const needAppearances = acro.isDictionary() && boolOf(acro, "NeedAppearances");
+  const drawnByWriter = acro.isDictionary() ? drawFieldsWithWriter(mupdf, doc, needAppearances) : new Set<number>();
+  if (drawnByWriter.size) {
+    subsetFallbackFonts(mupdf, doc);
+    out.fixes++;
+  }
+  convertAnnotations(doc, acro, out, attachments, empty, drawnByWriter);
 
   // 4. One pass over every object.
   const fonts: Obj[] = [];
@@ -1650,7 +1674,11 @@ export function convertToPdfA(mupdf: MuPDFModule, doc: Doc, options: ConvertOpti
   return out.report();
 }
 
-function convertAnnotations(doc: Doc, acro: Obj, out: Findings, attachments: string[], empty: () => Obj) {
+/**
+ * `drawnByWriter`: object numbers of the widgets the forms writer has just drawn, which keep that
+ * appearance (MuPDF regenerating it, with /NeedAppearances, would undo the writer's work).
+ */
+function convertAnnotations(doc: Doc, acro: Obj, out: Findings, attachments: string[], empty: () => Obj, drawnByWriter: Set<number>) {
   const needAppearances = acro.isDictionary() && boolOf(acro, "NeedAppearances");
   for (let i = 0; i < doc.countPages(); i++) {
     const page = doc.loadPage(i);
@@ -1686,6 +1714,24 @@ function convertAnnotations(doc: Doc, acro: Obj, out: Findings, attachments: str
           o.put("F", (flags | F_PRINT) & ~HIDING_FLAGS);
           out.remove("hidden-fields-shown", 1);
         }
+        if (o.isIndirect() && drawnByWriter.has(o.asIndirect())) continue;
+        // A signature field that holds no signature (the values were removed above): MuPDF would
+        // write its orange "SIGN" placeholder into the file, for every viewer to show. It keeps
+        // the appearance it has (a signature's look, or the form's own "sign here"), or gets an
+        // empty one, also with NeedAppearances (viewers never redraw a signature field's).
+        if (fieldTypeOf(o) === "signature") {
+          if (o.get("AP", "N").isNull()) {
+            const ap = o.get("AP");
+            if (ap.isDictionary()) ap.put("N", empty());
+            else o.put("AP", { N: empty() });
+            out.fixes++;
+          }
+          continue;
+        }
+        // A password field: never redrawn from its value, also with NeedAppearances (MuPDF would
+        // write the password in clear). hidePasswords gave one without an appearance its frame;
+        // a widget it left out has no size, and needs none (6.3.3).
+        if (isPasswordField(o)) continue;
         // With NeedAppearances, the appearances in the file may be stale: viewers redraw them.
         if (!ensureAppearance(w, o, "Widget", needAppearances, out)) {
           // A field MuPDF cannot draw (broken, or zero width): an empty appearance keeps the

@@ -38,6 +38,8 @@ export interface DocInfo {
   pdfa: string | null;
   /** Signature fields that hold a digital signature: any change, and any re-save, invalidates them. */
   signatures: number;
+  /** The file's fillable form (AcroForm with widgets), or null when it has none. */
+  form: FormInfo | null;
   title: string | null;
 }
 
@@ -229,6 +231,11 @@ export interface LineInfo {
    * truncated). The UI shows it but offers no editor; replaceLine refuses it ("not-editable").
    */
   editable: boolean;
+  /**
+   * The line is text the app wrote (addText), drawn only by its own marked blocks: replaceLine
+   * rewrites those blocks instead of redacting, so nothing under or over them is touched.
+   */
+  added: boolean;
 }
 
 export type SegmentSource = "original" | "original-sibling" | "document-same-line" | "fallback";
@@ -303,12 +310,170 @@ export interface ImageInfo {
   /** False when the image cannot be edited; `reason` says why. */
   movable: boolean;
   reason: ImageLockReason | null;
+  /** A picture the app placed (addImage: a signature, initials, a photo), recognised by its marked block. */
+  added: boolean;
 }
 
 export interface ImageEditResult extends HistoryState {
   pageIndex: number;
   /** The edited image's index in the page's new image list (the same as before for a move or a replace); null after a delete. */
   imageIndex: number | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fill and sign (phase 3, release 3): form fields (AcroForm), new text written on the page, and
+// new pictures (signatures, initials, photos). New text and pictures are real page content in
+// marked blocks of their own (ARCHITECTURE.md, "Fill and sign"), not annotations.
+
+export type FieldType = "text" | "checkbox" | "radio" | "combo" | "list" | "button" | "signature";
+
+/** Why the app does not fill a field (FieldWidget.locked); setField refuses it ("not-editable"). */
+export type FieldLock =
+  /** The form marks it read-only. */
+  | "read-only"
+  /** A password field: its value should never be stored in a file (and MuPDF draws it in clear). */
+  | "password"
+  /** A file-select field. */
+  | "file-select"
+  /** A push button: it has no value. */
+  | "push-button"
+  /** A signature field: signed with the Sign tool (a picture placed in its box), never "filled". */
+  | "signature"
+  /** It has no name, so an edit could not find it again when replayed. */
+  | "no-name"
+  /** Fields with this full name have different types. */
+  | "conflict";
+
+export interface FieldOption {
+  label: string;
+  /** The export value, what the field's value holds. */
+  value: string;
+}
+
+/** One widget of a field on a page. Hidden, NoView and zero-area widgets are left out. */
+export interface FieldWidget {
+  /** Full field name ("a.b.c"): the identity setField uses; the widgets of one field share it. */
+  name: string;
+  /** Position among the page's listed widgets (the page's /Tabs order when it has one, else /Annots). */
+  index: number;
+  type: FieldType;
+  /** The widget's box in page space. */
+  rect: Rect;
+  /** Direction of the text in the box, clockwise: page /Rotate plus the widget's own rotation. */
+  rotation: 0 | 90 | 180 | 270;
+  /** /TU, else the partial name. */
+  label: string;
+  /** Text; combo and list: the (first) export value; check box and radio: the field's state ("Off" when off). */
+  value: string;
+  /** List boxes: every selected export value. */
+  values?: string[];
+  /** Combo boxes: the label of `value` (or the custom text of an editable combo). */
+  displayValue?: string;
+  /** Check box and radio: this widget's on state. */
+  onState?: string;
+  /** Combo and list: the choices; radio: the /Opt labels when the form has them. */
+  options?: FieldOption[];
+  multiline: boolean;
+  comb: boolean;
+  /** 0: no limit. */
+  maxLen: number;
+  multiSelect: boolean;
+  /** Combo boxes that also accept a custom text. */
+  editable: boolean;
+  required: boolean;
+  /** It has format, keystroke, validate or calculate scripts: they never run in this app. */
+  scripted: boolean;
+  /** A hint read from the form's format script (data only, never run). */
+  format: { kind: "date"; pattern: string } | { kind: "number"; decimals: number; currency: string | null } | null;
+  /** Text size from the form, in points; 0 = automatic. */
+  fontSize: number;
+  /** sRGB 0..1. */
+  color: [number, number, number];
+  /** 0 left, 1 centre, 2 right. */
+  align: 0 | 1 | 2;
+  /** Signature fields: it holds a digital signature. */
+  signed?: boolean;
+  locked: FieldLock | null;
+}
+
+export type FieldValue =
+  /** Text fields, and the custom text of an editable combo. */
+  | { kind: "text"; text: string }
+  /** Check box and radio: one of the field's on states, or "Off". */
+  | { kind: "state"; state: string }
+  /** Combo and list: export values (0 or 1, or several for a multi-select list). */
+  | { kind: "choice"; values: string[] };
+
+/** The document's form as it is at open (DocInfo.form), read in one pass over every widget without loading pages. */
+export interface FormInfo {
+  /**
+   * Listed widgets per page (index = page index): every widget the overlay shows (not hidden,
+   * NoView or of zero area), push buttons, locked and signature fields included.
+   */
+  fieldsPerPage: number[];
+  /**
+   * Fields the user can fill in: distinct full names with a listed widget that are not locked
+   * (FieldWidget.locked null, decided with the flags of all the widgets of the name, as setField
+   * does). Signature fields, push buttons, read-only, password, file-select and conflicting
+   * fields are not counted.
+   */
+  fields: number;
+  /** How many of those fillable fields are required. */
+  required: number;
+  /** "static": the first field edit removes the XFA part (it would go stale); "dynamic": not fillable here. */
+  xfa: "none" | "static" | "dynamic";
+  /** The form has calculations or formatting scripts, which never run here. */
+  scripts: boolean;
+}
+
+export interface FieldEditResult extends HistoryState {
+  name: string;
+  /** Characters no font can draw: kept in the value, left out of the appearance. */
+  missingChars: string[];
+  /** The text does not fit the box. */
+  overflow: boolean;
+}
+
+export type FontFamily = "sans" | "serif" | "mono";
+
+export interface TextStyle {
+  /** Points, MIN_TEXT_SIZE..MAX_TEXT_SIZE. */
+  size: number;
+  /** sRGB 0..1. */
+  color: [number, number, number];
+  family: FontFamily;
+  bold: boolean;
+  italic: boolean;
+}
+
+/** A line of text the app wrote (addText), as the fill layer needs it to reopen it. */
+export interface AddedText {
+  /** Stable for this text across edits, undo and redo (its marked block's id). */
+  id: number;
+  text: string;
+  /** Baseline start, page space. */
+  origin: [number, number];
+  style: TextStyle;
+  bbox: Rect;
+}
+
+export interface AddTextResult extends HistoryState {
+  pageIndex: number;
+  /** The text's id (the same as before for an edit); null when an edit deleted it. */
+  id: number | null;
+  /** Characters no font could draw (left out). */
+  missingChars: string[];
+}
+
+export interface ImageTarget {
+  pageIndex: number;
+  /** Where the picture goes (ImageInfo.matrix convention). */
+  matrix: Matrix;
+}
+
+export interface AddImageResult extends HistoryState {
+  /** For each target: the new picture's index in its page's image list (null when that page's images are locked). */
+  placed: { pageIndex: number; imageIndex: number | null }[];
 }
 
 export interface RenderResult {
@@ -342,6 +507,26 @@ export type Request =
   | { op: "replaceImage"; pageIndex: number; imageIndex: number; bytes: ArrayBuffer }
   /** One image alone on a transparent bitmap, with its clips (the preview while it is dragged). */
   | { op: "renderImage"; pageIndex: number; imageIndex: number; scale: number }
+  /** The page's form field widgets (FieldWidget), in the page's tab order. */
+  | { op: "fields"; pageIndex: number }
+  /**
+   * Fill a field: every widget of every field with that full name. The same value is a no-op.
+   * Refused: unknown name ("bad-request"), a locked field ("not-editable"), a value the field
+   * cannot take ("bad-request": a choice not offered, text longer than MaxLen...).
+   */
+  | { op: "setField"; name: string; value: FieldValue }
+  /** Write a new line of real text: `origin` is the baseline start in page space. */
+  | { op: "addText"; pageIndex: number; origin: [number, number]; text: string; style: TextStyle }
+  /** The page's texts written by the app (AddedText). */
+  | { op: "addedTexts"; pageIndex: number }
+  /** Change a text the app wrote: its text (empty = delete it), its place, its style. */
+  | { op: "editAddedText"; pageIndex: number; addedId: number; text?: string; origin?: [number, number]; style?: TextStyle }
+  /**
+   * Place a new picture (JPEG or PNG bytes, at most MAX_IMAGE_BYTES, transferred) on one or
+   * more pages, as one edit (initials on every page). `alt` describes it for screen readers on
+   * tagged pages ("Firma: Mario Rossi"); null marks it as decoration.
+   */
+  | { op: "addImage"; bytes: ArrayBuffer; targets: ImageTarget[]; alt: string | null }
   | { op: "undo" }
   | { op: "redo" }
   | { op: "save"; options: SaveOptions }
@@ -359,6 +544,12 @@ export interface ResultMap {
   deleteImage: ImageEditResult;
   replaceImage: ImageEditResult;
   renderImage: ImageRenderResult;
+  fields: FieldWidget[];
+  setField: FieldEditResult;
+  addText: AddTextResult;
+  addedTexts: AddedText[];
+  editAddedText: AddTextResult;
+  addImage: AddImageResult;
   undo: HistoryState;
   redo: HistoryState;
   save: SaveResult;
@@ -375,14 +566,33 @@ export interface ImageRenderResult extends RenderResult {
 export const MIN_IMAGE_SIDE = 1;
 /** Longest side an image may be given, in points (PDF's own limit for a page side). */
 export const MAX_IMAGE_SIDE = 14_400;
-/** Largest picture accepted by replaceImage, in bytes. */
+/** Largest picture accepted by replaceImage and addImage, in bytes. */
 export const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+
+/** Text size limits for addText, in points. */
+export const MIN_TEXT_SIZE = 1;
+export const MAX_TEXT_SIZE = 500;
+/** Longest text addText takes, in characters. */
+export const MAX_TEXT_CHARS = 2000;
+/** Longest field value setField takes, in characters. */
+export const MAX_FIELD_CHARS = 10_000;
+/** Longest description addImage takes, in characters. */
+export const MAX_ALT_CHARS = 1000;
 
 export type Op = Request["op"];
 export type RequestOf<K extends Op> = Extract<Request, { op: K }>;
 
 /** Main thread → worker. */
 export type RequestMessage = { id: number } & Request;
+
+/**
+ * No request may have a field named `id`, even an optional one: it would clash with the message
+ * id (the client now sends the message id last, so the request's own id would be lost instead).
+ * Fails to compile if one does.
+ */
+type WithId<T> = T extends unknown ? ("id" extends keyof T ? T : never) : never;
+const requestsHaveNoId: [WithId<Request>] extends [never] ? true : never = true;
+void requestsHaveNoId;
 
 /**
  * Error codes in `{ ok: false, code }` replies: "no-document", "bad-request", "edit-failed",

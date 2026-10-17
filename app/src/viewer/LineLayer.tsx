@@ -1,11 +1,16 @@
-// Edit mode overlay of one page: every text line as a highlighter-tinted box (a real button),
-// and, over the line being edited, the inline single-line editor with its context bar.
+// Edit mode overlay of one page (Modifica with Cambia): every text line as a highlighter-tinted
+// box (a real button), and, over the line being edited, the inline single-line editor with its
+// context bar.
 //
 // Rule 1: whole lines only. The editor is prefilled with the full line; Enter, Apply or leaving
 // the field writes it, Escape or Cancel cancels, and a download, share, open, close, update or
 // leaving edit mode writes it first (registerEditor). Vertical lines use the same horizontal
 // editor, placed at their box.
-// Lines the engine cannot rewrite (LineInfo.editable false) get a dashed box and no editor.
+// Lines the engine cannot rewrite (LineInfo.editable false) get a dashed box and no editor. Lines
+// the user wrote (in Compila e firma, or with Aggiungi testo: LineInfo.added) get a dotted
+// underline instead of the solid one, as the fill layer marks them; they are edited the same way.
+// When the layer goes with the focus on a line's box (Modifica off, or on to Aggiungi testo), the
+// focus goes on to the scroller, not to <body>.
 //
 // The context bar belongs to the editor: pressing it never takes the focus from the field (a
 // blur would write the line before Cancel could run), and tabbing from the field into the bar
@@ -16,6 +21,7 @@ import type { LineInfo } from "../engine/protocol";
 import { formatFontSize, t } from "../i18n";
 import { busy, editingLine, registerEditor, showToast } from "../state";
 import { openLine, replaceLine } from "../ui/actions";
+import { rescueFocus, viewerScroller } from "../ui/focus";
 import { IconCheck, IconClose, IconFont } from "../ui/icons";
 import { isCoarse } from "../ui/media";
 import { fontDisplayName, fontRawFamily } from "./fontName";
@@ -388,17 +394,27 @@ export function LineLayer({ page, zoom }: { page: PageModel; zoom: number }) {
   const rev = page.rev.value;
   const cached = page.lines.value;
   const editing = editingLine.value;
+  const layer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     ensureLines(page);
   }, [page, rev, cached]);
+
+  // The layer goes (another tool, or Aggiungi testo) while a line's box has the focus: on to the
+  // scroller. (The open editor hands its own focus on itself.)
+  useLayoutEffect(() => {
+    const node = layer.current;
+    return () => {
+      if (node?.contains(document.activeElement)) rescueFocus(viewerScroller);
+    };
+  }, []);
 
   // Stale lines (the page changed) are hidden until they are read again.
   const lines = cached && cached.rev === rev ? cached.lines : null;
   const editingHere = editing && editing.pageIndex === page.index ? editing.line : null;
 
   return (
-    <div class="lines">
+    <div ref={layer} class="lines">
       {lines?.map((line) => {
         if (line === editingHere) return null;
         const b = lineBox(page, line, zoom);
@@ -407,7 +423,7 @@ export function LineLayer({ page, zoom }: { page: PageModel; zoom: number }) {
           <button
             type="button"
             key={line.index}
-            class={locked ? "line is-locked" : "line"}
+            class={locked ? "line is-locked" : line.added ? "line is-added" : "line"}
             data-line={line.index}
             style={{ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` }}
             aria-label={t(locked ? "edit.lockedLabel" : "edit.lineLabel", { text: line.text })}

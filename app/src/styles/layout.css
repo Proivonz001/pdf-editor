@@ -4,7 +4,9 @@
    Phone:    top bar / main / tab bar (the tab bar only with a document)
    Desktop:  top bar across, then tool rail | thumbnails | main | details
              (the rail, thumbnails and details only with a document; a missing panel takes no
-             room because its column is sized "auto")
+             room because its column is sized "auto"). Both panels are docked at every desktop
+             width, so one that opens makes the main area narrower (ui/panels.ts: the
+             thumbnails open by default from 1024 px, the details from 1200 px).
 
    minmax(0, …) everywhere: a long unbreakable file name must shrink to an ellipsis, never
    widen the app beyond the screen (on phones that made the browser zoom the page out). */

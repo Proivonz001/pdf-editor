@@ -2,6 +2,8 @@
 // Every function takes the mupdf module explicitly so the same code runs in
 // both places. Coordinates: "page space" is MuPDF's (y down, rotation and
 // CropBox applied, what stext/annotations use); "user space" is raw PDF.
+// Release 3 shares the fallback fonts with the form-field writer (forms.ts) and
+// new text (newcontent.ts): encodeWithFallbacks, one copy per document.
 
 import { AGL, MacRomanEncoding, StandardEncoding, WinAnsiEncoding } from "./tables.js";
 
@@ -518,17 +520,26 @@ function styleOf(ch) {
 const fallbackCache = new WeakMap(); // PDFDocument -> Map(name -> {font, ref})
 
 // Built-in Base-14 (Nimbus) matching the original's style, then any extra
-// font the caller bundles (e.g. Noto Sans), then MuPDF's built-in CJK font
-// for the original's CID ordering (or the script of the text).
-function fallbackChain(mupdf, style, extraFonts = [], cjk = "zh-Hans") {
+// font the caller bundles (e.g. Noto Sans), then ZapfDingbats, then MuPDF's
+// built-in CJK font for the original's CID ordering (or the script of the text).
+// Exported for the forms writer and new text (release 3), with fallbackFor.
+// Release 3 change: ZapfDingbats (URW's Dingbats, embedded like the Nimbus
+// faces) comes before the CJK font, for ✓ ✗ ✔ ✘ and the other dingbats: Droid
+// Sans Fallback lacks ✗ (U+2717), ✔ and ✘, so a line edit lost them. It only
+// changes characters Nimbus lacks and Dingbats has (① ● ★ ✓ ❶ ➔ ...), which came
+// from the CJK font before or could not be drawn at all.
+export function fallbackChain(mupdf, style, extraFonts = [], cjk = "zh-Hans") {
 	const names = [BASE14[style.family][(style.bold ? 1 : 0) + (style.italic ? 2 : 0)]];
 	return [...names.map((n) => ({ name: n, make: () => new mupdf.Font(n) })),
 		...extraFonts.map((f) => ({ name: f.name, make: () => new mupdf.Font(f.name, f.bytes) })),
+		{ name: "ZapfDingbats", make: () => new mupdf.Font("ZapfDingbats") },
 		{ name: `CJK (${cjk})`, make: () => new mupdf.Font(cjk) }];
 }
 
 const CJK_BY_ORDERING = { GB1: "zh-Hans", CNS1: "zh-Hant", Japan1: "ja", Korea1: "ko" };
-function cjkLanguage(font, text) {
+// The CJK language of the fallback: the original font's CID ordering, else the
+// script of the text (kana: Japanese, hangul: Korean, anything else: Chinese).
+export function cjkLanguage(font, text) {
 	if (font && CJK_BY_ORDERING[font.ordering]) return CJK_BY_ORDERING[font.ordering];
 	if (/[\u3040-\u30ff]/.test(text)) return "ja"; // kana
 	if (/[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f]/.test(text)) return "ko"; // hangul
@@ -598,7 +609,11 @@ function fallbackOwning(doc, ref) {
 	return null;
 }
 
-function fallbackFor(mupdf, doc, chain, cp) {
+// The first font of `chain` that has the code point `cp`, embedded in `doc` on
+// first use (one copy per document, shared by every edit), and its glyph id:
+// { fb, gid }, or null when no font has it. The caller adds the gid to
+// fb.used when it writes it, so saving keeps the glyph in the subset.
+export function fallbackFor(mupdf, doc, chain, cp) {
 	let cache = fallbackCache.get(doc);
 	if (!cache) fallbackCache.set(doc, (cache = new Map()));
 	for (const entry of chain) {
@@ -613,10 +628,101 @@ function fallbackFor(mupdf, doc, chain, cp) {
 		if (gid > 0) {
 			// Type0 / Identity-H + ToUnicode. App change: CIDToGIDMap written (identityCidToGid).
 			if (!fb.ref) fb.ref = identityCidToGid(doc.addFont(fb.font));
+			else if (fb.subset && !fb.subset.has(gid)) {
+				// App addition (release 3): this document's copy was subset for a save
+				// (subsetFallbackFonts) and lacks the glyph, as when the PDF/A conversion
+				// draws a form field's appearance afterwards. A whole copy takes over for
+				// what is written from now on; what the subset draws keeps drawing it, and
+				// a second subsetFallbackFonts shrinks the new copy.
+				fb.ref = identityCidToGid(doc.addFont(fb.font));
+				fb.refV = null;
+				fb.subset = null;
+				fb.used = new Set();
+			}
 			return { fb, gid };
 		}
 	}
 	return null;
+}
+
+// App addition (release 3): the advance of each glyph of a fallback font as
+// viewers draw it, from its /W (code = CID = glyph id), per mille of the size.
+// MuPDF writes /W truncated to whole units, so it can differ from the
+// program's own advance by up to 1/1000 em (Droid Sans Fallback). Read once per
+// font object, then kept with the font's bookkeeping.
+function fallbackWidths(fb) {
+	const num = fb.ref.asIndirect();
+	if (fb.widths && fb.widths.num === num) return fb.widths;
+	const desc = fb.ref.get("DescendantFonts", 0);
+	const dw = desc.get("DW").isNumber() ? desc.get("DW").asNumber() : 1000;
+	const map = new Map();
+	const w = desc.get("W");
+	for (let i = 0, n = w.isArray() ? w.length : 0; i + 1 < n;) {
+		const c1 = w.get(i).asNumber(), next = w.get(i + 1);
+		if (next.isArray()) {
+			for (let k = 0; k < next.length; k++) map.set(c1 + k, next.get(k).asNumber());
+			i += 2;
+		} else {
+			const c2 = next.asNumber(), width = w.get(i + 2).asNumber();
+			for (let c = c1; c <= c2; c++) map.set(c, width);
+			i += 3;
+		}
+	}
+	fb.widths = { num, map, dw };
+	return fb.widths;
+}
+
+/**
+ * App addition (release 3): `text` (one line) shaped with the app's fallback
+ * fonts alone, for writing it where no original font applies: a form field's
+ * appearance (forms.ts) and new text on a page (newcontent.ts). The fonts are
+ * the ones replaceText falls back to (fallbackChain: the Nimbus face of
+ * `style`, ZapfDingbats, the CJK font for the script of the text), embedded
+ * once per document and shared with line edits; the glyphs are marked used, so
+ * saving keeps them in the subset (subsetFallbackFonts, which also looks in
+ * annotation appearances). Characters no font has, and any above U+FFFF (MuPDF.js
+ * 1.27 reads them back truncated), are left out and listed once in `missing`.
+ *
+ * Each run is consecutive characters drawn by one font: `font` is its indirect
+ * Type0 font dictionary (Identity-H: put it in the resources the text is drawn
+ * with, e.g. fontKey(doc, streamOrPageObj, font)), `key` the fallback font's
+ * name in the document's cache ("Helvetica", "ZapfDingbats", "CJK (zh-Hans)"):
+ * the same key, the same font; `hex` the operand of Tj without < >; `width`
+ * the advance at size 1 (sum of the /W widths, what viewers draw with).
+ *
+ * @param {typeof import("mupdf")} mupdf
+ * @param {import("mupdf").PDFDocument} doc
+ * @param {string} text
+ * @param {{ family: "sans" | "serif" | "mono"; bold: boolean; italic: boolean }} style
+ * @returns {{ runs: { font: import("mupdf").PDFObject; key: string; hex: string; width: number; text: string }[]; missing: string[] }}
+ */
+export function encodeWithFallbacks(mupdf, doc, text, style) {
+	if (!BASE14[style.family]) throw new Error(`unknown font family ${String(style.family)}`);
+	const chain = fallbackChain(mupdf, { family: style.family, bold: !!style.bold, italic: !!style.italic }, [], cjkLanguage(null, text));
+	const runs = [], missing = [];
+	let last = null;
+	for (const ch of text) {
+		const cp = ch.codePointAt(0);
+		const found = cp > 0xffff ? null : fallbackFor(mupdf, doc, chain, cp);
+		if (!found) {
+			if (!missing.includes(ch)) missing.push(ch);
+			continue;
+		}
+		const { fb, gid } = found;
+		fb.used.add(gid);
+		const widths = fallbackWidths(fb);
+		const width = (widths.map.has(gid) ? widths.map.get(gid) : widths.dw) / 1000;
+		// A new run when the font object changes (also the same font after a whole copy took over).
+		if (last && last.font.asIndirect() === fb.ref.asIndirect()) {
+			last.hex += hexCode(gid, 2);
+			last.width += width;
+			last.text += ch;
+		} else {
+			last = { font: fb.ref, key: fb.name, hex: hexCode(gid, 2), width, text: ch };
+			runs.push(last);
+		}
+	}
+	return { runs, missing };
 }
 
 // App addition: addFont() writes a TrueType program (the CJK fallback) as a
@@ -671,12 +777,17 @@ export function restoreFallbackFonts(doc, state) {
 // we wrote, then point the pages at the grafted subset. Original fonts are
 // never touched. Codes stay valid: for Identity-H CID fonts MuPDF's subsetter
 // keeps glyph ids (unused glyphs are emptied, not renumbered).
+// App change (release 3): annotation appearances are pointed at the subset
+// too (form fields filled with a fallback font, encodeWithFallbacks), and a
+// font already subset is left as it is, so calling this again only shrinks
+// the whole copies fallbackFor added since (see there).
 export function subsetFallbackFonts(mupdf, doc) {
 	const cache = fallbackCache.get(doc);
 	if (!cache) return 0;
+	const swap = new Map(); // object number of a whole font (or its vertical twin) -> its subset
 	let n = 0;
 	for (const fb of cache.values()) {
-		if (!fb.ref || !fb.used.size) continue;
+		if (!fb.ref || !fb.used.size || fb.subset) continue;
 		const scratch = new mupdf.PDFDocument();
 		try {
 			const ref = scratch.addFont(fb.font);
@@ -685,25 +796,60 @@ export function subsetFallbackFonts(mupdf, doc) {
 			scratch.subsetFonts();
 			const small = identityCidToGid(doc.graftObject(ref)); // App change: see identityCidToGid
 			const smallV = fb.refV ? verticalTwin(doc, small) : null;
-			const swap = new Map([[fb.ref.asIndirect(), small]]);
+			swap.set(fb.ref.asIndirect(), small);
 			if (fb.refV) swap.set(fb.refV.asIndirect(), smallV);
-			for (let i = 0; i < doc.countPages(); i++) {
-				const fonts = doc.findPage(i).get("Resources", "Font");
-				for (const [k, v] of dictEntries(fonts)) if (v.isIndirect() && swap.has(v.asIndirect())) fonts.put(k, swap.get(v.asIndirect()));
-			}
 			fb.ref = small;
 			fb.refV = smallV;
+			fb.subset = new Set(fb.used); // the glyphs the subset has
 			n++;
 		} finally {
 			scratch.destroy();
 		}
 	}
+	if (!n) return 0;
+	const swapIn = (fonts) => {
+		for (const [k, v] of dictEntries(fonts)) if (v.isIndirect() && swap.has(v.asIndirect())) fonts.put(k, swap.get(v.asIndirect()));
+	};
+	const seen = new Set(); // appearance streams and their forms, each once
+	for (let i = 0; i < doc.countPages(); i++) {
+		const pageObj = doc.findPage(i);
+		swapIn(pageObj.get("Resources", "Font"));
+		const annots = pageObj.get("Annots");
+		if (annots.isArray()) annots.forEach((annot) => swapInAppearance(annot, swapIn, seen));
+	}
 	return n;
+}
+
+// App addition (release 3): calls swapIn on the /Font dictionaries an
+// annotation's appearance draws with: /AP /N, /D and /R, each a stream or a
+// dictionary of state streams (check boxes, radio buttons), and the forms
+// those draw (with a loop guard).
+function swapInAppearance(annot, swapIn, seen) {
+	const ap = annot.isDictionary() ? annot.get("AP") : null;
+	if (!ap || !ap.isDictionary()) return;
+	const visit = (xobj) => {
+		if (!xobj.isStream()) return;
+		if (xobj.isIndirect()) {
+			if (seen.has(xobj.asIndirect())) return;
+			seen.add(xobj.asIndirect());
+		}
+		const res = xobj.get("Resources");
+		if (!res.isDictionary()) return;
+		swapIn(res.get("Font"));
+		for (const [, x] of dictEntries(res.get("XObject"))) if (x.get("Subtype").asName() === "Form") visit(x);
+	};
+	for (const key of ["N", "D", "R"]) {
+		const v = ap.get(key);
+		if (v.isStream()) visit(v);
+		else if (v.isDictionary()) for (const [, state] of dictEntries(v)) visit(state);
+	}
 }
 
 // ------------------------------------------------------------- page edits
 
-function resourcesOf(doc, pageObj) {
+// The page's own /Resources, made first when it has none (exported for new
+// content, release 3). Works on a form XObject or an appearance stream too.
+export function resourcesOf(doc, pageObj) {
 	let res = pageObj.get("Resources");
 	if (!res.isDictionary()) {
 		// Inherited (or missing): give the page its own shallow copy.
@@ -716,8 +862,9 @@ function resourcesOf(doc, pageObj) {
 }
 
 // Returns the resource name under which `ref` is reachable from the page,
-// adding it (under a fresh name) when the page no longer lists it.
-function fontKey(doc, pageObj, ref) {
+// adding it (under a fresh name) when the page no longer lists it. Exported
+// (release 3); `pageObj` may also be a form XObject or an appearance stream.
+export function fontKey(doc, pageObj, ref) {
 	const res = resourcesOf(doc, pageObj);
 	let fonts = res.get("Font");
 	if (!fonts.isDictionary()) fonts = res.put("Font", doc.newDictionary());
@@ -729,7 +876,10 @@ function fontKey(doc, pageObj, ref) {
 	return key;
 }
 
-function appendContent(doc, pageObj, ops) {
+// Exported (release 3). Each call nests the old content one q level deeper:
+// harmless after a redaction, which rewrites the content flat, but new content
+// that is never redacted should use newcontent.ts's appendSafely instead.
+export function appendContent(doc, pageObj, ops) {
 	// Wrap the existing content in q/Q so our text starts from a clean state.
 	const old = pageObj.get("Contents");
 	const arr = doc.newArray();
@@ -780,9 +930,11 @@ for (let c = 0; c < 256; c++) {
 // Minimal content-stream lexer, just enough to follow marked content: per
 // MCID, the bytes its text operators show; text shown outside any MCID or
 // /Artifact is counted as untagged. Named property lists (/P /MC0 BDC) are
-// looked up in `props` (the page's /Properties).
+// looked up in `props` (the page's /Properties). App addition (release 3):
+// `added` holds the MCIDs of the lines the app wrote (newcontent.addText:
+// a property list with /PEText), which never own a line edit's replacement.
 export function markedContent(s, props = null) {
-	const byMcid = new Map(), order = [];
+	const byMcid = new Map(), order = [], added = new Set();
 	let untagged = 0, artifact = 0, maxMcid = -1, i = 0;
 	const stack = [], marks = [];
 	const n = s.length;
@@ -862,6 +1014,7 @@ export function markedContent(s, props = null) {
 			const m = p && p.dict && p.dict.MCID && p.dict.MCID.num;
 			const mcid = Number.isInteger(m) ? m : null;
 			if (mcid !== null) maxMcid = Math.max(maxMcid, mcid);
+			if (mcid !== null && p.dict.PEText) added.add(mcid);
 			marks.push({ tag: tag && tag.name, mcid });
 		} else if (tok === "EMC") marks.pop();
 		else if (tok === "Tj" || tok === "'" || tok === "\"") {
@@ -878,7 +1031,7 @@ export function markedContent(s, props = null) {
 		}
 		stack.length = 0;
 	}
-	return { byMcid, order, untagged, artifact, maxMcid };
+	return { byMcid, order, untagged, artifact, maxMcid, added };
 }
 
 function propsLookup(pageObj) {
@@ -928,7 +1081,13 @@ function arrayInsert(arr, at, value) {
 // that owned the old word, placed right after the old word's MCID in that
 // element's /K, and registered in the ParentTree under a new MCID. Returns
 // the MCID the new text must be marked with.
+// App change (release 3): an MCID far beyond the ParentTree's end (a crafted file can mark content
+// with MCID 99999999 or 1e21) would make the padding loop below run for minutes; such a page is
+// left untagged instead, as newcontent.tagNew does (same limit).
+const MAX_MCID_GAP = 10_000;
+
 function tagReplacement(doc, pageRef, parents, ownerMcid, newMcid) {
+	if (!Number.isSafeInteger(newMcid) || newMcid - parents.length > MAX_MCID_GAP) return null;
 	const owner = parents.get(ownerMcid);
 	if (!owner.isDictionary()) return null;
 	const span = doc.addObject({ Type: "StructElem", S: "Span", P: owner, Pg: pageRef, K: newMcid });
@@ -1133,7 +1292,13 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 		const mcAfter = markedContent(contentText(page.getObject()), props);
 		const changed = mcBefore.order.filter((id) => (mcAfter.byMcid.get(id) || "") !== mcBefore.byMcid.get(id));
 		const newMcid = Math.max(parents.length, mcBefore.maxMcid + 1, mcAfter.maxMcid + 1);
-		if (changed.length) tag = tagReplacement(doc, doc.findPage(pageIndex), parents, changed[0], newMcid);
+		// App change (release 3): a line the app wrote over the edited one loses glyphs to the
+		// redaction too (protectAdded writes them back), and it comes first in content order from
+		// the second edit of that line on (the first edit's replacement is appended after it). It
+		// is not the line's owner: the first changed MCID that is not the app's is, unless only
+		// the app's lines changed.
+		const owner = changed.find((id) => !mcBefore.added.has(id)) ?? changed[0];
+		if (changed.length) tag = tagReplacement(doc, doc.findPage(pageIndex), parents, owner, newMcid);
 		tag = tag || { untagged: changed.length ? "owner is not a structure element" : "old word was not in marked content" };
 	}
 	t.redact = now() - t0;
@@ -1226,6 +1391,10 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 		},
 		segments: plan.map((s) => ({
 			text: s.text, source: s.kind, fontName: s.fontName, resource: s.resName, codes: s.hex.join(" "),
+			// App addition (release 3): for a fallback, the face MuPDF reports when it reads the
+			// text back (NimbusSans-Regular, Dingbats for the dict addFont named Helvetica or
+			// ZapfDingbats), so the session can tell a fallback in the very face the line had.
+			...(s.fb ? { program: s.fb.ref.get("DescendantFonts", 0).get("BaseFont").asName() } : {}),
 			...(s.why ? { why: s.why } : {}), ...(s.how ? { how: s.how } : {}),
 		})),
 		missing, toUnicodeAdded, widthsAdded, linksRestored, style, ops, timings: t,

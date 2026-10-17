@@ -1,6 +1,9 @@
-// Which side panels are open on desktop: the page thumbnails (left) and the details (right).
-// Each follows the window width until the user toggles it; that choice is remembered on this
-// device. On phones neither is shown: thumbnails open in a sheet from the tab bar instead.
+// Which side panels are open in the desktop layout: the page thumbnails (left) and the details
+// (right). Both are docked in their own grid column, so the page area gets narrower when one
+// opens. Each follows the window width until the user toggles it (thumbnails open by default from
+// 1024 px, details from 1200 px; closed by default below), and that one choice is remembered on
+// this device and holds at every desktop width. On phones neither is shown: the thumbnails open in
+// a sheet from the tab bar, the details in a sheet from the More sheet (PhoneSheets).
 import { computed, signal } from "@preact/signals";
 import { isNarrow, isRoomy, isWide } from "./media";
 
@@ -35,18 +38,17 @@ function save() {
 /** The thumbnails panel is shown: never on phones, by default from 1024 px. */
 export const pagesPanelOpen = computed(() => !isNarrow.value && (pagesPref.value ?? isRoomy.value));
 
-/** The details panel can be shown (from 1200 px). */
-export const detailsPanelAvailable = isWide;
-
-/** The details panel is shown: from 1200 px, open by default. */
-export const detailsPanelOpen = computed(() => isWide.value && (detailsPref.value ?? true));
+/** The details panel is shown, docked: never on phones, by default from 1200 px. */
+export const detailsPanelOpen = computed(() => !isNarrow.value && (detailsPref.value ?? isWide.value));
 
 export function togglePagesPanel() {
   pagesPref.value = !pagesPanelOpen.peek();
   save();
 }
 
+/** The rail's Details button. Nothing on phones (the sheet is opened from the More sheet). */
 export function toggleDetailsPanel() {
+  if (isNarrow.peek()) return;
   detailsPref.value = !detailsPanelOpen.peek();
   save();
 }

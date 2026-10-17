@@ -1,12 +1,17 @@
 // App-wide state, all in @preact/signals: the engine, the open document, the edit history
-// (and whether it has been downloaded), the viewer settings (edit mode, the line being edited,
-// the selected image and the image edits still on their way), toasts and dialogs (the download
-// options and the PDF/A questions among them).
+// (and whether it has been downloaded), the viewer settings (the tool: Modifica, with its
+// sub-tool Cambia or Aggiungi testo, or Compila e firma; where the text writer is on and what a
+// tap writes there; the line being edited, the selected image and the image edits still on their
+// way), the text writer (Compila e firma's, and Modifica's with Aggiungi testo: writerOn,
+// writerKind), what Compila e firma holds (its sub-tool, the signatures of this session, a
+// signature waiting to be placed, the focused form field and whether it takes typing), where the
+// keyboard focus is to go next, toasts and dialogs (the download options, the PDF/A questions,
+// the signature sheet and the fill-and-sign questions among them).
 // The actions that change it live in src/ui/actions.ts.
 import { batch, computed, signal } from "@preact/signals";
 import { EngineClient, EngineError } from "./engine/client";
 import type {
-  HistoryState, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode,
+  HistoryState, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode, Rect,
 } from "./engine/protocol";
 import type { OpenDoc } from "./viewer/model";
 
@@ -142,7 +147,10 @@ export function markSaved(key: string) {
   savedKey.value = key.slice(sep + 1);
 }
 
-/** Drop the cached lines and images of these pages and re-render them. */
+/**
+ * Drop the cached lines, images, form fields and added texts of these pages and re-render them
+ * (after an undo, the field overlays read the values again).
+ */
 export function invalidatePages(indices: readonly number[]) {
   const d = doc.peek();
   if (!d) return;
@@ -152,6 +160,8 @@ export function invalidatePages(indices: readonly number[]) {
       if (!page) continue;
       page.lines.value = null;
       page.images.value = null;
+      page.fields.value = null;
+      page.added.value = null;
       page.rev.value++;
     }
   });
@@ -187,7 +197,40 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
   watch();
 }
 
-export const editMode = signal(false);
+/**
+ * The tool that is on: "edit" (Modifica: the document's own lines and images, and new text and
+ * pictures), "fill" (Compila e firma: form fields, text written anywhere, marks, the date,
+ * signatures), or none (browse, where the form fields still work). One at a time; changed only
+ * through setTool (actions.ts).
+ */
+export type Tool = "edit" | "fill" | null;
+export const tool = signal<Tool>(null);
+/** Kept for the existing readers: true in Modifica. Read-only (a computed). */
+export const editMode = computed(() => tool.value === "edit");
+/** True in Compila e firma. */
+export const fillMode = computed(() => tool.value === "fill");
+
+/**
+ * What a tap does in Modifica: "change" (the default: open a line to change it, select an image
+ * to move it) or "addText" (write a new text where the user taps, with the same writer as Testo
+ * in Compila e firma). "Aggiungi immagine" is an action (the picture picker), never left on.
+ * Back to "change" whenever the tool changes (setTool).
+ */
+export type EditTool = "change" | "addText";
+export const editTool = signal<EditTool>("change");
+
+/**
+ * The text writer can be used: in Compila e firma, and in Modifica with Aggiungi testo. Its
+ * taps, the boxes over what the user wrote and the writer itself (FillLayer) are on the pages.
+ */
+export const writerOn = computed(() => tool.value === "fill" || (tool.value === "edit" && editTool.value === "addText"));
+
+/**
+ * What a tap on the page writes while the writer is on: Compila e firma's sub-tool, or Testo in
+ * Modifica (Aggiungi testo writes text only).
+ */
+export const writerKind = computed<FillTool>(() => (tool.value === "edit" ? "text" : fillTool.value));
+
 export interface EditingLine {
   pageIndex: number;
   line: LineInfo;
@@ -201,9 +244,11 @@ export interface SelectedImage {
   index: number;
 }
 /**
- * The image selected in edit mode (moved, resized, rotated... with its frame and context bar).
- * One at a time, and never together with an open line editor: selecting one closes the other.
- * After an edit of the image it follows the image's new index; undo and redo clear it.
+ * The image selected (moved, resized, rotated... with its frame and context bar): any image in
+ * Modifica with Cambia, only a picture the user added wherever the text writer is on (Compila e
+ * firma, Modifica with Aggiungi testo: writerOn). One at a time, and never together with an open
+ * line editor or text writer: selecting one closes the other. After an edit of the image it
+ * follows the image's new index; undo, redo and a change of tool or of Modifica's sub-tool clear it.
  */
 export const selectedImage = signal<SelectedImage | null>(null);
 /**
@@ -242,8 +287,112 @@ export function countImageEdit(): () => void {
   };
 }
 
-export type SheetKind = "pages" | "more";
-/** The bottom sheet open on phones (page thumbnails, or the "More" actions). */
+// ---------------------------------------------------------------------------------------------
+// Compila e firma, and the text writer (also Modifica's, with Aggiungi testo)
+
+/**
+ * The sub-tool a tap uses in Compila e firma: write text (the default), a tick, a cross, today's
+ * date, a signature, initials. Tick, cross and date stay on after use; Firma and Sigla go back to
+ * Testo after one placement. Pictures are added from Modifica (Aggiungi immagine).
+ */
+export type FillTool = "text" | "check" | "cross" | "date" | "signature" | "initials";
+export const fillTool = signal<FillTool>("text");
+
+/** The two inks of what the user writes and signs: black (the default) and ballpoint blue. */
+export type InkColor = "black" | "blue";
+/** The inks in sRGB 0..1, as TextStyle wants them: #000000 and #1F3B94. */
+export const INK: Record<InkColor, [number, number, number]> = {
+  black: [0, 0, 0],
+  blue: [0x1f / 255, 0x3b / 255, 0x94 / 255],
+};
+/** Size (points) and ink of the next text written: the last ones used, for the session. */
+export const writerStyle = signal<{ size: number; color: InkColor }>({ size: 11, color: "black" });
+
+/**
+ * The text writer open on a page (Compila e firma, or Modifica with Aggiungi testo, which writes
+ * text only): a new text (or a mark, or a date) at `origin`, or one written before, reopened
+ * (`editing`). The writer component holds what is typed; commitWriter writes it.
+ */
+export interface OpenWriter {
+  pageIndex: number;
+  /** Baseline start, page space. */
+  origin: [number, number];
+  /** The text it opened with. */
+  text: string;
+  size: number;
+  color: InkColor;
+  kind: "text" | "date" | "check" | "cross";
+  /** AddedText.id when reopening one; null for a new text. */
+  editing: number | null;
+  /** page.rev when opened. */
+  rev: number;
+}
+export const openWriter = signal<OpenWriter | null>(null);
+
+/** A signature or initials made in the sheet (drawn, typed or from a photo): a trimmed PNG with alpha. */
+export interface Signature {
+  id: string;
+  kind: "signature" | "initials";
+  png: Blob;
+  /** Pixel size of the PNG. */
+  width: number;
+  height: number;
+  /** What screen readers say, and the /Alt on tagged pages: "Firma: Mario Rossi", "Firma". */
+  description: string;
+  source: "draw" | "type" | "photo";
+  /** When it was saved on this device; null: this session only. */
+  savedAt: number | null;
+}
+/**
+ * The signatures this session knows, newest first: those made since the app started (for every
+ * document, until reload) and those saved on this device (savedAt set), read once a document is
+ * open (loadSavedSignatures).
+ */
+export const sessionSignatures = signal<readonly Signature[]>([]);
+/** The saved ones ("Firme salvate (N)" in the More menu and sheet). */
+export const savedSignatures = computed(() => sessionSignatures.value.filter((s) => s.savedAt !== null));
+/** The signature or initials chosen and not placed yet: the next tap on a page places it. */
+export const pendingPlacement = signal<Signature | null>(null);
+/**
+ * The form field that has the focus (its widget on that page), or the one the app asks the form
+ * layer to focus (the first empty required field, "Fill them in"; the next field).
+ */
+export const focusedField = signal<{ pageIndex: number; name: string; index: number } | null>(null);
+/**
+ * A form control that brings up the keyboard (a text field, one on several lines) holds the
+ * focus; not a check box, a radio button or a list. Set by the form layer from each control's own
+ * focus and blur, so it follows the control that really has the focus, also when the app moves it
+ * ("Next empty field", the keyboard's next). The phone's tab bar, strip and page indicator make
+ * room for the keyboard while it is true. False again when the document goes or Modifica comes on
+ * (no form controls there).
+ */
+export const typingField = signal(false);
+
+/** What focusRequest asks to focus: an added text's box, an image frame, a form field. */
+export interface FocusRequest {
+  pageIndex: number;
+  kind: "added" | "image" | "field";
+  /** AddedText.id for "added", the image's index for "image", the field's name for "field". */
+  id: number | string;
+}
+/**
+ * A request to move the keyboard focus to something just placed or written (a mark or a date put
+ * in the middle with "Put it in the middle", a signature placed from the keyboard, a text written
+ * from the keyboard). The viewer layers honour it once the element exists (also after the page is
+ * read again) and then clear it. Cleared too by a change of tool or of Modifica's sub-tool, and by
+ * another document.
+ */
+export const focusRequest = signal<FocusRequest | null>(null);
+
+/**
+ * The initials placed last, while they can still be found: what "On every page…" copies (its
+ * picture and where it is). Followed through moves like the selection; gone after a delete,
+ * undo, redo, or another document. ImageLayer offers "On every page…" on this image only.
+ */
+export const initialsSource = signal<{ docId: number; pageIndex: number; imageIndex: number; sig: Signature } | null>(null);
+
+export type SheetKind = "pages" | "more" | "details";
+/** The bottom sheet open on phones (page thumbnails, the "More" actions, or the details). */
 export const sheet = signal<SheetKind | null>(null);
 /**
  * The engine could not restore the document after a failed edit ("broken"): editing, undo and
@@ -258,7 +407,8 @@ export const signedNoticeDismissed = signal<number | null>(null);
 
 /**
  * What the open line editor offers to the rest of the app (see LineLayer). The selected image
- * registers one too while a keyboard move or resize of it waits to be written (ImageLayer).
+ * registers one too while a keyboard move or resize of it waits to be written (ImageLayer), and
+ * so does the open text writer, wherever it is on (FillLayer: commitWriter).
  */
 export interface LineEditorHandle {
   /** The typed text differs from the line (surrounding spaces aside), or the image was moved. */
@@ -278,8 +428,9 @@ export function registerEditor(handle: LineEditorHandle): () => void {
 }
 
 /**
- * Write what the open line editor holds (or the image's keyboard move), so a download, share,
- * open, close, update, undo, redo or leaving edit mode includes it.
+ * Write what the open line editor or text writer holds (or the image's keyboard move), so a
+ * download, share, open, close, update, undo, redo or a change of tool or of Modifica's sub-tool
+ * includes it.
  */
 export async function flushEditor() {
   await openEditor?.commit();
@@ -357,14 +508,50 @@ export type DialogState =
     warnings: PdfaIssue<PdfaWarningCode>[];
     purpose: SavePurpose;
     resolve: (ok: boolean) => void;
-  };
+  }
+  /**
+   * The signature sheet: choose one of this session's or the device's signatures (or initials),
+   * or make a new one. `forField`: opened from "Sign here" on an unsigned signature field, the
+   * signature goes inside that box (useSignature), turned with the field's text (`rotation`,
+   * FieldWidget.rotation: clockwise, page /Rotate plus the widget's own).
+   */
+  | {
+    kind: "signature";
+    mode: "signature" | "initials";
+    forField: { pageIndex: number; rect: Rect; rotation: 0 | 90 | 180 | 270 } | null;
+  }
+  /**
+   * "On every page…" for the initials `imageIndex` of page `pageIndex`: resolves with the pages
+   * to put them on, or null on Cancel.
+   */
+  | { kind: "initials-pages"; pageIndex: number; imageIndex: number; resolve: (pages: number[] | null) => void }
+  /**
+   * `count` required fields are still empty at download: "fill" to fill them in, "download" to
+   * download anyway, null on Cancel.
+   */
+  | { kind: "missing-fields"; count: number; resolve: (go: "fill" | "download" | null) => void };
 
 export const dialog = signal<DialogState | null>(null);
+
+/** Answer `question` "no" (Cancel), so its caller goes on. */
+function answerNo(question: DialogState) {
+  switch (question.kind) {
+    case "confirm":
+    case "pdfa-blocked":
+    case "pdfa-confirm":
+      question.resolve(false);
+      break;
+    case "initials-pages":
+    case "missing-fields":
+      question.resolve(null);
+      break;
+  }
+}
 
 /** Show `next` (or nothing). A question still open is answered "no" first, so its caller goes on. */
 export function showDialog(next: DialogState | null) {
   const prev = dialog.peek();
-  if (prev && "resolve" in prev) prev.resolve(false);
+  if (prev) answerNo(prev);
   dialog.value = next;
 }
 

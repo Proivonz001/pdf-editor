@@ -1,17 +1,20 @@
-/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the bottom sheets (ui/Sheet.tsx), the
-   rows of the "More" sheet (ui/PhoneSheets.tsx) and the download options sheet
-   (ui/DownloadOptions.tsx). The thumbnails inside the pages sheet are
-   styled by pages.css; this file only gives them their room. Colours only from tokens.css.
+/* Phone layout (< 640 px): the tab bar (ui/TabBar.tsx), the strip and banner of Edit and
+   Fill & sign (ui/EditBar.tsx, ui/fill/FillBar.tsx, ui/SubTools.tsx), the bottom sheets
+   (ui/Sheet.tsx), the rows of the "More" sheet (ui/PhoneSheets.tsx) and the download options
+   sheet (ui/DownloadOptions.tsx). The thumbnails inside the pages sheet are styled by pages.css;
+   this file only gives them their room. Colours only from tokens.css.
 
    The tab bar and the sheets take pans only, no pinch or double-tap zoom: zooming the page from
    there would leave the bars out of view once a sheet closes, and the viewer keeps pinches for
    the PDF, so no gesture would be left to zoom the page back out. */
 
-/* --- Tab bar ------------------------------------------------------------------------------- */
+/* --- Tab bar -------------------------------------------------------------------------------
+   Edit, Fill & sign, Pages, More. Fill & sign gets a wider column for its label: at 360 px that
+   is 109 px (the Italian label needs about 87), at 320 px 97. */
 
 .tabbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
   height: calc(var(--tab-h) + env(safe-area-inset-bottom, 0px));
   padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   border-top: 1px solid var(--line);
@@ -116,11 +119,126 @@
   white-space: nowrap;
 }
 
+/* Fill & sign: the short label ("Compila", "Fill") only when the tab is too narrow for the whole
+   one: "Compila e firma" takes about 7.3 em of the tab's 12 px text, "Fill & sign" 4.5 em. Em in
+   a container query is the container's: it follows the text size. Without container queries the
+   whole label shows, cut with an ellipsis. */
+.tab-fill {
+  container-type: inline-size;
+}
+
+.tab-label-short {
+  display: none;
+}
+
+@container (max-width: 7.6em) {
+  .tab-label-full:lang(it) {
+    display: none;
+  }
+
+  .tab-label-short:lang(it) {
+    display: block;
+  }
+}
+
+@container (max-width: 4.8em) {
+  .tab-label-full {
+    display: none;
+  }
+
+  .tab-label-short {
+    display: block;
+  }
+}
+
 /* The update dot sits on the icon's top-right corner, not on the pill's. */
 .tab .badge {
   top: 2px;
   right: auto;
   left: calc(50% + 6px);
+}
+
+/* --- Tool strip -----------------------------------------------------------------------------
+   The sub-tools of Edit mode (EditStrip) or Fill mode (FillStrip), 48 px tall, right above the
+   tab bar: an icon over a short label each, sharing the width; where they do not fit (very large
+   text) each keeps 48 px and the strip scrolls sideways. The lit one is tinted with the ink
+   border and a bolder label, as the tabs. Pans only, like the tab bar. */
+
+.tool-strip {
+  flex: none;
+  height: 48px;
+  padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  touch-action: pan-x;
+}
+
+.tool-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.sub-tools.is-strip {
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+  padding: 2px 4px;
+}
+
+.sub-tools.is-strip .sub-tool {
+  flex: 1 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 48px;
+  height: 44px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 13px;
+}
+
+.sub-tools.is-strip .sub-tool[aria-pressed="true"] {
+  color: var(--active-fg);
+}
+
+.sub-tools.is-strip .sub-tool .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.sub-tools.is-strip .sub-tool:focus-visible {
+  outline-offset: -2px; /* inside the strip, which clips what stands out */
+}
+
+/* The toasts sit above the strip too (overlays.css puts them above the tab bar). */
+.app[data-layout="phone"].has-doc:has(.tool-strip) .toast-stack {
+  bottom: calc(var(--tab-h) + 48px + env(safe-area-inset-bottom) + 12px);
+}
+
+/* --- The tools' banners ---------------------------------------------------------------------
+   The hint (in Fill mode with the field count and "Next empty field" under it) beside "Put it in
+   the middle" (an icon: in Fill mode, and in Edit mode with Add text) and Done; when they do not
+   fit beside it (a signature waiting to be placed adds Cancel), the buttons go to a row of their
+   own under the hint, which keeps the whole width. */
+
+.app[data-layout="phone"] .edit-banner.is-tools {
+  column-gap: 8px;
+}
+
+.app[data-layout="phone"] .tool-banner-info {
+  flex-basis: 12em;
+}
+
+.app[data-layout="phone"] .tool-banner-actions {
+  gap: 4px;
+}
+
+.app[data-layout="phone"] .fill-banner-form {
+  font-size: var(--fs-xs);
 }
 
 /* --- Bottom sheet ---------------------------------------------------------------------------
@@ -520,6 +638,10 @@
   /* Background tints are dropped in forced colours: mark the selected tab with an outline. */
   .tab[aria-pressed="true"] .tab-pill {
     outline: 2px solid currentColor;
+  }
+
+  .tool-strip {
+    border-top-color: CanvasText;
   }
 
   .more-stepper {

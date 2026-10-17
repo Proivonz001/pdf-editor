@@ -25,18 +25,40 @@
 // The selection survives its own edit (transform and replace keep the image's index): the frame
 // stays mounted while the page's images are read again, so it keeps the keyboard focus. When it
 // goes, a focus it had goes back to the image's box, or to the scroller when the page changed.
+// The boxes too stay as they were while the images are read again after any change of the page
+// (an edit, an undo or redo), as the canvas does until it is drawn again, so a focused box keeps
+// the focus (they are keyed by the image's index; until the images are fresh, a box selects
+// nothing); a box that goes while it has the focus (its picture deleted or undone) hands it to
+// the scroller, never to <body>.
 // While any image edit waits or runs (imageEditsPending: a Delete queued behind a download, say)
 // the frame shows as pending and takes no gesture, key or click.
+//
+// Wherever the text writer is on (Compila e firma, and Modifica with Aggiungi testo) the layer
+// shows only the pictures the user added (only="added": signatures, initials, photos), stacked
+// above the form fields (viewer.css) and named by what they are ("Firma: Mario Rossi", else
+// "Immagine N" counting those pictures only), lets taps through to the fill layer under it
+// everywhere else, and its context bar may carry one more action ("On every page…" on the
+// initials placed last: extraAction); nothing there depends on which of the two tools is on. A
+// frame that comes with a new selection takes the keyboard focus unless the user is typing
+// somewhere (a form field, the text writer): a signature landing never pulls the focus (and a
+// phone's keyboard) out of what is being filled. The app's focusRequest for an image of the page
+// is taken here too. When Modifica's sub-tool (or the tool) changes, this layer and the full one
+// swap: a box with the focus hands it to the same picture's box in the other one, else to the
+// scroller (the action that changed it sees to that first: ui/actions.ts, focusAfterLayers).
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import {
   MAX_IMAGE_SIDE, MIN_IMAGE_SIDE, type ImageInfo, type ImageRenderResult, type Matrix, type Rect,
 } from "../engine/protocol";
 import { formatMm, t } from "../i18n";
-import { busy, devicePixelRatio, imageEditsPending, registerEditor, selectedImage } from "../state";
+import {
+  busy, devicePixelRatio, focusRequest, imageEditsPending, registerEditor, selectedImage, sessionSignatures,
+} from "../state";
 import { chooseReplacement, deleteImage, lockReasonText, selectImage, transformImage } from "../ui/actions";
+import { rescueFocus, viewerScroller } from "../ui/focus";
 import { IconDeselect, IconImage, IconMove, IconRotate, IconTrash } from "../ui/icons";
 import { isCoarse } from "../ui/media";
+import { addedDescription, honourFocusRequest, mayTakeFocus } from "./added";
 import {
   beyondEdge, boundsOf, centre, clampCentre, corners, cssBox, handlePoint, nearlyEqual, pagePoint, previewTransform,
   resize, rotate90, rotateAbout, rotateTo, rotationDeg, scaleAbout, sides, stretchOnScreen, translateBy,
@@ -373,6 +395,15 @@ function Sprite({ page, zoom, sprite, to }: {
   return <canvas ref={canvas} class="image-sprite" aria-hidden="true" hidden={!to} style={style} />;
 }
 
+/** One more button in the selected image's context bar (before Deselect). */
+export interface ImageAction {
+  id: string;
+  label: string;
+  tip: string;
+  icon: ComponentChildren;
+  onClick: () => void;
+}
+
 interface SelectedProps {
   page: PageModel;
   zoom: number;
@@ -383,9 +414,14 @@ interface SelectedProps {
   waiting: boolean;
   /** The page revision the page's canvas shows. */
   canvasRev: number;
+  /** The extra action for this image, if any. */
+  extra: ImageAction | null;
+  /** What the picture is, for its name ("Firma: Mario Rossi"), or null; and its number for "Immagine N". */
+  name: string | null;
+  n: number;
 }
 
-function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev }: SelectedProps) {
+function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra, name, n }: SelectedProps) {
   const frame = useRef<HTMLDivElement>(null);
   const bar = useRef<HTMLDivElement>(null);
   const measure = useRef<HTMLDivElement>(null);
@@ -835,7 +871,9 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev }: Sele
     const el = frame.current;
     if (!el) return;
     trackTouches();
-    el.focus({ preventScroll: true });
+    // Not out of a form field or the text writer the user is typing in (a signature landing
+    // while they type): there the frame waits for a click, a tap or Tab.
+    if (mayTakeFocus()) el.focus({ preventScroll: true });
     const scroller = el.closest<HTMLElement>(".scroller");
     const viewport: EventTarget = window.visualViewport ?? window;
     let raf = 0;
@@ -875,7 +913,7 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev }: Sele
   // (after the viewer has re-anchored the scroll on a zoom).
   const shownKey = shown.join(",");
   const labels = [t("image.replace"), t("image.rotate"), t("image.delete"), t("image.done")];
-  const labelsKey = [...labels, t("image.writing")].join("|");
+  const labelsKey = [...labels, extra?.label ?? "", t("image.writing")].join("|");
   useLayoutEffect(() => {
     if (dragging) return;
     const frameId = requestAnimationFrame(() => placeRef.current());
@@ -958,10 +996,14 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev }: Sele
     />
   );
 
-  const actions: { id: string; label: string; tip: string; icon: ComponentChildren; onClick: () => void; primary?: boolean }[] = [
+  const runExtra = () => {
+    if (!latest.current.pending) extra?.onClick();
+  };
+  const actions: (ImageAction & { primary?: boolean })[] = [
     { id: "replace", label: labels[0], tip: t("image.replaceTip"), icon: <IconImage />, onClick: replace },
     { id: "rotate", label: labels[1], tip: t("image.rotateTip"), icon: <IconRotate />, onClick: rotate },
     { id: "delete", label: labels[2], tip: t("image.deleteTip", { key: t("key.delete") }), icon: <IconTrash />, onClick: remove },
+    ...(extra ? [{ ...extra, onClick: runExtra }] : []),
     { id: "done", label: labels[3], tip: t("image.doneTip", { key: t("key.esc") }), icon: <IconDeselect />, onClick: done, primary: true },
   ];
   const showLabels = fit.labels;
@@ -978,7 +1020,9 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev }: Sele
         // An application, so that screen readers pass its keys on (they would read on in a group).
         role="application"
         aria-roledescription={t("image.roleDescription")}
-        aria-label={t("image.selectedLabel", { n: image.index + 1, ...sizeMm(image.matrix) })}
+        aria-label={name
+          ? t("image.namedLabel", { name, ...sizeMm(image.matrix) })
+          : t("image.selectedLabel", { n, ...sizeMm(image.matrix) })}
         aria-describedby={helpId}
         aria-busy={pending}
         onPointerDown={onFrameDown}
@@ -1067,18 +1111,99 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev }: Sele
   );
 }
 
-export function ImageLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: number; canvasRev: number }) {
+/**
+ * The box over an image that is not selected: a real button (a click, Enter or Space selects
+ * it). When it goes while it has the keyboard focus (its picture deleted or undone, the layer
+ * gone with the tool or with Modifica's sub-tool), the focus goes on to a box of the same image
+ * if there is one again (the other layer's), else to the scroller, instead of <body>; a frame
+ * that comes for it (the image selected) takes the focus itself.
+ */
+function ImageBox({ index, box, label, locked, onSelect }: {
+  index: number; box: Box; label: string; locked: boolean; onSelect: () => void;
+}) {
+  const button = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const node = button.current;
+    return () => {
+      if (!node || document.activeElement !== node) return;
+      const pageEl = node.closest(".page");
+      const again = () => (pageEl?.isConnected ? pageEl.querySelector<HTMLElement>(`[data-image="${index}"]`) : null);
+      rescueFocus(() => again() ?? viewerScroller());
+    };
+  }, []);
+  return (
+    <button
+      ref={button}
+      type="button"
+      class={locked ? "image-box is-locked" : "image-box"}
+      data-image={index}
+      style={px(box)}
+      aria-label={label}
+      aria-disabled={locked || undefined}
+      onClick={onSelect}
+    />
+  );
+}
+
+export interface ImageLayerProps {
+  page: PageModel;
+  zoom: number;
+  canvasRev: number;
+  /**
+   * "added": only the pictures the user added (Compila e firma, Modifica with Aggiungi testo);
+   * "all" (Modifica with Cambia) by default.
+   */
+  only?: "all" | "added";
+  /** One more action for the selected image's context bar, or null for that image. */
+  extraAction?: (image: ImageInfo) => ImageAction | null;
+}
+
+export function ImageLayer({ page, zoom, canvasRev, only = "all", extraAction }: ImageLayerProps) {
   const rev = page.rev.value;
   const cached = page.images.value;
   const selected = selectedImage.value;
+  const request = focusRequest.value;
+  const signatures = only === "added" ? sessionSignatures.value : null;
+  const layer = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     ensureImages(page);
   }, [page, rev, cached]);
 
-  // Stale images (the page changed) are hidden until they are read again.
-  const images = cached && cached.rev === rev ? cached.images : null;
+  // The images read at the page's current revision (null while they are read again), and the
+  // boxes shown: those, or meanwhile the last ones read, so a box with the focus keeps it (like
+  // the canvas, they show the page as it was a moment ago; a click on one does nothing until the
+  // images are fresh).
+  const all = cached && cached.rev === rev ? cached.images : null;
+  const images = all && only === "added" ? all.filter((i) => i.added) : all;
+  const lastImages = useRef<ImageInfo[] | null>(null);
+  if (images) lastImages.current = images;
+  const boxes = images ?? lastImages.current;
   const selectedIndex = selected && selected.pageIndex === page.index ? selected.index : null;
+
+  /**
+   * How a picture is named: with only="added" a signature or initials by their description, any
+   * other picture by its number among the pictures the user added on the page (the only ones
+   * shown there); with all the images (Cambia) by its number among all the page's images.
+   */
+  const ranks = useRef(new Map<number, number>());
+  if (signatures && images) ranks.current = new Map(images.map((image, i) => [image.index, i + 1]));
+  const nameOf = (image: ImageInfo): { name: string | null; n: number } => {
+    if (!signatures) return { name: null, n: image.index + 1 };
+    // While the images are read again, the frame keeps the name and number it had.
+    return { name: addedDescription(image, signatures), n: ranks.current.get(image.index) ?? image.index + 1 };
+  };
+
+  // The app asks for an image of this page to get the focus: its frame when it is selected, else its box.
+  useEffect(() => {
+    honourFocusRequest(page.index, "image", images !== null, (id) => {
+      const el = layer.current;
+      if (!el || typeof id !== "number" || !images?.some((i) => i.index === id)) return null;
+      return id === selectedIndex
+        ? el.querySelector<HTMLElement>(".image-frame")
+        : el.querySelector<HTMLElement>(`[data-image="${id}"]`);
+    });
+  }, [request, images, selectedIndex]);
 
   // The selected image, resolved against the current list. While the list is read again after an
   // edit of it (the selection then keeps its index), the frame stays with the last image known,
@@ -1095,33 +1220,34 @@ export function ImageLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: n
 
   return (
     <div
-      class="images"
+      ref={layer}
+      class={only === "added" ? "images is-added-only" : "images"}
       onClick={(e) => {
         // A click on the page itself (no line, no image): the selection goes.
         if (e.target === e.currentTarget && selectedIndex !== null) void selectImage(page.index, null);
       }}
     >
-      {images?.map((image) => {
+      {boxes?.map((image) => {
         if (image.index === shown?.image.index) return null; // the frame stands for it
         const [x0, y0, x1, y1] = image.visible;
         if (!(x1 > x0 && y1 > y0)) return null; // clipped away: nothing to click
         const locked = !image.movable;
-        const b = rectBox(page, image.visible, zoom);
-        const n = image.index + 1;
+        const { name, n } = nameOf(image);
         return (
-          <button
-            type="button"
+          <ImageBox
             key={image.index}
-            class={locked ? "image-box is-locked" : "image-box"}
-            data-image={image.index}
-            style={px(b)}
-            aria-label={locked
+            index={image.index}
+            box={rectBox(page, image.visible, zoom)}
+            label={locked
               ? t("image.lockedLabel", { n, reason: lockReasonText(image.reason) })
-              : t("image.label", { n, ...sizeMm(image.matrix) })}
-            aria-disabled={locked || undefined}
-            onClick={() => {
-              // An image edit waits or runs: the indices may be about to change.
-              if (imageEditsPending.peek() > 0) return;
+              : name
+                ? t("image.namedLabel", { name, ...sizeMm(image.matrix) })
+                : t("image.label", { n, ...sizeMm(image.matrix) })}
+            locked={locked}
+            onSelect={() => {
+              // Read again after a change of the page: a moment, and it is the real one. An image
+              // edit waits or runs: the indices may be about to change.
+              if (!images || imageEditsPending.peek() > 0) return;
               // selectImage waits for a line edit still being written, and says why a locked one stays.
               void selectImage(page.index, image, rev);
             }}
@@ -1137,6 +1263,8 @@ export function ImageLayer({ page, zoom, canvasRev }: { page: PageModel; zoom: n
           imageRev={shown.rev}
           waiting={shown.waiting}
           canvasRev={canvasRev}
+          extra={extraAction?.(shown.image) ?? null}
+          {...nameOf(shown.image)}
         />
       )}
     </div>

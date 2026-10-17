@@ -1,14 +1,17 @@
 // The dialogs the app can show (one at a time, from the `dialog` signal): confirm, alert,
-// password for protected PDFs, "ready to share" when the share sheet needs another tap, and the
-// download options and PDF/A questions (ui/DownloadOptions.tsx).
+// password for protected PDFs, "ready to share" when the share sheet needs another tap, the
+// download options and PDF/A questions (ui/DownloadOptions.tsx), and for Fill & sign: the
+// signature chooser and creator (ui/fill/SignatureSheet.tsx), "On every page…" for initials, and
+// "Some required fields are empty" before a download.
 // Cancel is always the quiet secondary button; a confirm that throws edits away is red, and
 // it is Cancel that gets the focus, so Enter never loses work by accident.
-import { useState } from "preact/hooks";
+import { useId, useState } from "preact/hooks";
 import { t } from "../i18n";
 import { dialog, doc, showDialog, type DialogState } from "../state";
-import { openFile, shareFile } from "./actions";
+import { initialsChoices, openFile, shareFile } from "./actions";
 import { Dialog } from "./Dialog";
 import { DownloadOptions, PdfaBlockedDialog, PdfaConfirmDialog } from "./DownloadOptions";
+import { SignatureDialog } from "./fill/SignatureSheet";
 import { IconShare } from "./icons";
 
 type Of<K extends DialogState["kind"]> = Extract<DialogState, { kind: K }>;
@@ -113,6 +116,100 @@ function ShareDialog({ state }: { state: Of<"share"> }) {
   );
 }
 
+/** The first choice of "Initials on the other pages": "The other page" when there is only one. */
+export function initialsAllText(count: number): string {
+  return count === 1 ? t("initials.allOne") : t("initials.all", { count });
+}
+
+/**
+ * "Initials on the other pages" (D9): every other page (the default), or all of them but the last
+ * (where the full signature goes), the second only when it is a different, non-empty choice
+ * (initialsChoices). Then one batch, one history step.
+ */
+function InitialsPagesDialog({ state }: { state: Of<"initials-pages"> }) {
+  const count = doc.value?.pages.length ?? 0;
+  const choices = initialsChoices(state.pageIndex, count);
+  const all = choices.all;
+  const allButLast = choices.allButLast.length > 0 && choices.allButLast.length !== all.length ? choices.allButLast : null;
+  const [choice, setChoice] = useState<"all" | "allButLast">("all");
+  const name = useId();
+  const pages = choice === "allButLast" && allButLast ? allButLast : all;
+  const answer = (picked: number[] | null) => {
+    dialog.value = null;
+    state.resolve(picked);
+  };
+  const option = (value: "all" | "allButLast", label: string) => (
+    <label class="dl-choice">
+      <input
+        type="radio"
+        class="dl-radio"
+        name={name}
+        value={value}
+        checked={choice === value}
+        data-autofocus={choice === value || undefined}
+        onChange={() => setChoice(value)}
+      />
+      <span class="dl-choice-text">
+        <span class="dl-choice-title">{label}</span>
+      </span>
+    </label>
+  );
+  return (
+    <Dialog labelledBy="dlg-title" describedBy="dlg-body" onCancel={() => answer(null)}>
+      <form
+        class="dialog-form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (pages.length) answer(pages);
+        }}
+      >
+        <h2 id="dlg-title" class="dialog-title">{t("initials.title")}</h2>
+        <fieldset class="dl-group" aria-labelledby="dlg-title">
+          {option("all", initialsAllText(all.length))}
+          {allButLast && option("allButLast", t("initials.allButLast", { count: allButLast.length }))}
+        </fieldset>
+        <p id="dlg-body" class="dl-hint">{t("initials.note")}</p>
+        <div class="dialog-actions">
+          <button type="button" class="btn btn-secondary" onClick={() => answer(null)}>{t("common.cancel")}</button>
+          <button type="submit" class="btn btn-primary" disabled={!pages.length}>{t("initials.apply")}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+/** The missing-fields question's title, text and "Fill them in", in the singular for one field. */
+export function missingFieldsTexts(count: number): { title: string; body: string; fill: string } {
+  if (count === 1) return { title: t("form.missingTitleOne"), body: t("form.missingOne"), fill: t("form.missingFillOne") };
+  return { title: t("form.missingTitle"), body: t("form.missingMany", { count }), fill: t("form.missingFill") };
+}
+
+/**
+ * Before a download, once per document (D6): required fields are still empty. "Fill them in"
+ * has the focus: it loses nothing; "Download anyway" goes on; Escape answers neither.
+ */
+function MissingFieldsDialog({ state }: { state: Of<"missing-fields"> }) {
+  const answer = (go: "fill" | "download" | null) => {
+    dialog.value = null;
+    state.resolve(go);
+  };
+  const texts = missingFieldsTexts(state.count);
+  return (
+    <Dialog labelledBy="dlg-title" describedBy="dlg-body" onCancel={() => answer(null)}>
+      <DialogText title={texts.title} body={texts.body} />
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-secondary" onClick={() => answer("download")}>
+          {t("form.missingDownload")}
+        </button>
+        <button type="button" class="btn btn-primary" data-autofocus onClick={() => answer("fill")}>
+          {texts.fill}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
 // A new dialog object always mounts a fresh component (e.g. "wrong password" after a retry).
 const keys = new WeakMap<DialogState, number>();
 let nextKey = 1;
@@ -137,5 +234,8 @@ export function Dialogs() {
     }
     case "pdfa-blocked": return <PdfaBlockedDialog key={key} state={d} />;
     case "pdfa-confirm": return <PdfaConfirmDialog key={key} state={d} />;
+    case "signature": return <SignatureDialog key={key} state={d} />;
+    case "initials-pages": return <InitialsPagesDialog key={key} state={d} />;
+    case "missing-fields": return <MissingFieldsDialog key={key} state={d} />;
   }
 }

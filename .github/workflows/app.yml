@@ -57,11 +57,11 @@ jobs:
       - name: Build
         run: npm run build
 
-  # PDF/A: the engine converts the test files (tests/pdfa.test.ts writes them when PDFA_OUT is
-  # set), then veraPDF, the reference validator, checks every one against PDF/A-2b. veraPDF is a
-  # Java program, so it cannot run in the browser or in the Node tests: this job is where real
-  # conformance is checked. The files the app refuses to convert are validated too, for the log
-  # only (they are expected to fail).
+  # PDF/A: the engine converts the test files (tests/pdfa.test.ts and the filled and signed form
+  # of tests/fill-session.test.ts write them when PDFA_OUT is set), then veraPDF, the reference
+  # validator, checks every one against PDF/A-2b. veraPDF is a Java program, so it cannot run in
+  # the browser or in the Node tests: this job is where real conformance is checked. The files
+  # the app refuses to convert are validated too, for the log only (they are expected to fail).
   pdfa:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -86,7 +86,7 @@ jobs:
         run: npm ci
 
       - name: Convert the test files to PDF/A
-        run: PDFA_OUT="$RUNNER_TEMP/pdfa" npx vitest run tests/pdfa.test.ts
+        run: PDFA_OUT="$RUNNER_TEMP/pdfa" npx vitest run tests/pdfa.test.ts tests/fill-session.test.ts
 
       # veraPDF 1.30.2, pinned by digest (Docker Hub only keeps moving tags).
       - name: Validate with veraPDF (PDF/A-2b)

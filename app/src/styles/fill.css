@@ -1,0 +1,767 @@
+/* The signature sheet of "Compila e firma" (ui/fill/SignatureSheet.tsx, ui/fill/SignaturePad.tsx):
+   the chooser of signatures and initials, and the creation sheet with its tabs (Disegna, Scrivi,
+   Foto), the drawing pad, the handwriting styles, the photo's crop, "Remember on this device"
+   and the legal line. A bottom sheet on phones (ui/Sheet.tsx, .sheet-signature), a dialog on
+   desktop (ui/Dialog.tsx, about 560 px wide).
+
+   Colours only from tokens.css. What stands for paper is white in both themes, like the PDF
+   pages (viewer.css): the pad, the handwriting samples and the checkerboard behind a signature,
+   because the inks (black and ballpoint blue) must read on it as they will on the page; their
+   marks use the --page-mark tokens, which are the same in both themes. */
+
+.sig-body {
+  /* The checkerboard's grey square, on white: a transparent signature shows as such. */
+  --sig-check: color-mix(in srgb, var(--page-mark-locked) 16%, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Desktop: wider than the other dialogs, for the pad. */
+.dialog:has(> .sig-body) {
+  width: min(560px, calc(100vw - 32px));
+}
+
+/* Phones: the whole height, so the pad has room; the content scrolls under the header. */
+.sheet-signature .sheet-panel {
+  height: 94vh;
+  height: calc(100dvh - max(12px, env(safe-area-inset-top, 0px)));
+  max-height: none;
+}
+
+.sheet-signature .sheet-content {
+  padding: 12px 16px 0; /* 16 px from the edges: away from Android's back gesture */
+}
+
+.sheet-signature .sig-body {
+  min-height: 100%;
+}
+
+.sig-chooser,
+.sig-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* In the sheet the buttons stay in view at the bottom, over the scrolling content. */
+.sheet-signature .sig-chooser,
+.sheet-signature .sig-form {
+  flex: 1 0 auto;
+}
+
+.sheet-signature .dialog-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  flex-wrap: nowrap;
+  margin: auto -16px 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.sheet-signature .dialog-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.sig-hint,
+.sig-check-note p,
+.sig-legal p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.sig-legend {
+  padding: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.sig-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.sig-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.sig-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* A text button that reads as a link ("Can't draw? Use Type."). */
+.sig-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--active-fg);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.btn.sig-small {
+  height: 36px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
+.btn.sig-small .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Touch screens: 44 px targets, also for the pad's small buttons and the link under it, which a
+   finger aiming for them must not miss onto the pad. */
+@media (pointer: coarse) {
+  .btn.sig-small {
+    height: var(--tap);
+  }
+
+  .sig-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+  }
+}
+
+/* --- The chooser ---------------------------------------------------------------------------- */
+
+.sig-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sig-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The whole row picks the signature. */
+.sig-pick {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 68px;
+  padding: 8px 12px 8px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+@media (hover: hover) {
+  .sig-pick:hover {
+    border-color: var(--accent);
+    background: var(--surface-2);
+  }
+}
+
+.sig-pick:active {
+  background: var(--pressed);
+}
+
+.sig-checker {
+  background: repeating-conic-gradient(var(--sig-check) 0 25%, #fff 0 50%) 0 0 / 12px 12px;
+}
+
+.sig-thumb {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 50px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.sig-thumb img {
+  display: block;
+  max-width: calc(100% - 8px);
+  max-height: calc(100% - 8px);
+  object-fit: contain;
+}
+
+.sig-item-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sig-item-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sig-item-when {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.btn.sig-forget {
+  flex: none;
+  color: var(--danger-text);
+}
+
+.btn.sig-new {
+  align-self: flex-start;
+}
+
+.sig-others {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Narrow sheets: Forget keeps only its icon (its name is on the button). */
+@media (max-width: 399.98px) {
+  .btn.sig-forget > span {
+    display: none;
+  }
+
+  .sig-thumb {
+    width: 96px;
+  }
+}
+
+/* --- Tabs: Disegna, Scrivi, Foto ------------------------------------------------------------ */
+
+.sig-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.sig-tab {
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+@media (hover: hover) {
+  .sig-tab:hover:not([aria-selected="true"]) {
+    background: var(--hover);
+    color: var(--text);
+  }
+}
+
+/* The selected tab: a raised card with an ink rim and a bolder label (not the tint alone). */
+.sig-tab[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--active-fg);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.sig-tab:focus-visible {
+  outline-offset: 1px;
+}
+
+@media (pointer: coarse) {
+  .sig-tab {
+    height: var(--tap);
+  }
+}
+
+.sig-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sig-panel[hidden] {
+  display: none;
+}
+
+/* --- The pad ---------------------------------------------------------------------------------- */
+
+.sig-pad {
+  position: relative;
+  height: min(40vh, 260px);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff; /* paper, in both themes */
+}
+
+.sig-pad.is-initials {
+  height: min(30vh, 200px);
+}
+
+/* A faint line to sign on, at 70 % of the height (not part of the signature). */
+.sig-pad-baseline {
+  position: absolute;
+  top: 70%;
+  right: 24px;
+  left: 24px;
+  border-top: 1.5px solid color-mix(in srgb, var(--page-mark-locked) 45%, #fff);
+  pointer-events: none;
+}
+
+.sig-pad-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none; /* a finger draws here; it does not scroll or zoom */
+  cursor: crosshair;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.sig-pad:focus-within {
+  border-color: var(--accent);
+}
+
+.sig-pad-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* "Turn your phone sideways": only on a narrow phone held upright. */
+.sig-rotate {
+  display: none;
+}
+
+@media (max-width: 479.98px) and (orientation: portrait) {
+  .sig-rotate {
+    display: block;
+  }
+}
+
+/* --- Inks ------------------------------------------------------------------------------------ */
+
+.sig-inks {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+/* Floated, the legend is laid out as an ordinary flex item (see overlays.css, .dl-legend). */
+.sig-inks > .sig-legend {
+  float: left;
+}
+
+.sig-inks-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sig-ink {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* The radio itself is not drawn: the swatch and the pill show it, and it keeps the focus. */
+.sig-ink-radio {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.sig-ink-swatch {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.sig-ink-radio:checked + .sig-ink-swatch {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+}
+
+.sig-ink:has(.sig-ink-radio:checked) {
+  border-color: var(--accent);
+  background: var(--active-bg);
+  color: var(--active-fg);
+  font-weight: 700;
+}
+
+.sig-ink:has(.sig-ink-radio:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .sig-ink {
+    height: var(--tap);
+  }
+}
+
+/* --- Scrivi: the styles ---------------------------------------------------------------------- */
+
+.sig-styles {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sig-styles > .sig-legend {
+  float: left;
+  width: 100%;
+}
+
+/* A style: the name written in it, on paper. */
+.sig-style {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  padding: 6px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #fff; /* paper, in both themes: the ink reads as it will on the page */
+  color-scheme: light; /* so is its radio */
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.sig-style:has(.sig-style-radio:checked) {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.sig-style-radio {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+
+.sig-style-sample {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 6px; /* script fonts reach outside their box */
+  overflow: hidden;
+  color: #000;
+  font-size: 34px;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sig-style-sample.is-empty {
+  color: var(--page-mark-locked);
+}
+
+/* --- Foto: the crop -------------------------------------------------------------------------- */
+
+.sig-crop-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+}
+
+/* Room round the frame for the corner handles, which reach outside it. */
+.sig-photo {
+  --photo-h: 200px;
+  width: min(calc(100% - 44px), calc(var(--photo-h) * var(--ar)));
+  margin: 10px auto;
+}
+
+.sig-photo-frame {
+  position: relative;
+  aspect-ratio: var(--ar);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+
+.sig-photo-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.sig-crop-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+/* What the crop leaves out is dimmed. */
+.sig-crop-shade {
+  position: absolute;
+  box-shadow: 0 0 0 100vmax color-mix(in srgb, var(--backdrop) 70%, transparent);
+}
+
+.sig-crop {
+  position: absolute;
+  outline: 2px solid var(--accent);
+  pointer-events: none;
+}
+
+/* A corner: an invisible target (28 px, 44 px on touch) round a white square with an ink rim. */
+.sig-crop-handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  touch-action: none;
+  pointer-events: auto;
+  cursor: nwse-resize;
+}
+
+.sig-crop-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.sig-crop-handle.is-tl {
+  top: 0;
+  left: 0;
+}
+
+.sig-crop-handle.is-tr {
+  top: 0;
+  left: 100%;
+  cursor: nesw-resize;
+}
+
+.sig-crop-handle.is-bl {
+  top: 100%;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.sig-crop-handle.is-br {
+  top: 100%;
+  left: 100%;
+}
+
+.sig-crop-handle:focus-visible {
+  outline: none;
+}
+
+.sig-crop-handle:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (pointer: coarse) {
+  .sig-crop-handle {
+    width: var(--tap);
+    height: var(--tap);
+    margin: -22px 0 0 -22px;
+  }
+
+  .sig-crop-handle::after {
+    width: 18px;
+    height: 18px;
+    margin: -9px 0 0 -9px;
+  }
+}
+
+/* --- Remember, legal line -------------------------------------------------------------------- */
+
+.sig-remember {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.sig-check {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--tap);
+  font-size: var(--fs-base);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sig-check.is-disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.sig-checkbox {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+
+/* Under the label, where its text starts (18 + 12). */
+.sig-check-note {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 30px;
+}
+
+.sig-legal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sig-legal-more summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--active-fg);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sig-legal-more[open] summary {
+  margin-bottom: 4px;
+}
+
+@media (pointer: coarse) {
+  .sig-legal-more summary {
+    min-height: var(--tap);
+  }
+}
+
+/* --- Forced colours (Windows contrast themes) ------------------------------------------------- */
+
+/* The system colours replace author backgrounds and drop gradients, but a canvas or a picture
+   keeps its own pixels: on a dark contrast theme black ink would sit on black paper. So what
+   stands for paper keeps its white (and the checkerboard), as the PDF pages do (viewer.css,
+   pages.css): the pad, the thumbnails of the saved signatures and the photo's crop, each with a
+   rim in the text colour so it stands out from the dark around it. The property is inherited:
+   the pad's baseline and the crop's frame and handles keep their colours too. */
+@media (forced-colors: active) {
+  .sig-pad,
+  .sig-thumb,
+  .sig-photo-frame {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+
+  .sig-pad:focus-within {
+    border-color: Highlight;
+  }
+
+  /* Fills and shadows are dropped: the chosen tab, ink and style get an outline. */
+  .sig-tab[aria-selected="true"],
+  .sig-ink:has(.sig-ink-radio:checked),
+  .sig-style:has(.sig-style-radio:checked) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .sig-ink-swatch {
+    forced-color-adjust: none;
+  }
+
+  .sig-crop {
+    outline-color: Highlight;
+  }
+
+  .sig-crop-handle::after {
+    border-color: Highlight;
+  }
+
+  .sig-crop-handle:focus-visible::after {
+    outline-color: Highlight;
+  }
+}

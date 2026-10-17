@@ -34,9 +34,18 @@
 // one that unwinds through MuPDF's C frames corrupts the shared WebAssembly module (every later
 // call fails). Callbacks catch, the failure is recorded and thrown after the pass. PDFObject
 // wrappers are left to the garbage collector, as everywhere else in the engine.
+//
+// Release 3: pictures the app places itself (newcontent.ts: signatures, initials, photos) sit in
+// a marked block carrying /PEImage, and their placements say so (Placement.added). A picture
+// file is checked once (checkPicture): a JPEG loses the metadata that describes the photo rather
+// than draws it (EXIF with the GPS position and a thumbnail, XMP, comments, anything after its
+// end, stray bytes between its segments), losslessly, and its EXIF orientation, which MuPDF and
+// PDF readers ignore, turns the placement instead, so a phone photo stored sideways shows upright
+// (replacePlacement, and newcontent.addImage). The picture object records that orientation
+// (/PEOrientation), so a later replace fits the new picture to the old one as seen.
 import type * as MuPDF from "mupdf";
 import { structParents } from "./core.js";
-import type { ImageLockReason, Matrix, Rect } from "./protocol";
+import { MAX_IMAGE_BYTES, type ImageLockReason, type Matrix, type Rect } from "./protocol";
 
 type MuPDFModule = typeof MuPDF;
 type Doc = MuPDF.PDFDocument;
@@ -167,7 +176,8 @@ export function unmirrored(target: Matrix): Matrix {
 // ---------------------------------------------------------------------------------------------
 // Bytes
 
-function streamBytes(obj: Obj): Uint8Array {
+/** A stream's decoded bytes, copied out of the WebAssembly heap. */
+export function streamBytes(obj: Obj): Uint8Array {
   const buf = obj.readStream();
   try {
     return buf.asUint8Array().slice();
@@ -177,20 +187,21 @@ function streamBytes(obj: Obj): Uint8Array {
 }
 
 /** Bytes as a string of char codes 0..255 (byte offsets = string offsets; binary data survives). */
-function latin1(u8: Uint8Array): string {
+export function latin1(u8: Uint8Array): string {
   let s = "";
   for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode(...u8.subarray(i, i + 8192));
   return s;
 }
 
-function toBytes(s: string): Uint8Array {
+/** The inverse of latin1: each char code (0..255) one byte. */
+export function toBytes(s: string): Uint8Array {
   const u = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i) & 255;
   return u;
 }
 
 /** Adds a stream made from `bytes`, destroying the temporary MuPDF Buffer. */
-function addStream(mupdf: MuPDFModule, doc: Doc, bytes: Uint8Array): Obj {
+export function addStream(mupdf: MuPDFModule, doc: Doc, bytes: Uint8Array): Obj {
   const buf = new mupdf.Buffer(bytes);
   try {
     return doc.addStream(buf, {});
@@ -238,6 +249,182 @@ export function embedsProfile(bytes: Uint8Array): boolean | null {
     return false;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Picture files (release 3)
+
+/**
+ * Where a JPEG's stored pixels go for each EXIF orientation (1..8): the stored picture's unit
+ * square ((0, 0) its top-left corner) onto the picture as it is meant to be seen. A picture to be
+ * seen at `target` (ImageInfo convention) is drawn at concat(ORIENTATION[o], target). MuPDF
+ * ignores the tag, and so does every PDF reader for a DCTDecode stream: the placement turns it.
+ * 2, 4, 5 and 7 are mirrored (negative determinant), as the camera stored them.
+ */
+export const ORIENTATION: Readonly<Record<number, Matrix>> = {
+  1: [1, 0, 0, 1, 0, 0],
+  2: [-1, 0, 0, 1, 1, 0],
+  3: [-1, 0, 0, -1, 1, 1],
+  4: [1, 0, 0, -1, 0, 1],
+  5: [0, 1, 1, 0, 0, 0],
+  6: [0, 1, -1, 0, 1, 0],
+  7: [0, -1, -1, 0, 1, 1],
+  8: [0, -1, 1, 0, 0, 1],
+};
+
+/** A picture checked for placing (checkPicture). Plain data: it goes into the edit log as it is. */
+export interface Picture {
+  /** The file's bytes, a JPEG without its metadata (withoutMetadata). */
+  bytes: Uint8Array;
+  /** The JPEG's EXIF orientation (1..8), 1 for anything else: ORIENTATION turns the placement upright. */
+  orientation: number;
+  /** Size in pixels as seen: the stored sides swapped for orientations 5 to 8. */
+  width: number;
+  height: number;
+}
+
+/** A picture file the engine does not take (checkPicture): the session refuses it ("bad-request"). */
+export class BadPicture extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BadPicture";
+  }
+}
+
+/**
+ * A picture file as the engine places it: at most MAX_IMAGE_BYTES, readable by MuPDF, with
+ * pixels; a JPEG without the metadata that describes the photo (withoutMetadata) and with its
+ * EXIF orientation read (jpegOrientation). Throws BadPicture otherwise. `bytes` itself is
+ * returned when nothing had to go, so the caller decides whether to copy it.
+ */
+export function checkPicture(mupdf: MuPDFModule, bytes: Uint8Array): Picture {
+  if (bytes.byteLength === 0) throw new BadPicture("The picture is empty");
+  if (bytes.byteLength > MAX_IMAGE_BYTES) throw new BadPicture(`The picture is larger than ${MAX_IMAGE_BYTES} bytes`);
+  const orientation = jpegOrientation(bytes);
+  const clean = withoutMetadata(bytes);
+  let image: MuPDF.Image;
+  try {
+    image = openImage(mupdf, clean);
+  } catch (err) {
+    throw new BadPicture(`The picture cannot be read: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    const w = image.getWidth(), h = image.getHeight();
+    if (!(w > 0 && h > 0)) throw new BadPicture("The picture has no pixels");
+    const turned = orientation >= 5;
+    return { bytes: clean, orientation, width: turned ? h : w, height: turned ? w : h };
+  } finally {
+    image.destroy();
+  }
+}
+
+/** A piece of a JPEG file: a marker segment (marker 0x01..0xFE, start at its 0xFF) or entropy-coded data (marker -1). */
+interface JpegPart {
+  marker: number;
+  start: number;
+  end: number;
+}
+
+/**
+ * A JPEG's parts after the start-of-image marker, in file order, up to and with its end-of-image
+ * marker: what comes after it (the extra pictures of a multi-picture file, the video of a "motion
+ * photo") is not listed. The coded data after each start-of-scan runs to the next marker that is
+ * not a restart (0xFF00 is a stuffed byte, 0xFFFF a fill). Read as libjpeg (and so MuPDF) reads
+ * it: stray bytes between segments, and a stuffed 0xFF00 there, are skipped up to the next
+ * marker ("Corrupt JPEG data: extraneous bytes before marker"), and are not listed; a segment
+ * whose length runs past the end of the file ends the reading (libjpeg reads no further: it
+ * stops at the end of the data), and so does a marker cut off by the end. Whatever is not listed
+ * is not drawn. Null when the bytes are not a JPEG.
+ */
+function jpegParts(b: Uint8Array): JpegPart[] | null {
+  if (b[0] !== 0xff || b[1] !== 0xd8) return null;
+  const out: JpegPart[] = [];
+  for (let i = 2; i < b.length; ) {
+    if (b[i] !== 0xff) { i++; continue; } // a stray byte
+    if (i + 1 >= b.length) break;
+    if (b[i + 1] === 0xff) { i++; continue; } // fill byte before a marker
+    if (b[i + 1] === 0x00) { i += 2; continue; } // a stuffed zero outside the coded data
+    const marker = b[i + 1];
+    if (marker === 0xd9) {
+      out.push({ marker, start: i, end: i + 2 });
+      return out;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { // no length
+      out.push({ marker, start: i, end: i + 2 });
+      i += 2;
+      continue;
+    }
+    if (i + 3 >= b.length) break;
+    // (a length under 2 covers the length itself, as libjpeg skips it)
+    const length = (b[i + 2] << 8) | b[i + 3], end = i + 2 + Math.max(2, length);
+    if (end > b.length) break;
+    out.push({ marker, start: i, end });
+    i = end;
+    if (marker !== 0xda) continue;
+    let j = i;
+    while (j + 1 < b.length && !(b[j] === 0xff && b[j + 1] !== 0x00 && b[j + 1] !== 0xff && !(b[j + 1] >= 0xd0 && b[j + 1] <= 0xd7))) j++;
+    if (j + 1 >= b.length) j = b.length; // no end of image: a truncated file, its data kept to the end
+    out.push({ marker: -1, start: i, end: j });
+    i = j;
+  }
+  return out;
+}
+
+/** The EXIF orientation (1..8) of a JPEG, 1 when it has none or it cannot be read. */
+export function jpegOrientation(b: Uint8Array): number {
+  for (const s of jpegParts(b) ?? []) {
+    if (s.marker === 0xda) break; // the headers are over
+    if (s.marker !== 0xe1 || s.end - s.start < 4 + 6 + 8) continue;
+    const at = s.start + 4;
+    if (String.fromCharCode(...b.subarray(at, at + 6)) !== "Exif\0\0") continue;
+    const t = at + 6, le = b[t] === 0x49 && b[t + 1] === 0x49;
+    if (!le && !(b[t] === 0x4d && b[t + 1] === 0x4d)) continue;
+    const inside = (o: number, n: number) => o >= 0 && t + o + n <= s.end;
+    const u16 = (o: number) => (le ? b[t + o] | (b[t + o + 1] << 8) : (b[t + o] << 8) | b[t + o + 1]);
+    const u32 = (o: number) => (le ? u16(o) + u16(o + 2) * 65536 : u16(o) * 65536 + u16(o + 2));
+    const ifd = u32(4);
+    if (!inside(ifd, 2)) continue;
+    for (let k = 0, n = u16(ifd); k < n; k++) {
+      const e = ifd + 2 + k * 12;
+      if (!inside(e, 12)) break;
+      if (u16(e) !== 0x0112) continue; // Orientation, a SHORT: its value in the entry's first two bytes
+      const v = u16(e + 8);
+      return v >= 1 && v <= 8 ? v : 1;
+    }
+  }
+  return 1;
+}
+
+/**
+ * The JPEG without what describes the photo rather than draws it: EXIF (the GPS position, the
+ * camera, the date, a thumbnail), XMP, IPTC and Photoshop data, comments, the other application
+ * segments (a JFXX thumbnail too), and whatever follows the end of the image (the extra pictures
+ * of a multi-picture file, the video of a "motion photo"). Kept: JFIF (APP0), the colour profile (APP2
+ * ICC_PROFILE), Adobe's segment (APP14: it says how CMYK and YCCK are coded) and everything that
+ * codes the pixels, which are not coded again. Bytes jpegParts does not list (stray bytes between
+ * segments, what follows a segment cut off by the end of the file) go too: no decoder draws them.
+ * Other formats come back as they are; so does a JPEG with nothing to drop (the same array).
+ */
+export function withoutMetadata(b: Uint8Array): Uint8Array {
+  const parts = jpegParts(b);
+  if (!parts) return b;
+  const says = (p: JpegPart, id: string) => String.fromCharCode(...b.subarray(p.start + 4, p.start + 4 + id.length)) === id;
+  const describes = (p: JpegPart) =>
+    p.marker === 0xfe || // COM
+    (p.marker >= 0xe1 && p.marker <= 0xef && p.marker !== 0xe2 && p.marker !== 0xee) ||
+    (p.marker === 0xe2 && !says(p, "ICC_PROFILE\0")) ||
+    (p.marker === 0xe0 && !says(p, "JFIF\0")); // a JFXX extension holds only a thumbnail
+  const kept = parts.filter((p) => !describes(p));
+  // (the parts are in file order and do not overlap: they cover the file when their sizes add up to it)
+  if (kept.length === parts.length && 2 + parts.reduce((n, p) => n + p.end - p.start, 0) === b.length) return b;
+  const out = new Uint8Array(2 + kept.reduce((n, p) => n + p.end - p.start, 0));
+  out.set(b.subarray(0, 2));
+  let o = 2;
+  for (const p of kept) {
+    out.set(b.subarray(p.start, p.end), o);
+    o += p.end - p.start;
+  }
+  return out;
 }
 
 /** FNV-1a, 32 bits: the key under which a replacement picture is found again (bytes compared too). */
@@ -530,6 +717,8 @@ interface Mark {
   /** The paints counted when it began; once it has ended, how many it holds (the contents of forms counted). */
   from: number;
   paints?: number;
+  /** A page-level block of a picture the app placed (its property list has /PEImage: newcontent.addImage). */
+  added: boolean;
 }
 
 /** A placement as the walk found it. */
@@ -551,6 +740,10 @@ interface Walked {
   inner: Block | null;
   /** Inside a form that also paints other things. */
   group: boolean;
+  /** Inside a block marked /PEImage: a picture the app placed. */
+  added: boolean;
+  /** The EXIF orientation its picture object records (turnOf), 1 for any other picture. */
+  turn: number;
 }
 
 interface WalkResult {
@@ -560,7 +753,8 @@ interface WalkResult {
   extraDraws: boolean;
 }
 
-function contentStreams(pageObj: Obj): Obj[] {
+/** The page's content streams, in /Contents order (none when it has no content). */
+export function contentStreams(pageObj: Obj): Obj[] {
   const c = pageObj.get("Contents");
   const list: Obj[] = [];
   if (c.isArray()) for (let k = 0; k < c.length; k++) list.push(c.get(k));
@@ -716,6 +910,8 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
       unit: null,
       inner: open.length ? open[open.length - 1] : null,
       group: false,
+      added: marks.some((m) => m.added),
+      turn: 1,
     };
     walked.push(w);
     return w;
@@ -756,13 +952,19 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
           break;
         case "BDC":
         case "BMC": {
-          const p = o.op === "BDC" ? a[1] : undefined;
+          // (the property list is the last operand: operands a content left without an operator come first)
+          const p = o.op === "BDC" ? a[a.length - 1] : undefined;
           let mcid = p?.dict?.MCID?.num ?? null;
-          if (mcid === null && p?.name) {
+          let added = p?.dict?.PEImage?.num !== undefined;
+          if (p?.name) {
             const prop = lookup(res, "Properties", p.name);
-            if (prop.isDictionary() && prop.get("MCID").isNumber()) mcid = prop.get("MCID").asNumber();
+            if (prop.isDictionary()) {
+              if (mcid === null && prop.get("MCID").isNumber()) mcid = prop.get("MCID").asNumber();
+              added ||= prop.get("PEImage").isNumber();
+            }
           }
-          marks.push({ mcid, host, from: painted });
+          // (only the page's own blocks: the app never places a picture inside a form)
+          marks.push({ mcid, host, from: painted, added: added && level === 0 });
           break;
         }
         case "EMC":
@@ -867,6 +1069,7 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
               break;
             }
             const w = record(o, level, stream, top, level === 0 ? "xobject" : "form", name, layer.isDictionary() ? layer : null);
+            w.turn = turnOf(xo);
             if (level === 0) paintAtTop(1, w);
           } else if (subtype === "Form") {
             const objNum = xo.isIndirect() ? xo.asIndirect() : -1;
@@ -1068,6 +1271,14 @@ export interface Placement {
   top: TopOp | null;
   unit: Block | null;
   inner: Block | null;
+  /** A picture the app placed (inside a block marked /PEImage: ImageInfo.added); false when the walk was not trusted. */
+  added: boolean;
+  /**
+   * The EXIF orientation (1..8) that turned the stored pixels of a picture the app placed or put
+   * in as a replacement (its picture object records it: pictureObject), so `matrix` (the stored
+   * pixels') is concat(ORIENTATION[turn], the picture as seen). 1 for any other picture.
+   */
+  turn: number;
 }
 
 export interface PagePlacements {
@@ -1118,7 +1329,7 @@ export function findPlacements(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePla
     const placements = drawn.slice(0, MAX_PLACEMENTS).map((d, index): Placement => ({
       index, kind: "xobject", matrix: d.matrix, bbox: bboxOf(quadOf(d.matrix)), visible: d.visible,
       pixelWidth: d.width, pixelHeight: d.height, movable: false, reason: "unreadable", drawIndex: index,
-      mcid: null, mcidHost: null, alone: false, layers: [], inside: [], top: null, unit: null, inner: null,
+      mcid: null, mcidHost: null, alone: false, layers: [], inside: [], top: null, unit: null, inner: null, added: false, turn: 1,
     }));
     return { placements, texts: walk?.texts ?? [], agreed: false };
   }
@@ -1140,7 +1351,7 @@ export function findPlacements(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePla
     return {
       index, kind: w.kind, matrix, bbox, visible: d.visible, pixelWidth: d.width, pixelHeight: d.height,
       movable: reason === null, reason, drawIndex: match[index], mcid: w.mark?.mcid ?? null, mcidHost: w.mark?.host ?? null,
-      alone: w.mark?.paints === 1, layers: w.layers, inside: moving, top: w.top, unit: w.unit, inner: w.inner,
+      alone: w.mark?.paints === 1, layers: w.layers, inside: moving, top: w.top, unit: w.unit, inner: w.inner, added: w.added, turn: w.turn,
     };
   });
   return { placements, texts: walk.texts, agreed: true };
@@ -1153,7 +1364,7 @@ export function findPlacements(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePla
  * Writes `text` in place of /Contents entry `index` of the page: into the same stream object, or,
  * when another page draws that stream too (or this page draws it twice), into a new one.
  */
-function writeStream(mupdf: MuPDFModule, doc: Doc, pageObj: Obj, index: number, text: string) {
+export function writeStream(mupdf: MuPDFModule, doc: Doc, pageObj: Obj, index: number, text: string) {
   const c = pageObj.get("Contents");
   const old = c.isArray() ? c.get(index) : c;
   if (old.isIndirect() && old.isStream() && !sharedStream(doc, old.asIndirect())) {
@@ -1257,17 +1468,31 @@ export function deletePlacement(mupdf: MuPDFModule, doc: Doc, page: MuPDF.PDFPag
  * block around it when that block holds only a cm and the operation (so that a second replace
  * takes the place of the first instead of nesting inside it). A form's own clips (its /BBox and
  * those set inside it) would go with the form: they are written again around the new picture.
+ *
+ * `orientation` is the picture's EXIF orientation (Picture.orientation): the fit is made for the
+ * picture as it is meant to be seen, and its stored pixels are drawn turned (ORIENTATION), so a
+ * photo stored sideways shows upright. The matrix returned is then the stored pixels' one, what
+ * images() lists for the new picture. The old picture is taken as seen too: when it was itself
+ * turned by its EXIF orientation (Placement.turn: a photo the app placed or put in before), that
+ * turn is taken out of its matrix first, so the new picture is not drawn a quarter turn off.
  */
-export function replacePlacement(mupdf: MuPDFModule, doc: Doc, page: MuPDF.PDFPage, found: PagePlacements, p: Placement, image: MuPDF.Image, bytes: Uint8Array): Matrix {
+export function replacePlacement(
+  mupdf: MuPDFModule, doc: Doc, page: MuPDF.PDFPage, found: PagePlacements, p: Placement, image: MuPDF.Image, bytes: Uint8Array,
+  orientation = 1,
+): Matrix {
   editable(p);
   const pageObj = page.getObject();
   const xobjects = ownXObjects(doc, pageObj);
   let k = 1, name: string;
   do name = `PEImg${k++}`;
   while (!xobjects.get(name).isNull());
-  xobjects.put(name, pictureObject(doc, image, bytes, layerOf(doc, p.layers)));
+  xobjects.put(name, pictureObject(doc, image, bytes, layerOf(doc, p.layers), orientation));
 
-  const target = unmirrored(containFit(concat(visiblePart(p), p.matrix), image.getWidth(), image.getHeight()));
+  const turned = orientation >= 5 && orientation <= 8;
+  const [w, h] = turned ? [image.getHeight(), image.getWidth()] : [image.getWidth(), image.getHeight()];
+  // (the old turn maps the unit square onto itself: the box is the same, its corners named as seen)
+  const seen = concat(invert(ORIENTATION[p.turn] ?? IDENTITY), concat(visiblePart(p), p.matrix));
+  const target = concat(ORIENTATION[orientation] ?? IDENTITY, unmirrored(containFit(seen, w, h)));
   const { stream } = p.top;
   const s = found.texts[stream], slot = slotOf(s, p);
   const K = concat(concat(FLIP, target), invert(slot.X)); // in the user space of the slot
@@ -1354,14 +1579,34 @@ function clipIn(c: Clip, X: Matrix): string | null {
 const added = new WeakMap<Doc, Map<string, { bytes: Uint8Array; num: number }[]>>();
 
 /**
- * The image XObject of a replacement picture: the one added before for the same bytes and the
- * same layer, or a new one. MuPDF backs pictures without a colour profile with its own (Artifex's)
- * profiles, which the app does not ship (see icc.ts): those get the device colour space instead.
- * `layer` becomes its /OC.
+ * The key of an image XObject the app made (pictureObject) that records the EXIF orientation
+ * (2..8) its placements turn the stored pixels by: the pixels say nothing of it once the JPEG has
+ * lost its metadata, and a replace must take the turn out to fit the new picture as seen
+ * (Placement.turn). Readers ignore a key they do not know.
  */
-function pictureObject(doc: Doc, image: MuPDF.Image, bytes: Uint8Array, layer: Obj | null): Obj {
+const TURN_KEY = "PEOrientation";
+
+/**
+ * The EXIF orientation an image XObject records (TURN_KEY), 1 when it records none. Two image
+ * objects with the same bytes but another orientation are not the same picture to place.
+ */
+export function turnOf(xo: Obj): number {
+  const v = xo.get(TURN_KEY);
+  const o = v.isNumber() ? v.asNumber() : 1;
+  return Number.isInteger(o) && o >= 1 && o <= 8 ? o : 1;
+}
+
+/**
+ * The image XObject of a replacement picture: the one added before for the same bytes, the same
+ * layer and the same EXIF `orientation`, or a new one. MuPDF backs pictures without a colour
+ * profile with its own (Artifex's) profiles, which the app does not ship (see icc.ts): those get
+ * the device colour space instead. `layer` becomes its /OC, and an orientation other than 1 is
+ * recorded in it (TURN_KEY).
+ */
+export function pictureObject(doc: Doc, image: MuPDF.Image, bytes: Uint8Array, layer: Obj | null, orientation = 1): Obj {
   const reusable = !layer || layer.isIndirect();
-  const key = `${bytes.length}:${hashOf(bytes)}:${layer ? layer.asIndirect() : 0}`;
+  const turn = Number.isInteger(orientation) && orientation >= 2 && orientation <= 8 ? orientation : 1;
+  const key = `${bytes.length}:${hashOf(bytes)}:${layer ? layer.asIndirect() : 0}:${turn}`;
   let seen = added.get(doc);
   if (!seen) added.set(doc, (seen = new Map()));
   if (reusable)
@@ -1369,7 +1614,7 @@ function pictureObject(doc: Doc, image: MuPDF.Image, bytes: Uint8Array, layer: O
       // (still that picture: an object number freed by an edit could have been given to another)
       const obj = doc.newIndirect(known.num), size = (key: string) => obj.get(key).asNumber();
       if (sameBytes(known.bytes, bytes) && obj.isStream() && nameOf(obj.get("Subtype")) === "Image"
-        && size("Width") === image.getWidth() && size("Height") === image.getHeight()) return obj;
+        && size("Width") === image.getWidth() && size("Height") === image.getHeight() && turnOf(obj) === turn) return obj;
     }
   const obj = doc.addImage(image); // a JPEG stays as it is (DCTDecode)
   const own = embedsProfile(bytes);
@@ -1379,6 +1624,7 @@ function pictureObject(doc: Doc, image: MuPDF.Image, bytes: Uint8Array, layer: O
     if (device && own !== true) target.put("ColorSpace", doc.newName(device));
   }
   if (layer) obj.put("OC", layer);
+  if (turn !== 1) obj.put(TURN_KEY, turn);
   if (reusable) seen.set(key, [...(seen.get(key) ?? []), { bytes, num: obj.asIndirect() }]);
   return obj;
 }
@@ -1461,7 +1707,7 @@ function layerOf(doc: Doc, layers: Obj[]): Obj | null {
  * dictionary) holding a shallow copy of /XObject, so that adding or removing a name changes no
  * other page or form.
  */
-function ownXObjects(doc: Doc, pageObj: Obj): Obj {
+export function ownXObjects(doc: Doc, pageObj: Obj): Obj {
   const current = pageObj.getInheritable("Resources");
   const res = doc.newDictionary(), xobjects = doc.newDictionary();
   if (current.isDictionary()) current.forEach((v, k) => { if (k !== "XObject") res.put(k, v); });

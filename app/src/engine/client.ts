@@ -1,5 +1,7 @@
 // Main-thread side of the engine: starts the worker and turns messages into promises.
-import type { Matrix, Op, RequestOf, ResponseMessage, ResultMap, SaveOptions } from "./protocol";
+import type {
+  FieldValue, ImageTarget, Matrix, Op, RequestOf, ResponseMessage, ResultMap, SaveOptions, TextStyle,
+} from "./protocol";
 // The URL of the worker chunk: Vite bundles worker.ts as a worker entry for this import.
 import workerPath from "./worker.ts?worker&url";
 
@@ -64,7 +66,7 @@ export class EngineClient {
     const id = this.nextId++;
     return new Promise<ResultMap[K]>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-      this.worker.postMessage({ id, ...req }, transfer);
+      this.worker.postMessage({ ...req, id }, transfer); // the message id last: nothing in a request can replace it
     });
   }
 
@@ -96,6 +98,25 @@ export class EngineClient {
   }
   renderImage(pageIndex: number, imageIndex: number, scale: number) {
     return this.call<"renderImage">({ op: "renderImage", pageIndex, imageIndex, scale });
+  }
+  fields(pageIndex: number) {
+    return this.call<"fields">({ op: "fields", pageIndex });
+  }
+  setField(name: string, value: FieldValue) {
+    return this.call<"setField">({ op: "setField", name, value });
+  }
+  addText(pageIndex: number, origin: [number, number], text: string, style: TextStyle) {
+    return this.call<"addText">({ op: "addText", pageIndex, origin, text, style });
+  }
+  addedTexts(pageIndex: number) {
+    return this.call<"addedTexts">({ op: "addedTexts", pageIndex });
+  }
+  editAddedText(pageIndex: number, id: number, patch: { text?: string; origin?: [number, number]; style?: TextStyle }) {
+    return this.call<"editAddedText">({ op: "editAddedText", pageIndex, addedId: id, ...patch });
+  }
+  /** The bytes are transferred to the worker: the caller's ArrayBuffer becomes empty. */
+  addImage(bytes: ArrayBuffer, targets: ImageTarget[], alt: string | null) {
+    return this.call<"addImage">({ op: "addImage", bytes, targets, alt }, [bytes]);
   }
   undo() {
     return this.call<"undo">({ op: "undo" });

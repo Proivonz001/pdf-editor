@@ -70,6 +70,19 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
       const bitmap = await createImageBitmap(new ImageData(rgba, width, height));
       return reply<"renderImage">({ bitmap, width, height, scale, rect }, [bitmap]);
     }
+    case "fields":
+      return reply<"fields">(s.fields(msg.pageIndex));
+    case "setField":
+      return reply<"setField">(s.setField(msg.name, msg.value));
+    case "addText":
+      return reply<"addText">(s.addText(msg.pageIndex, msg.origin, msg.text, msg.style));
+    case "addedTexts":
+      return reply<"addedTexts">(s.addedTexts(msg.pageIndex));
+    case "editAddedText":
+      return reply<"editAddedText">(s.editAddedText(msg.pageIndex, msg.addedId, { text: msg.text, origin: msg.origin, style: msg.style }));
+    case "addImage":
+      // Transferred like the bytes of "replaceImage": the session keeps this buffer in its log, not a copy.
+      return reply<"addImage">(s.addImage(msg.bytes, msg.targets, msg.alt, { transfer: true }));
     case "undo":
       return reply<"undo">(s.undo());
     case "redo":

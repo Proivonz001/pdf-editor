@@ -1,6 +1,8 @@
 /* Document viewer: the workspace and its pages, the edit banner and the signed-PDF notice, the
-   page indicator, the busy bar, and edit mode (text lines, the line editor and its context bar;
-   images, the selection frame and its context bar).
+   page indicator, the busy bar, edit mode (text lines, the line editor and its context bar;
+   images, the selection frame and its context bar), and fill and sign (form fields, the tap
+   catcher, the text writer and what the user wrote, which Modifica's Aggiungi testo uses too; at
+   the end).
    Colours only from tokens.css. PDF pages are white in both themes, so what is drawn on a page
    (lines, editor, their focus rings) must read on white in dark mode too: there --focus is
    tuned for dark surfaces, so on-page rings use --accent, which is the same colour in the light
@@ -942,6 +944,493 @@
   }
 
   .image-bar {
+    animation: none;
+  }
+}
+
+/* --- Fill and sign -------------------------------------------------------------------------
+   The text writer's layer of Compila e firma and of Modifica's Aggiungi testo (FillLayer.tsx),
+   and the form fields of fill and browse modes (FormLayer.tsx).
+   Stacking on a page: the fill layer's tap catcher at the bottom (no z-index), then the form
+   fields (2), the pictures the user added above them (2 too, later in the page: a signature put
+   over a field can still be selected, and the field under it is reached with Tab), the boxes of
+   what the user wrote above those (3, so a date written over a signature reopens), the writer
+   (3, after them) and the selected picture's frame (3, after it), the context bars (4), and the
+   focused field with its chip (5). Like the line marks, what is drawn on the page reads on white
+   in both themes: tints are mixed from --accent, which reads on white in the dark theme too. */
+
+.form-fields,
+.fill-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* A field's widget: see-through with an ink-blue tint, as Acrobat's blue boxes; the canvas draws
+   the field's own look (its value) under it. */
+.form-field {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .form-field:not(.is-locked, .is-sign):hover {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+}
+
+.form-field:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* The focused field (and its chip) above its neighbours. */
+.form-field.is-focused {
+  z-index: 5;
+}
+
+/* Required: a small "*" badge on the top right corner (with aria-required: not by colour alone). */
+.form-field.is-required::after {
+  content: "*";
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: 700 11px/15px var(--font-ui);
+  text-align: center;
+  pointer-events: none;
+}
+
+/* The native control over the widget (over its text box, turned with it: FormLayer), invisible at
+   rest: only its focus ring (on the field) and, once focused, its text show. */
+.form-field-control {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-family: var(--font-sans);
+  line-height: 1.15;
+  outline: none;
+  resize: none;
+  transform-origin: 50% 50%;
+  color-scheme: light;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.form-field.is-text .form-field-control {
+  overflow: hidden;
+}
+
+.form-field.is-comb .form-field-control {
+  font-family: var(--font-mono);
+}
+
+/* Focused, or until the canvas shows what was written: the text shows, in the field's ink, on white. */
+.form-field.is-showing .form-field-control {
+  background: #fff; /* on the page, white in both themes */
+  color: var(--ink, #000);
+  caret-color: var(--accent);
+}
+
+.form-field.is-choice .form-field-control {
+  padding: 0 4px;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.form-field.is-choice.is-showing .form-field-control {
+  opacity: 1;
+}
+
+.form-field.is-box .form-field-control {
+  appearance: none;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The radio buttons of one field: a group that lets taps through between them. */
+.form-field-group {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* An unsigned signature field: "Sign here", opaque (MuPDF draws a placeholder in an empty one). */
+.form-field.is-sign {
+  background: none;
+  box-shadow: none;
+}
+
+.form-field-control.form-field-sign {
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 1.5px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, #fff);
+  color: color-mix(in srgb, var(--accent) 70%, #000);
+  font: 600 var(--fs-xs) / 1.2 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.form-field-sign .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* Read-only (or otherwise locked): no tint, grey dots and a small lock; a tap says why. */
+.form-field.is-locked {
+  background: none;
+  box-shadow: none;
+  outline: 1px dotted var(--page-mark-locked);
+  outline-offset: -1px;
+  cursor: not-allowed;
+}
+
+.form-field.is-locked .icon {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 12px;
+  height: 12px;
+  color: var(--page-mark-locked-strong);
+}
+
+/* The focused field's name, "required" and its length limit, above it (below near the top). */
+.form-field-chip {
+  position: absolute;
+  left: -2px;
+  bottom: calc(100% + 6px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(360px, 80vw);
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+  font: var(--fs-xs) / 1.3 var(--font-ui);
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.form-field-chip.is-below {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
+.form-field-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.form-field-chip-label {
+  font-weight: 600;
+}
+
+.form-field-chip-note {
+  color: var(--muted);
+}
+
+.form-field-chip-note::before {
+  content: " · ";
+}
+
+.form-field-today {
+  flex: none;
+  height: 24px;
+  min-width: 0;
+  margin-right: -4px;
+  padding: 0 8px;
+  border-color: var(--line-strong);
+  font-size: var(--fs-xs);
+}
+
+/* The tap catcher: the whole page, under everything else; one finger scrolls, two zoom. */
+.fill-catcher {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+@media (hover: hover) {
+  .fill-catcher {
+    cursor: crosshair;
+  }
+}
+
+/* The hidden field that holds a phone's keyboard between two writers (FillLayer): 16 px text, so
+   iOS does not zoom the page when it takes the focus. */
+.fill-keeper {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Text the user wrote: a dotted underline (the details panel's legend), a real button. */
+.added-box {
+  position: absolute;
+  z-index: 3;
+  box-sizing: content-box;
+  margin: -1px 0 0 -2px;
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent linear-gradient(to right, var(--page-mark-image) 60%, transparent 0) left bottom / 4px 1.5px repeat-x;
+  cursor: pointer;
+  font: inherit;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.added-box:focus-visible {
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .added-box:hover {
+    background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  }
+}
+
+/* The same mark on a line the user wrote, in edit mode. */
+.line.is-added {
+  background: var(--hl-soft) linear-gradient(to right, var(--page-mark) 60%, transparent 0) left bottom / 4px 1.5px repeat-x;
+  box-shadow: none;
+}
+
+.line.is-added:focus-visible {
+  background: var(--hl);
+  box-shadow: inset 0 -2px 0 var(--hl-line);
+}
+
+@media (hover: hover) {
+  .line.is-added:hover {
+    background: var(--hl);
+    box-shadow: inset 0 -2px 0 var(--hl-line);
+  }
+}
+
+/* The writer: the line editor's look (white field, ink-blue outline, highlighter ring), the ring
+   being a real border a mouse can drag it by (RING in FillLayer.tsx). */
+.writer {
+  position: absolute;
+  z-index: 3;
+  padding: 5px;
+  border-radius: 4px;
+  background: var(--hl);
+  cursor: move;
+}
+
+.writer.is-dragging {
+  cursor: grabbing;
+}
+
+.writer-input {
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
+  background: #fff; /* on the page, white in both themes */
+  color-scheme: light;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+  caret-color: var(--accent);
+  field-sizing: content;
+  cursor: text;
+}
+
+.writer-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* Touch screens: the round grip before the field (as the selected image's), 44 px. */
+.writer-grip {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px #fff, var(--shadow-float);
+  color: var(--on-accent);
+  touch-action: none;
+}
+
+.writer-grip .icon {
+  width: 22px;
+  height: 22px;
+  color: inherit;
+}
+
+/* The writer's context bar: the line editor's, on two rows when the page is too narrow. */
+.context-bar.writer-bar {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  height: auto;
+  min-height: 36px;
+  max-width: 100%;
+}
+
+.writer-move {
+  touch-action: none;
+  cursor: grab;
+}
+
+.writer-size {
+  flex: none;
+  min-width: 40px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.writer-inks {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+.writer-ink[aria-pressed="true"] {
+  background: var(--active-bg);
+}
+
+.writer-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.writer-ink[aria-pressed="true"] .writer-swatch {
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent);
+}
+
+/* What was just written, until the canvas shows it; and, with a mouse, the ghost of what a click
+   would put there. Line height 1: FillLayer puts the baseline 0.85 em below the top. */
+.writer-copy,
+.fill-ghost {
+  position: absolute;
+  z-index: 1;
+  font-family: var(--font-sans);
+  line-height: 1;
+  white-space: pre;
+  pointer-events: none;
+}
+
+.fill-ghost {
+  opacity: 0.5;
+}
+
+.fill-ghost.is-text {
+  padding-left: 1px;
+  border-left: 1.5px solid currentColor;
+}
+
+/* Compila e firma and Aggiungi testo: the added pictures' layer lets taps through to the catcher
+   between them. Its boxes, and the picture being moved (its sprite and ghost), stack above the
+   form fields. */
+.images.is-added-only {
+  pointer-events: none;
+}
+
+.images.is-added-only .image-box,
+.images.is-added-only .image-frame {
+  pointer-events: auto;
+}
+
+.images.is-added-only .image-box,
+.images.is-added-only .image-sprite,
+.images.is-added-only .image-ghost {
+  z-index: 2;
+}
+
+@media (pointer: coarse) {
+  .context-bar.writer-bar {
+    min-height: 44px;
+  }
+
+  .form-field-today {
+    height: 32px;
+  }
+}
+
+@media (forced-colors: active) {
+  .form-fields,
+  .fill-layer {
+    forced-color-adjust: none;
+  }
+
+  .form-field-chip,
+  .fill-layer .context-slot {
+    forced-color-adjust: auto;
+  }
+
+  /* The writer's two inks keep their colour, each on a ring of white paper (the page stays white
+     in every contrast theme), edged in the theme's text colour; the chosen one gets a Highlight
+     ring outside that. So black and blue still differ without the tooltip. */
+  .writer-swatch {
+    forced-color-adjust: none;
+    box-sizing: border-box;
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 1px CanvasText;
+  }
+
+  .writer-ink[aria-pressed="true"] .writer-swatch {
+    box-shadow: 0 0 0 1px CanvasText, 0 0 0 3px Canvas, 0 0 0 5px Highlight;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .writer-bar {
     animation: none;
   }
 }

@@ -1,8 +1,10 @@
 // The app shell, laid out by styles/layout.css. Without a document: top bar and home (or the
 // "opening…" state). With one, on desktop: top bar, tool rail, thumbnails panel, viewer and
-// details panel; on phones: top bar, viewer, tab bar and the bottom sheets. Plus the drop
-// overlay, toasts and dialogs. Global listeners (shortcuts, "Open with", beforeunload,
-// "updated in another window") are installed once here.
+// details panel, both panels docked in their own columns (the thumbnails open by default from
+// 1024 px, the details from 1200 px, one remembered choice each: panels.ts); on phones: top bar,
+// viewer, tab bar and the bottom sheets (the details among them). Plus the drop overlay, toasts
+// and dialogs. Global listeners (shortcuts, "Open with", beforeunload, "updated in another
+// window") are installed once here.
 import { useEffect, useLayoutEffect } from "preact/hooks";
 import { t } from "./i18n";
 import { onLaunchFiles } from "./platform/launch";

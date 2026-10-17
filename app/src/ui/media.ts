@@ -14,7 +14,7 @@ function mediaSignal(query: string) {
 export const isNarrow = mediaSignal("(max-width: 639.98px)");
 /** Room for the thumbnails panel by default (>= 1024 px). */
 export const isRoomy = mediaSignal("(min-width: 1024px)");
-/** Room for the details panel (>= 1200 px). */
+/** Room for the details panel beside the page and the thumbnails: open by default (>= 1200 px). */
 export const isWide = mediaSignal("(min-width: 1200px)");
 /** Room in the desktop top bar for the zoom controls (>= 768 px); below, they are in the More menu. */
 export const hasZoomRoom = mediaSignal("(min-width: 768px)");

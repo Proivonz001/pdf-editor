@@ -290,3 +290,86 @@ export const IconMove = () => (
     <path d="m9.5 6.5 2.5-2.5 2.5 2.5M9.5 17.5l2.5 2.5 2.5-2.5M6.5 9.5 4 12l2.5 2.5M17.5 9.5 20 12l-2.5 2.5" />
   </Svg>
 );
+
+// Fill and sign (the tool, its sub-tools, the banner and the saved signatures)
+
+/** A pen nib over a wavy line: the "Fill & sign" tool (rail and tab bar). */
+export const IconSign = () => (
+  <Svg>
+    <path d="m15.5 4.5 4 4-7.5 7.5-5 1.2 1.2-5z" />
+    <path d="m7.2 17 3.6-3.6" />
+    <path d="M3.5 20.5c1.4-1.3 2.8-1.3 4.2 0s2.8 1.3 4.2 0 2.8-1.3 4.2 0" />
+  </Svg>
+);
+
+/** A ticked box: the ✓ sub-tool (not the plain check of "Done"). */
+export const IconTickBox = () => (
+  <Svg>
+    <rect x="4" y="4" width="16" height="16" rx="2.5" />
+    <path d="m8 12.5 2.8 2.8L16.5 9" />
+  </Svg>
+);
+
+/** A crossed box: the ✗ sub-tool. */
+export const IconCrossBox = () => (
+  <Svg>
+    <rect x="4" y="4" width="16" height="16" rx="2.5" />
+    <path d="m9 9 6 6M15 9l-6 6" />
+  </Svg>
+);
+
+/** A calendar page: the date sub-tool. */
+export const IconCalendar = () => (
+  <Svg>
+    <rect x="3.5" y="5.5" width="17" height="15" rx="2" />
+    <path d="M3.5 10h17M8 3.5v4M16 3.5v4" />
+    <path d="M8 14h.1M12 14h.1M16 14h.1M8 17.2h.1M12 17.2h.1" />
+  </Svg>
+);
+
+/** A scribble on a signature line with its small cross: a signature (the Sign sub-tool, saved signatures). */
+export const IconSignature = () => (
+  <Svg>
+    <path d="M3.5 19.5h17" />
+    <path d="m4 13.5 2.5 2.5M6.5 13.5 4 16" />
+    <path d="M9.5 16c.8-2.6 1.8-8.5 3.3-8.5 1.6 0-.9 7.5.6 7.5 1.1 0 1.7-3.2 2.9-3.2.9 0 .7 2.2 1.7 2.2.6 0 1.2-.6 1.6-1" />
+  </Svg>
+);
+
+/** A page with a small scribble in its bottom corner: initials (the Initials sub-tool). */
+export const IconInitials = () => (
+  <Svg>
+    <rect x="4.5" y="3.5" width="15" height="17" rx="2" />
+    <path d="M8 8h8M8 11h5" />
+    <path d="M11.5 17c.6-1.6 1.2-3.6 2-3.6.9 0-.3 3.1.6 3.1.6 0 .9-1.2 1.6-1.2" />
+  </Svg>
+);
+
+/** A crosshair: put the chosen thing in the middle of the visible page (keyboard path). */
+export const IconTarget = () => (
+  <Svg>
+    <circle cx="12" cy="12" r="6.5" />
+    <path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4" />
+    <path d="M12 12h.1" />
+  </Svg>
+);
+
+/** A field with a text cursor and an arrow after it: go to the next empty form field. */
+export const IconNextField = () => (
+  <Svg>
+    <rect x="3.5" y="7" width="10" height="10" rx="1.6" />
+    <path d="M7.5 10v4" />
+    <path d="M16.5 12h5" />
+    <path d="m19 9.5 2.5 2.5-2.5 2.5" />
+  </Svg>
+);
+
+// Fill and sign: the text writer (viewer)
+
+/** A return arrow, down and back to the start: write the text and start a line below it. */
+export const IconNewLine = () => (
+  <Svg>
+    <path d="M19 5v6.5a2.5 2.5 0 0 1-2.5 2.5H5.5" />
+    <path d="m9 10.5-3.5 3.5L9 17.5" />
+  </Svg>
+);

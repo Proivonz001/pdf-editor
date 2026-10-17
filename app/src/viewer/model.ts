@@ -1,7 +1,7 @@
 // The viewer's model of an open document: one PageModel per page, with small signals so that
 // a page component re-renders only when something about *that* page changes.
 import { signal, type Signal } from "@preact/signals";
-import type { DocInfo, ImageInfo, LineInfo, Rect } from "../engine/protocol";
+import type { AddedText, DocInfo, FieldWidget, ImageInfo, LineInfo, Rect } from "../engine/protocol";
 
 /** Text lines of a page, tagged with the page revision they were read at. */
 export interface PageLines {
@@ -19,6 +19,22 @@ export interface PageImages {
   failed?: boolean;
 }
 
+/** Form field widgets of a page (in its tab order), tagged with the page revision they were read at. */
+export interface PageFields {
+  rev: number;
+  fields: FieldWidget[];
+  /** Reading the fields failed: nothing to show, and no retry until the page changes. */
+  failed?: boolean;
+}
+
+/** Texts the app wrote on a page (addText), tagged with the page revision they were read at. */
+export interface PageAdded {
+  rev: number;
+  texts: AddedText[];
+  /** Reading them failed: nothing to show, and no retry until the page changes. */
+  failed?: boolean;
+}
+
 export interface PageModel {
   index: number;
   /** Page bounds in page space (points, y down). */
@@ -26,16 +42,27 @@ export interface PageModel {
   /** Size in points. */
   width: number;
   height: number;
-  /** Within about one screen of the viewport: gets a rendered bitmap (and lines in edit mode). */
+  /** Within about one screen of the viewport: gets a rendered bitmap (and lines in Modifica with Cambia). */
   near: Signal<boolean>;
   /** Within about three screens: keeps its canvas. Pages further away release it. */
   keep: Signal<boolean>;
   /** Bumped whenever the page's appearance changes (edit, undo, redo). */
   rev: Signal<number>;
-  /** Cached text lines (edit mode). Null = not read yet or dropped after a change. */
+  /** Cached text lines (Modifica with Cambia). Null = not read yet or dropped after a change. */
   lines: Signal<PageLines | null>;
-  /** Cached images (edit mode). Null = not read yet or dropped after a change. */
+  /**
+   * Cached images, all of the page's (Modifica with Cambia shows them all; wherever the text
+   * writer is on, Compila e firma and Modifica with Aggiungi testo, only the ones the user added
+   * show). Null = not read yet or dropped after a change.
+   */
   images: Signal<PageImages | null>;
+  /** Cached form field widgets (fill and browse modes). Null = not read yet or dropped after a change. */
+  fields: Signal<PageFields | null>;
+  /**
+   * Cached texts the app wrote, read wherever the text writer is on (Compila e firma, Modifica
+   * with Aggiungi testo). Null = not read yet or dropped after a change.
+   */
+  added: Signal<PageAdded | null>;
 }
 
 export interface OpenDoc {
@@ -57,5 +84,7 @@ export function createPages(info: DocInfo): PageModel[] {
     rev: signal(0),
     lines: signal<PageLines | null>(null),
     images: signal<PageImages | null>(null),
+    fields: signal<PageFields | null>(null),
+    added: signal<PageAdded | null>(null),
   }));
 }

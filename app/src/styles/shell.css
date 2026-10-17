@@ -1,5 +1,6 @@
-/* Top bar (desktop, phone, no document), tool rail and details panel. Colours only from
-   tokens.css.
+/* Top bar (desktop, phone, no document), tool rail, details panel, and the bars of Edit and
+   Fill & sign: their sub-tools, hint and buttons (ui/EditBar.tsx, ui/fill/FillBar.tsx,
+   ui/SubTools.tsx; phone.css adds the phone strip). Colours only from tokens.css.
 
    Width budget of the desktop top bar: at 640 px it must hold the logo, the file chip,
    Undo/Redo, Open, "Download PDF" (always labelled, with its options chevron) and More, with
@@ -12,8 +13,14 @@
 
 /* --- Top bar: shared ----------------------------------------------------------------------- */
 
+/* Sticky, not relative: the page itself never scrolls (the viewer and the home page scroll inside
+   .main), so it stays where it is, but iOS 26 then counts it as a bar at the top. In an app added
+   to the Home Screen, iOS blurs the band under the status bar unless the box at the top edge is
+   fixed or sticky (at least 90% of the width, more than 10 px tall): with a relative bar the top
+   of the app looked frosted. */
 .topbar {
-  position: relative;
+  position: sticky;
+  top: 0;
   z-index: 20; /* above the panels and the viewer, so the More menu drops over them */
   display: flex;
   align-items: center;
@@ -423,7 +430,7 @@
   }
 }
 
-/* --- Details panel (desktop, from 1200 px) ------------------------------------------------- */
+/* --- Details panel (desktop; open by default from 1200 px; phone sheet: details.css) ------ */
 
 .details-panel {
   width: calc(var(--details-w) + env(safe-area-inset-right, 0px));
@@ -658,9 +665,41 @@
   border: 1px dotted var(--page-mark-locked);
 }
 
+/* Fill mode: a form field (the ink-blue tint and thin border of the field overlays), a required
+   one (the same with its asterisk in the corner), and text the user wrote (a dotted underline). */
+.dp-swatch.is-field::before {
+  background: var(--active-bg);
+  box-shadow: inset 0 0 0 1px var(--active-border);
+}
+
+.dp-swatch.is-required {
+  position: relative;
+}
+
+.dp-swatch.is-required::after {
+  content: "*";
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  color: var(--accent);
+  font: 700 12px / 1 var(--font-ui);
+}
+
+.dp-swatch.is-added::before {
+  height: 6px;
+  border-radius: 0;
+  border-bottom: 2px dotted var(--page-mark-image);
+}
+
 @media (forced-colors: active) {
   .dp-swatch {
     forced-color-adjust: none;
+  }
+
+  /* No tint to count on: the field's box is drawn whole. */
+  .dp-swatch.is-field::before {
+    box-shadow: none;
+    border: 1px solid var(--accent);
   }
 
   /* As .line and .image-box there (viewer.css): a solid box for an editable line or a movable
@@ -738,4 +777,255 @@
 .dp-key-row dd {
   margin: 0;
   min-width: 0;
+}
+
+/* --- The tools' bars (ui/EditBar.tsx, ui/fill/FillBar.tsx, ui/SubTools.tsx) ----------------
+   In Edit and Fill mode the edit banner (viewer.css) holds, on desktop, two rows: the
+   tool's name and its sub-tools on the left with "Put it in the middle" (an icon), Cancel and
+   Done on the right, so none of them moves when the hint changes; under them the hint and, in
+   Fill mode, the form's field count with "Next empty field" and the form's notes. When the bar
+   is narrow the sub-tools show their icons only (each keeps its name, on the button, and its
+   tooltip): below 900 px of bar in Fill mode (six of them), below 640 px in Edit mode (three);
+   below 620 px Fill mode's name goes too. On phones the bar holds only the hint, the count and
+   the buttons (phone.css). */
+
+.edit-banner.is-tools {
+  container: tool-banner / inline-size;
+  flex-wrap: wrap;
+  column-gap: 12px;
+  row-gap: 0;
+}
+
+.tool-banner-lead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.tool-banner-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The sub-tools: a white group on the tinted bar, so they read as controls. */
+.sub-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sub-tools.is-banner {
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--hint-text) 22%, transparent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.sub-tools.is-banner .sub-tool {
+  height: 30px;
+  padding: 0 9px 0 7px;
+  gap: 5px;
+  border-radius: 6px;
+  font-size: var(--fs-sm);
+}
+
+.sub-tool .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* A lit sub-tool: bold too, so the state is not shown by colour alone. */
+.sub-tool[aria-pressed="true"] .sub-tool-label {
+  font-weight: 700;
+}
+
+/* Phones: a column beside Done. Desktop: the second row, the hint then the count on one line
+   when they fit, the notes under them. */
+.tool-banner-info {
+  flex: 1 1 16em;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-banner-info .edit-banner-text {
+  flex: none;
+  padding: 7px 0 4px;
+}
+
+.tool-banner-info .edit-banner-text:last-child {
+  padding-bottom: 7px;
+}
+
+.edit-banner.is-tools:not(.is-compact) .tool-banner-info {
+  flex-basis: 100%;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 14px;
+  padding-bottom: 5px;
+}
+
+.edit-banner.is-tools:not(.is-compact) .tool-banner-info .edit-banner-text {
+  flex: 0 1 auto;
+  padding: 3px 0;
+}
+
+.fill-banner-form {
+  margin: 0 0 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.edit-banner.is-tools:not(.is-compact) .fill-banner-form {
+  margin: 0;
+}
+
+.edit-banner.is-tools:not(.is-compact) .fill-banner-note {
+  flex-basis: 100%;
+  margin: 2px 0;
+}
+
+.fill-banner-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Next empty field": quiet, underlined like a link, in the banner's ink. */
+.btn.fill-banner-link {
+  height: 26px;
+  padding: 0 8px 0 6px;
+  gap: 5px;
+  color: inherit;
+  font-size: var(--fs-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.fill-banner-link .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.fill-banner-note {
+  margin: 0 0 7px;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.tool-banner-actions {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 0;
+}
+
+/* Cancel looks like Done beside it (viewer.css, .edit-banner-done). */
+.tool-banner-btn {
+  flex: none;
+  height: 30px;
+  padding: 0 12px 0 10px;
+  gap: 5px;
+  border-color: color-mix(in srgb, var(--hint-text) 28%, transparent);
+  font-size: var(--fs-sm);
+}
+
+.tool-banner-btn .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* "Put it in the middle": the icon alone, quieter than the buttons beside it (a ghost: no fill
+   and no border at rest, the usual hover tint and focus ring), in the banner's ink. */
+.btn.tool-banner-centre {
+  flex: none;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  color: inherit;
+}
+
+.tool-banner-centre .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Icons only: Fill mode's six sub-tools need more room than Edit mode's three. */
+@container tool-banner (max-width: 899.98px) {
+  .edit-banner.is-fill .sub-tools.is-banner .sub-tool {
+    width: 32px;
+    padding: 0;
+  }
+
+  .edit-banner.is-fill .sub-tools.is-banner .sub-tool-label {
+    display: none;
+  }
+}
+
+@container tool-banner (max-width: 619.98px) {
+  .edit-banner.is-fill .tool-banner-title {
+    display: none;
+  }
+}
+
+@container tool-banner (max-width: 639.98px) {
+  .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
+    width: 32px;
+    padding: 0;
+  }
+
+  .edit-banner.is-edit .sub-tools.is-banner .sub-tool-label {
+    display: none;
+  }
+}
+
+/* Touch screens (a tablet): 36 px buttons with an invisible 44 px target, as the banner's Done;
+   icon-only sub-tools and "Put it in the middle" get the full 44 px width. */
+@media (pointer: coarse) {
+  .sub-tools.is-banner .sub-tool,
+  .tool-banner-btn,
+  .btn.tool-banner-centre,
+  .btn.fill-banner-link {
+    height: 36px;
+  }
+
+  .btn.tool-banner-centre {
+    width: var(--tap);
+    min-width: var(--tap);
+  }
+
+  .sub-tools.is-banner .sub-tool::after,
+  .tool-banner-btn::after,
+  .tool-banner-centre::after,
+  .btn.fill-banner-link::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+
+  @container tool-banner (max-width: 899.98px) {
+    .edit-banner.is-fill .sub-tools.is-banner .sub-tool {
+      width: var(--tap);
+    }
+  }
+
+  @container tool-banner (max-width: 639.98px) {
+    .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
+      width: var(--tap);
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .sub-tools.is-banner {
+    border-color: CanvasText;
+  }
 }
