@@ -373,3 +373,32 @@ export const IconNewLine = () => (
     <path d="m9 10.5-3.5 3.5L9 17.5" />
   </Svg>
 );
+
+// Installing the app (ui/InstallDialog.tsx and its entries). Our own drawings: the iPhone steps
+// use IconShare above for the Share button, never Apple's symbols.
+
+/** A phone with an arrow coming down into it: install the app (the entries and the toast). */
+export const IconInstall = () => (
+  <Svg>
+    <rect x="6.5" y="2.5" width="11" height="19" rx="2.2" />
+    <path d="M12 6.5v7.5" />
+    <path d="m9 11 3 3 3-3" />
+    <path d="M10.5 18.2h3" />
+  </Svg>
+);
+
+/** A plus in a rounded square: "Add to Home Screen" in the iPhone steps. */
+export const IconAddSquare = () => (
+  <Svg>
+    <rect x="4" y="4" width="16" height="16" rx="3.5" />
+    <path d="M12 8.5v7M8.5 12h7" />
+  </Svg>
+);
+
+/** Two overlapping sheets: copy (the app's link, for in-app browsers). */
+export const IconCopy = () => (
+  <Svg>
+    <rect x="8.5" y="8.5" width="11" height="11" rx="2" />
+    <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
+  </Svg>
+);

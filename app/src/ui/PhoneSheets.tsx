@@ -1,14 +1,16 @@
 // Phone bottom sheets, driven by the `sheet` signal: "pages" (the thumbnail grid; picking a page
 // closes it), "more" (open another PDF, share, download with options, details, zoom, the
-// signatures saved on this device when there are any, language, update, close document, then the
-// privacy note and the source link) and "details" (what the desktop's details panel says, live,
+// signatures saved on this device when there are any, "Install the app" where it can be installed
+// and is not yet, language, update, close document, then the privacy note and the source link)
+// and "details" (what the desktop's details panel says, live,
 // without the shortcuts). On phones they stand in for the desktop's thumbnails panel, zoom
 // controls, More menu, the chevron of the Download button and the details panel. Styled by
 // styles/phone.css (.sheet-pages, .sheet-more) and styles/details.css (.sheet-details).
 //
-// Open, Share, Download with options, Saved signatures and Close document close the sheet first:
-// they lead somewhere else (the file picker, the share sheet, the download options sheet, the
-// signature chooser, the home page). Details swaps the More sheet for the details sheet, whose
+// Open, Share, Download with options, Saved signatures, Install the app and Close document close
+// the sheet first: they lead somewhere else (the file picker, the share sheet, the download
+// options sheet, the signature chooser, the install steps or the browser's own install dialog,
+// the home page). Details swaps the More sheet for the details sheet, whose
 // Edit and Fill & sign buttons close it before starting their tool. Zoom, language and update
 // keep the More sheet open, so their effect shows behind it (an update that needs a
 // confirmation asks above it).
@@ -16,19 +18,20 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useId } from "preact/hooks";
 import { LOCALE_NAMES, otherLocale, pageCount, t, toggleLocale } from "../i18n";
 import { SOURCE_URL } from "../links";
+import { canOfferInstall } from "../platform/install";
 import { updateInstalled, updateReady } from "../platform/pwa";
 import { fitMode, savedSignatures, sheet, zoom } from "../state";
 import { MAX_ZOOM, MIN_ZOOM } from "../viewer/layout";
 import type { OpenDoc } from "../viewer/model";
 import { PageThumbnails } from "../viewer/Thumbnails";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
-import { closeDocument, openDownloadOptions, share, updateApp } from "./actions";
+import { closeDocument, openDownloadOptions, openInstall, share, updateApp } from "./actions";
 import { DetailsContent } from "./DetailsPanel";
 import { openFilePicker } from "./filePicker";
 import { openSavedSignatures, savedKind } from "./fill/FillBar";
 import {
-  IconClose, IconCode, IconDetails, IconDownload, IconFitWidth, IconGlobe, IconMinus, IconOpen, IconPlus, IconShare,
-  IconShield, IconSignature, IconUpdate, IconZoom,
+  IconClose, IconCode, IconDetails, IconDownload, IconFitWidth, IconGlobe, IconInstall, IconMinus, IconOpen, IconPlus,
+  IconShare, IconShield, IconSignature, IconUpdate, IconZoom,
 } from "./icons";
 import { canSharePdf, shortcuts } from "./media";
 import { Sheet } from "./Sheet";
@@ -189,6 +192,17 @@ export function MoreActions() {
       <ZoomRow />
       <SavedSignaturesRow />
       <div class="more-section">
+        {canOfferInstall.value && (
+          <Row
+            icon={<IconInstall />}
+            label={t("install.button")}
+            opensDialog
+            onClick={(e) => {
+              leaveSheet(e);
+              void openInstall(); // still within the tap: the browser's own dialog may open
+            }}
+          />
+        )}
         <Row icon={<IconGlobe />} label={LOCALE_NAMES[next]} lang={next} tip={t("lang.tip")} onClick={toggleLocale} />
         {updateReady.value && (
           <Row

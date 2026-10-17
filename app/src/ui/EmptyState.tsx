@@ -1,18 +1,20 @@
 // The home page (no document open), styled by styles/home.css: a hero with the "Open a PDF"
-// button, the privacy promise and the engine status (MuPDF loads about 10 MB the first time),
-// a small drawing of a line being edited, three feature cards, "How it works" and a footer with
-// the source link. Also the "opening…" card shown while a file is being read.
+// button, the privacy promise, "Install the app" (a quiet secondary button, only where the app
+// can be installed and is not yet: openInstall) and the engine status (MuPDF loads about 10 MB the
+// first time), a small drawing of a line being edited, three feature cards, "How it works" and a
+// footer with the source link. Also the "opening…" card shown while a file is being read.
 // The hero comes first in the DOM, so on phones the button is on screen without scrolling.
 // Right after a document is closed, the page heading takes the focus (see takeHomeFocus).
 import type { ComponentChildren } from "preact";
 import { useLayoutEffect, useRef } from "preact/hooks";
 import { t } from "../i18n";
 import { SOURCE_URL } from "../links";
+import { canOfferInstall } from "../platform/install";
 import { engineStatus, opening } from "../state";
-import { takeHomeFocus } from "./actions";
+import { openInstall, takeHomeFocus } from "./actions";
 import { openFilePicker } from "./filePicker";
 import { rescueFocus } from "./focus";
-import { IconCheck, IconClose, IconDevices, IconFont, IconLock, IconOpen, IconShield } from "./icons";
+import { IconCheck, IconClose, IconDevices, IconFont, IconInstall, IconLock, IconOpen, IconShield } from "./icons";
 import { isCoarse } from "./media";
 
 function EngineStatusLine() {
@@ -80,6 +82,20 @@ function SampleIllustration() {
   );
 }
 
+/**
+ * "Install the app" under the privacy line: only while there is something to offer (not in the
+ * installed app, not where the browser cannot install it). Hook-free (the tests call it).
+ */
+export function HomeInstall() {
+  if (!canOfferInstall.value) return null;
+  return (
+    <button type="button" class="btn btn-secondary home-install" aria-haspopup="dialog" onClick={() => void openInstall()}>
+      <IconInstall />
+      <span>{t("install.button")}</span>
+    </button>
+  );
+}
+
 function Feature({ icon, title, body }: { icon: ComponentChildren; title: string; body: string }) {
   return (
     <li class="home-feature">
@@ -138,6 +154,7 @@ export function EmptyState() {
                 {!isCoarse.value && <p class="home-drop-hint">{t("empty.dropHint")}</p>}
               </div>
               <p class="home-privacy"><IconLock />{t("empty.privacy")}</p>
+              <HomeInstall />
               <EngineStatusLine />
             </div>
           </div>
