@@ -486,6 +486,106 @@
   max-width: 120px;
 }
 
+/* The line editor's bar is a column: the row of buttons (with the font) and, when the engine
+   offers it, the background option ("Allunga anche lo sfondo") on a row of its own, on the side
+   away from the line: above the buttons when the bar is above the line, below them when it is
+   below. So the bar only grows away from the line (and to the right, as far as it has room), and
+   Cancel and Apply stay where they are when the option comes (LineLayer places the bar for it from
+   the start, its words wrapped: barRoom, barAcross, optionHeight). */
+.context-bar.line-bar {
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+}
+
+.context-slot.is-below .line-bar {
+  flex-direction: column-reverse;
+}
+
+/* The row of buttons keeps its own width (and the buttons their place) when the option's row makes
+   the bar wider. */
+.context-row {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+}
+
+/* The option: a toggle (aria-pressed, so the bar's arrow keys reach it) drawn as a check box, not
+   as a tool that is on. At least as wide as the buttons' row, so the bar is never narrower than
+   Cancel and Apply; at most --option-room (LineLayer: up to the right edge of the page or of the
+   screen), so a wider bar stays where it is. Its words wrap in less room rather than being cut. */
+.btn.context-option {
+  min-width: 100%;
+  max-width: var(--option-room, 0px);
+  height: auto;
+  min-height: 28px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  justify-content: flex-start;
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: start;
+  white-space: normal;
+}
+
+.btn.context-option[aria-pressed="true"] {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+
+@media (hover: hover) {
+  .btn.context-option[aria-pressed="true"]:hover:not(:disabled, [aria-disabled="true"]) {
+    background: var(--hover);
+  }
+}
+
+.context-option-box {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--muted); /* at least 3:1 on the bar, in both themes */
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.context-option[aria-pressed="true"] .context-option-box {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.context-option .context-option-box .icon {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.6;
+}
+
+.context-option-text {
+  min-width: 0;
+}
+
+/* A hidden copy of the option that LineLayer sets each of its words in, for a moment, to measure
+   how tall its row can get (optionHeight): out of the bar's layout, as wide as its words need
+   between the min- and max-width set on it (the option's, as above), so the bar's side of the line
+   is chosen for them before the engine answers. */
+.btn.context-option.is-probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* --- Edit mode: images ---------------------------------------------------------------------
    Every placement is a button over the part of it that shows (ImageLayer.tsx): at rest thin blue
    dashes (--page-mark-image, at least 3:1 on the white page in both themes), so pictures can be
@@ -846,6 +946,15 @@
 
   .context-bar {
     height: 44px;
+  }
+
+  /* The line editor's bar: its rows as tall as the buttons (barRoom in LineLayer.tsx). */
+  .context-row {
+    height: 36px;
+  }
+
+  .btn.context-option {
+    min-height: 36px;
   }
 }
 

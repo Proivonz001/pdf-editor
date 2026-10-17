@@ -1,6 +1,6 @@
 // Main-thread side of the engine: starts the worker and turns messages into promises.
 import type {
-  FieldValue, ImageTarget, Matrix, Op, RequestOf, ResponseMessage, ResultMap, SaveOptions, TextStyle,
+  FieldValue, ImageTarget, LineEditOptions, Matrix, Op, RequestOf, ResponseMessage, ResultMap, SaveOptions, TextStyle,
 } from "./protocol";
 // The URL of the worker chunk: Vite bundles worker.ts as a worker entry for this import.
 import workerPath from "./worker.ts?worker&url";
@@ -80,8 +80,11 @@ export class EngineClient {
   lines(pageIndex: number) {
     return this.call<"lines">({ op: "lines", pageIndex });
   }
-  replaceLine(pageIndex: number, lineIndex: number, text: string) {
-    return this.call<"replaceLine">({ op: "replaceLine", pageIndex, lineIndex, text });
+  replaceLine(pageIndex: number, lineIndex: number, text: string, options?: LineEditOptions) {
+    return this.call<"replaceLine">({ op: "replaceLine", pageIndex, lineIndex, text, ...(options ? { options } : {}) });
+  }
+  lineDecorations(pageIndex: number, lineIndex: number) {
+    return this.call<"lineDecorations">({ op: "lineDecorations", pageIndex, lineIndex });
   }
   images(pageIndex: number) {
     return this.call<"images">({ op: "images", pageIndex });

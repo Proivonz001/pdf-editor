@@ -264,6 +264,74 @@ export interface EditResult extends HistoryState {
   fallbackChars: string[];
   /** Characters no available font could draw (left out). */
   missingChars: string[];
+  /**
+   * What happened to the line's decorations (underline, strike-through, link, background): absent
+   * when the line had none the app recognised, or the line was not a plain printed line.
+   */
+  decorations?: DecorationReport;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Decorations: the shapes and links that belong to a line and follow its text when it is edited.
+// PDF has no "underline" attribute: producers draw an underline, a strike-through, a pill or a
+// highlight as separate shapes, and a link as an annotation. When a whole line is replaced, the
+// shapes and links that clearly belong to it are stretched or shrunk with the new text (removed
+// with it when it is deleted), as part of the same edit (one undo).
+
+/** A shape that belongs to a line: a thin rule (underline, strike, overline) or a box around the text. */
+export type DecorationKind = "underline" | "strike" | "overline" | "background" | "border";
+
+/**
+ * Why a shape or link that looks like it belongs to the line stays as it is:
+ * - "pattern": dashed or dotted (its pattern would have to be drawn again), or wavy (a picture);
+ * - "form": drawn inside a Form XObject, which other pages or places may share;
+ * - "colour": a rule in a colour other than the text's;
+ * - "overline": a rule above the text (it may be a signature line);
+ * - "shared": it also belongs to other lines or to a layout (table cells, rules that touch others);
+ * - "cover": an opaque box drawn over the text, not under it;
+ * - "complex": the page is too complex to check, or the shape spans two content streams;
+ * - "direction": vertical or slanted text, or a link on a line that is not horizontal or vertical
+ *   on the page;
+ * - "ambiguous": the edit changed the words at the edge of the decorated part, so where it should
+ *   end is not clear (only after an edit).
+ */
+export type DecorationLeftReason =
+  | "pattern" | "form" | "colour" | "overline" | "shared" | "cover" | "complex" | "direction" | "ambiguous";
+
+/** What follows a line if it is edited, asked when the line editor opens (lineDecorations). */
+export interface LineDecorations {
+  /** Underlines and strike-throughs that follow the text by themselves. */
+  underlines: number;
+  strikes: number;
+  /** Links over the line's text that follow it by themselves. */
+  links: number;
+  /**
+   * A background (`fill`) or border (`stroke`) that hugs the text, offered as an option ("Allunga
+   * anche lo sfondo"); `suggested` is what the option starts as (ticked when it clearly wraps
+   * the text: a pill, a button, a highlight). Null when there is none to offer.
+   */
+  box: { fill: boolean; stroke: boolean; suggested: boolean } | null;
+  /** Shapes and links that look like the line's but stay as they are, and why. */
+  left: { kind: DecorationKind | "link"; reason: DecorationLeftReason }[];
+}
+
+/** The user's choices for a line edit. */
+export interface LineEditOptions {
+  /** The box (LineDecorations.box) follows the text too; absent: as suggested. */
+  box?: boolean;
+}
+
+/** What an edit did to the line's decorations. */
+export interface DecorationReport {
+  /** Shapes stretched or shrunk with the new text, by kind. */
+  moved: DecorationKind[];
+  /** Shapes removed because the text they decorated was deleted. */
+  removed: DecorationKind[];
+  /** Links moved with the text, and links removed with it. */
+  linksMoved: number;
+  linksRemoved: number;
+  /** Shapes and links that stay as they were, and why. */
+  left: { kind: DecorationKind | "link"; reason: DecorationLeftReason }[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -489,7 +557,9 @@ export type Request =
   | { op: "open"; bytes: ArrayBuffer; password?: string }
   | { op: "render"; pageIndex: number; scale: number }
   | { op: "lines"; pageIndex: number }
-  | { op: "replaceLine"; pageIndex: number; lineIndex: number; text: string }
+  | { op: "replaceLine"; pageIndex: number; lineIndex: number; text: string; options?: LineEditOptions }
+  /** What follows the line if it is edited (its decorations), for the line editor. */
+  | { op: "lineDecorations"; pageIndex: number; lineIndex: number }
   /** The page's images (ImageInfo), in painting order. */
   | { op: "images"; pageIndex: number }
   /**
@@ -539,6 +609,7 @@ export interface ResultMap {
   render: RenderResult;
   lines: LineInfo[];
   replaceLine: EditResult;
+  lineDecorations: LineDecorations;
   images: ImageInfo[];
   transformImage: ImageEditResult;
   deleteImage: ImageEditResult;

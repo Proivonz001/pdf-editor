@@ -1,8 +1,8 @@
 // App-wide state, all in @preact/signals: the engine, the open document, the edit history
 // (and whether it has been downloaded), the viewer settings (the tool: Modifica, with its
 // sub-tool Cambia or Aggiungi testo, or Compila e firma; where the text writer is on and what a
-// tap writes there; the line being edited, the selected image and the image edits still on their
-// way), the text writer (Compila e firma's, and Modifica's with Aggiungi testo: writerOn,
+// tap writes there; the line being edited and what follows its text, the selected image and the
+// image edits still on their way), the text writer (Compila e firma's, and Modifica's with Aggiungi testo: writerOn,
 // writerKind), what Compila e firma holds (its sub-tool, the signatures of this session, a
 // signature waiting to be placed, the focused form field and whether it takes typing), where the
 // keyboard focus is to go next, toasts and dialogs (the download options, the PDF/A questions,
@@ -11,7 +11,7 @@
 import { batch, computed, signal } from "@preact/signals";
 import { EngineClient, EngineError } from "./engine/client";
 import type {
-  HistoryState, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode, Rect,
+  HistoryState, LineDecorations, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode, Rect,
 } from "./engine/protocol";
 import type { OpenDoc } from "./viewer/model";
 
@@ -237,6 +237,14 @@ export interface EditingLine {
 }
 /** The line whose inline editor is open. */
 export const editingLine = signal<EditingLine | null>(null);
+
+/**
+ * The decorations of the line open in the line editor, once the engine has said (for the details
+ * panel): what follows its text if it is edited (underlines, strike-throughs, links), the
+ * background it may stretch too, and what stays as it is. Set by the editor when the answer comes
+ * (only while it is open on that page revision, `rev`), cleared when it closes or another line opens.
+ */
+export const editingDecorations = signal<{ pageIndex: number; lineIndex: number; rev: number; info: LineDecorations } | null>(null);
 
 export interface SelectedImage {
   pageIndex: number;

@@ -1,12 +1,13 @@
 // What the buttons, shortcuts, the line editor, the image frame and the fill layer do: open,
 // close, the tools (Modifica with its sub-tools Cambia and Aggiungi testo, and its Aggiungi
-// immagine; Compila e firma), edit a line, select, move, delete or replace an image, add a
-// picture, write text anywhere (Compila e firma, and Modifica with Aggiungi testo), fill form
-// fields, place signatures and initials (on every page too; with a tap, or in the middle from the
-// keyboard), keep signatures on the device and say when that fails, undo/redo, download (one tap,
-// or with options: PDF/A, password; asking first about empty required fields; never leaving an
-// empty file where the save failed), share, update. Engine changes run one at a time (a promise
-// chain), so an Undo clicked while an edit is being written applies after it, never in between.
+// immagine; Compila e firma), edit a line (and say what its underline, link or background did),
+// select, move, delete or replace an image, add a picture, write text anywhere (Compila e firma,
+// and Modifica with Aggiungi testo), fill form fields, place signatures and initials (on every
+// page too; with a tap, or in the middle from the keyboard), keep signatures on the device and
+// say when that fails, undo/redo, download (one tap, or with options: PDF/A, password; asking
+// first about empty required fields; never leaving an empty file where the save failed), share,
+// update. Engine changes run one at a time (a promise chain), so an Undo clicked while an edit
+// is being written applies after it, never in between.
 // Download, share, open, close, update, undo, redo and changing the tool or Modifica's sub-tool
 // first write what is still typed in the line editor or the text writer, or an image's keyboard
 // move still waiting (flushEditor), so it is neither left out of the file nor lost without a warning.
@@ -14,9 +15,10 @@ import { batch, effect } from "@preact/signals";
 import { EngineError } from "../engine/client";
 import {
   MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE,
-  type AddedText, type DocInfo, type FieldValue, type FieldWidget, type ImageEditResult, type ImageInfo,
-  type ImageLockReason, type ImageTarget, type LineInfo, type Matrix, type PdfaReport, type Rect, type SaveFormat,
-  type SaveOptions, type SavePassword, type TextStyle,
+  type AddedText, type DecorationKind, type DecorationLeftReason, type DecorationReport, type DocInfo,
+  type FieldValue, type FieldWidget, type ImageEditResult, type ImageInfo, type ImageLockReason, type ImageTarget,
+  type LineEditOptions, type LineInfo, type Matrix, type PdfaReport, type Rect, type SaveFormat, type SaveOptions,
+  type SavePassword, type TextStyle,
 } from "../engine/protocol";
 import { formatMm, locale, t } from "../i18n";
 import { applyUpdate } from "../platform/pwa";
@@ -378,8 +380,14 @@ function switchEditTool(next: EditTool, before: Element | null) {
 /**
  * Replace a whole line (rule 1: whole lines only). `rev` is the page revision the line was
  * read at: if the page changed since, its line indices are stale and nothing is written.
+ * `options`: the line editor's choices (whether the background round the line follows the new
+ * text too), sent only when it offered them; without, the engine does as it suggested. Then it
+ * says what the line's decorations did (decorationToasts): underlines, links and the background
+ * that followed the text or went with it, and what stayed as it was.
  */
-export function replaceLine(page: PageModel, line: LineInfo, text: string, rev: number): Promise<void> {
+export function replaceLine(
+  page: PageModel, line: LineInfo, text: string, rev: number, options?: LineEditOptions,
+): Promise<void> {
   const d = doc.peek();
   return exclusive("edit", async () => {
     if (!d || doc.peek() !== d || editingStopped.peek()) return;
@@ -388,7 +396,7 @@ export function replaceLine(page: PageModel, line: LineInfo, text: string, rev: 
       return;
     }
     try {
-      const result = await engine().replaceLine(page.index, line.index, text);
+      const result = await engine().replaceLine(page.index, line.index, text, options);
       if (doc.peek() !== d) return;
       recordHistory(result, "edit");
       if (result.fallbackChars.length) {
@@ -397,10 +405,97 @@ export function replaceLine(page: PageModel, line: LineInfo, text: string, rev: 
       if (result.missingChars.length) {
         showToast("error", t("edit.missing", { chars: result.missingChars.join(" ") }));
       }
+      for (const toast of decorationToasts(result.decorations)) showToast(toast.kind, toast.text);
     } catch (e) {
       reportEngineError(e, t("edit.failed"));
     }
   });
+}
+
+/** A shape or a link that belongs to a line (DecorationReport, LineDecorations). */
+type Decoration = DecorationKind | "link";
+
+/** The order decorations are named in, together. */
+const DECORATION_ORDER: readonly Decoration[] = ["underline", "strike", "overline", "background", "border", "link"];
+
+/** The text with its first letter in upper case (a sentence that starts with a name). */
+export function upperFirst(text: string): string {
+  return text.charAt(0).toLocaleUpperCase(locale.value) + text.slice(1);
+}
+
+/** "A", "A and B", "A, B and C" (IT: "A e B"). */
+export function listText(items: readonly string[]): string {
+  if (items.length < 2) return items[0] ?? "";
+  return t("deco.list", { first: items.slice(0, -1).join(", "), last: items[items.length - 1] });
+}
+
+/**
+ * The names of `items` (one entry per shape or link), in the usual order, each kind once: as a
+ * toast says them ("the underlines", "the link") or, `bare`, as the details panel lists them
+ * ("underline", "link").
+ */
+export function decorationNames(items: readonly Decoration[], bare = false): string[] {
+  return DECORATION_ORDER.flatMap((kind) => {
+    const count = items.filter((x) => x === kind).length;
+    if (!count) return [];
+    return [bare ? t(`deco.name.${kind}`) : count > 1 ? t(`deco.many.${kind}`) : t(`deco.one.${kind}`)];
+  });
+}
+
+/** Why a decoration stays as it was, in words ("it's dashed or dotted"). */
+export function decorationReasonText(reason: DecorationLeftReason): string {
+  return t(`deco.reason.${reason}`);
+}
+
+/** Why several decorations of one kind stay as they were, in words ("they're dashed or dotted"). */
+export function decorationsReasonText(reason: DecorationLeftReason): string {
+  return t(`deco.reasons.${reason}`);
+}
+
+/** The left items once each: the same kind for the same reason is said once. */
+export function distinctLeft<T extends { kind: Decoration; reason: DecorationLeftReason }>(left: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return left.filter((x) => {
+    const key = `${x.kind}:${x.reason}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * What a line edit says about the line's decorations, at most two toasts: one (info) naming what
+ * followed the new text ("The underline and the link follow the new text too.") and what went
+ * with deleted text ("Removed the background too."), one (warn) naming what stayed as it was and,
+ * when it is one kind for one reason, why ("Left the underline as it was: it's dashed or dotted.",
+ * "Left the underlines as they were: they're dashed or dotted."). Every item counts in the names,
+ * so two of a kind are said in the plural. None when there is nothing to say.
+ */
+export function decorationToasts(report: DecorationReport | undefined): { kind: "info" | "warn"; text: string }[] {
+  if (!report) return [];
+  const links = (count: number): Decoration[] => Array.from({ length: count }, () => "link");
+  const moved: Decoration[] = [...report.moved, ...links(report.linksMoved)];
+  const removed: Decoration[] = [...report.removed, ...links(report.linksRemoved)];
+  const toasts: { kind: "info" | "warn"; text: string }[] = [];
+  const followed: string[] = [];
+  if (moved.length) {
+    const what = listText(decorationNames(moved));
+    followed.push(upperFirst(t(moved.length > 1 ? "deco.movedMany" : "deco.movedOne", { what })));
+  }
+  if (removed.length) followed.push(upperFirst(t("deco.removed", { what: listText(decorationNames(removed)) })));
+  if (followed.length) toasts.push({ kind: "info", text: followed.join(" ") });
+  // The names count every item left (two dashed underlines are "the underlines"); the reason is
+  // said when they all stay for the same one.
+  const left = distinctLeft(report.left);
+  const what = listText(decorationNames(report.left.map((x) => x.kind)));
+  if (left.length === 1 && report.left.length === 1) {
+    toasts.push({ kind: "warn", text: upperFirst(t("deco.leftOne", { what, reason: decorationReasonText(left[0].reason) })) });
+  } else if (left.length === 1) {
+    toasts.push({ kind: "warn", text: upperFirst(t("deco.leftSame", { what, reason: decorationsReasonText(left[0].reason) })) });
+  } else if (left.length > 1) {
+    toasts.push({ kind: "warn", text: upperFirst(t("deco.leftMany", { what })) });
+  }
+  return toasts;
 }
 
 async function historyStep(step: "undo" | "redo") {

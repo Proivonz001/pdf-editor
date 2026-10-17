@@ -55,7 +55,9 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
     case "lines":
       return reply<"lines">(s.lines(msg.pageIndex));
     case "replaceLine":
-      return reply<"replaceLine">(s.replaceLine(msg.pageIndex, msg.lineIndex, msg.text));
+      return reply<"replaceLine">(s.replaceLine(msg.pageIndex, msg.lineIndex, msg.text, msg.options));
+    case "lineDecorations":
+      return reply<"lineDecorations">(s.lineDecorations(msg.pageIndex, msg.lineIndex));
     case "images":
       return reply<"images">(s.images(msg.pageIndex));
     case "transformImage":

@@ -15,11 +15,27 @@
 // The context bar belongs to the editor: pressing it never takes the focus from the field (a
 // blur would write the line before Cancel could run), and tabbing from the field into the bar
 // does not count as leaving the field. It floats above the line, or below it when there is no
-// room above (on the page or on screen), and stays inside the page box.
+// room above (on the page or on screen) and more below; when it fits on neither side (a short
+// page, a low zoom), on the side with more room, counting on screen only what the pages' box does
+// not clip (viewer.css .pages: past the margin above the first page and below the last). Sideways
+// it stays inside the page box.
+//
+// Decorations: when the editor opens it asks the engine, without waiting, what follows the line's
+// text if it is edited (underlines, strike-throughs and links do so by themselves; a background
+// or border round the text is an option). The answer goes in editingDecorations, for the details
+// panel. When there is a background to offer, the bar gets a toggle that looks like a check box:
+// "Allunga anche lo sfondo" ("Togli anche lo sfondo" while the field is empty: the line will be
+// deleted), ticked as the engine suggests. It comes on a row of its own, on the side of the bar
+// away from the line, at least as wide as the buttons' row and wider only as far as the page and
+// the screen leave room, its words wrapping in what room there is: they are never cut, the bar is
+// never narrower than Cancel and Apply, and those do not move under the finger when the answer
+// comes (the bar's side and place are chosen for that row from the start, with its words wrapped
+// as the tallest of them would be at its width: barRoom, barAcross, optionHeight). A write before
+// the answer, or after an engine that could not say, lets the engine do as it suggests.
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { LineInfo } from "../engine/protocol";
+import type { LineDecorations, LineEditOptions, LineInfo } from "../engine/protocol";
 import { formatFontSize, t } from "../i18n";
-import { busy, editingLine, registerEditor, showToast } from "../state";
+import { busy, editingDecorations, editingLine, engine, registerEditor, showToast } from "../state";
 import { openLine, replaceLine } from "../ui/actions";
 import { rescueFocus, viewerScroller } from "../ui/focus";
 import { IconCheck, IconClose, IconFont } from "../ui/icons";
@@ -43,6 +59,10 @@ const BAR_GAP = 8;
 const VIEW_EDGE = 8;
 /** On narrower pages the context bar leaves the font out, so its buttons keep their room. */
 const FONT_CHIP_MIN_PAGE = 360;
+/** Px between the line and its context bar: the editor's ring and the gap after it. */
+export const BAR_OFFSET = RING + BAR_GAP;
+/** The context bar's border and padding, both sides together (px), as in viewer.css. */
+const BAR_CHROME = 8;
 /**
  * Touch screens: the field's text is never smaller than this (px), even when the line is tiny at
  * the current zoom. Smaller text is hard to read on a phone, and iOS zooms the whole page in
@@ -85,6 +105,142 @@ const sameText = (a: string, b: string) => a.trim() === b.trim();
 /** Pressing the context bar must leave the focus (and the caret) in the field. */
 const keepFocus = (e: Event) => e.preventDefault();
 
+/**
+ * The background option's words (LineDecorations.box: a background, a border, or both): it
+ * stretches them with the new text, or, `removing` (the field is empty: the line goes), removes
+ * them with it. Always shown whole (they wrap on a narrow bar): they are also the toggle's name.
+ */
+export function boxOptionText(box: { fill: boolean; stroke: boolean }, removing: boolean): string {
+  const what = box.fill && box.stroke ? "Both" : box.stroke ? "Border" : "Background";
+  return t(`deco.${removing ? "remove" : "stretch"}${what}`);
+}
+
+/**
+ * Every set of words the background option can show, in the current language: for a background, a
+ * border or both, stretched or removed. The engine says which only after the bar is placed, and the
+ * field may be emptied at any time, so the bar is placed for the tallest of them (optionHeight).
+ */
+export function boxOptionTexts(): string[] {
+  const kinds = [{ fill: true, stroke: false }, { fill: false, stroke: true }, { fill: true, stroke: true }];
+  return [false, true].flatMap((removing) => kinds.map((kind) => boxOptionText(kind, removing)));
+}
+
+/**
+ * The height (px) the context bar is placed for: its row of buttons (36, 44 on touch screens, as
+ * in viewer.css), the gap and the row the background option gets if the engine offers one:
+ * `option` px tall, its words wrapped as they will be (optionHeight, measured when the bar is
+ * placed); without it, one line of words (the row's minimum height). The engine answers after the
+ * bar is placed, so its side of the line is chosen for both rows from the start: the option's
+ * coming never flips the bar, and Cancel and Apply stay where they were.
+ */
+export function barRoom(coarse: boolean, option?: number): number {
+  return (coarse ? 44 : 36) + 4 + (option ?? (coarse ? 36 : 28));
+}
+
+/**
+ * Whether the context bar, with the option's row of `option` px (barRoom), fits in the `room` px
+ * above the line.
+ */
+export function barFitsAbove(room: number, coarse: boolean, option?: number): boolean {
+  return room >= BAR_OFFSET + barRoom(coarse, option);
+}
+
+/**
+ * Whether the context bar goes under the line: not enough room above it for the bar (barRoom,
+ * with the option's row of `option` px) and more room below (so it goes below when it fits there,
+ * and to the side with more room when it fits on neither). `above` and `below` are the px between
+ * the line and the edges of what shows of the viewer (shownBand), or of the line's page.
+ */
+export function barGoesBelow(above: number, below: number, coarse: boolean, option?: number): boolean {
+  return !barFitsAbove(above, coarse, option) && below > above;
+}
+
+/**
+ * Where on screen (px, top and bottom) the context bar can be seen: what shows of the viewer
+ * (`view`), within the box of the pages (`pages`), which clips what stands out of it (viewer.css
+ * .pages): past the margin above the first page, and below the last page when the document ends
+ * on screen. Scrolling cannot bring a clipped part into view, so that room does not count.
+ */
+export function shownBand(
+  view: { top: number; bottom: number }, pages?: { top: number; bottom: number },
+): { top: number; bottom: number } {
+  if (!pages) return { top: view.top, bottom: view.bottom };
+  return { top: Math.max(view.top, pages.top), bottom: Math.min(view.bottom, pages.bottom) };
+}
+
+/**
+ * How tall (px) the background option's row would be in the context bar `barEl` with the tallest
+ * of `texts` (boxOptionTexts), at the width it gets there: as wide as the row of buttons
+ * (`rowWidth`, px) and wider, up to `room` (barAcross's optionRoom), as far as its words need. Set
+ * in a hidden copy of the option (viewer.css: .is-probe) that is taken out again at once.
+ */
+export function optionHeight(barEl: HTMLElement, texts: string[], rowWidth: number, room: number): number {
+  const probe = document.createElement("span");
+  probe.className = "btn context-btn context-option is-probe";
+  probe.setAttribute("aria-hidden", "true");
+  // As the option's min-width (the bar's width, which the row of buttons sets) and max-width.
+  probe.style.minWidth = `${rowWidth}px`;
+  probe.style.maxWidth = `${Math.max(rowWidth, room)}px`;
+  probe.appendChild(document.createElement("span")).className = "context-option-box";
+  const words = probe.appendChild(document.createElement("span"));
+  words.className = "context-option-text";
+  barEl.appendChild(probe);
+  let tallest = 0;
+  for (const text of texts) {
+    words.textContent = text;
+    tallest = Math.max(tallest, probe.getBoundingClientRect().height);
+  }
+  probe.remove();
+  return Math.ceil(tallest);
+}
+
+/**
+ * Where the context bar goes sideways (screen px). `left`: its left edge, at the line's (`wanted`)
+ * unless that would take it within VIEW_EDGE of an edge of what shows of the viewer (`view`).
+ * `optionRoom`: the widest the background option's row may make the bar (its content), up to the
+ * right edge of the page or of the view, whichever comes first; the slot keeps the bar on the page,
+ * so this starts where the bar really is. `width` is the bar with its row of buttons alone, so
+ * neither changes when the option comes: it never moves the bar, its words wrap in less room.
+ */
+export function barAcross(
+  wanted: number, width: number, view: { left: number; right: number }, page: { left: number; right: number },
+): { left: number; optionRoom: number } {
+  const left = Math.max(view.left + VIEW_EDGE, Math.min(wanted, view.right - VIEW_EDGE - width));
+  const placed = Math.max(page.left, Math.min(left, page.right - width));
+  const optionRoom = Math.max(0, Math.floor(Math.min(page.right, view.right - VIEW_EDGE) - placed) - BAR_CHROME);
+  return { left, optionRoom };
+}
+
+/**
+ * The choices sent with the edit: whether the background follows the text too, only when the
+ * option was offered (`info.box`); otherwise none, and the engine does as it suggests.
+ */
+export function lineEditOptions(info: LineDecorations | null, box: boolean): LineEditOptions | undefined {
+  return info?.box ? { box } : undefined;
+}
+
+/**
+ * Ask the engine what follows `line` of `page` if it is edited (its decorations), for the editor
+ * that opened on it at page revision `rev`. When the answer comes, and only if the page is still
+ * at `rev` and `stillOpen()`, it goes in editingDecorations (for the details panel) and is
+ * returned. Otherwise, or when the engine could not say (told in the console only: the editor
+ * works as it does without decorations), null.
+ */
+export async function askDecorations(
+  page: PageModel, line: LineInfo, rev: number, stillOpen: () => boolean,
+): Promise<LineDecorations | null> {
+  let info: LineDecorations;
+  try {
+    info = await engine().lineDecorations(page.index, line.index);
+  } catch (e) {
+    console.warn("The line's decorations could not be read", e);
+    return null;
+  }
+  if (!stillOpen() || page.rev.peek() !== rev) return null;
+  editingDecorations.value = { pageIndex: page.index, lineIndex: line.index, rev, info };
+  return info;
+}
+
 function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoom: number }) {
   const input = useRef<HTMLInputElement>(null);
   const bar = useRef<HTMLDivElement>(null);
@@ -98,6 +254,19 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
   const [flip, setFlip] = useState(false);
   /** Sideways shift (px) that keeps the context bar inside the viewport. */
   const [nudge, setNudge] = useState(0);
+  /** The widest (px) the background option's row may make the context bar (barAcross); 0 until placed. */
+  const [optionRoom, setOptionRoom] = useState(0);
+  /** How tall (px) that row would be with its tallest words (optionHeight); one line until placed. */
+  const [optionTall, setOptionTall] = useState<number | undefined>(undefined);
+  /** The last optionHeight measured and what for, so a scroll does not measure again. */
+  const measured = useRef<{ key: string; height: number } | null>(null);
+  /** What follows the line if it is edited, once the engine has said (askDecorations). */
+  const [decorations, setDecorations] = useState<LineDecorations | null>(null);
+  /** The background option is ticked (shown when decorations.box is offered); tickedRef for commit. */
+  const [ticked, setTicked] = useState(false);
+  const tickedRef = useRef(false);
+  /** The field is empty: the line will be deleted, and the option says so. */
+  const [empty, setEmpty] = useState(() => line.text.trim() === "");
 
   const close = () => {
     if (editingLine.peek()?.line === line) editingLine.value = null;
@@ -109,18 +278,27 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
     close();
   };
 
+  /** The focus is in the context bar (it got there with Tab). */
+  const focusInBar = () => !!bar.current?.contains(document.activeElement);
+
   /** Write the typed text (Enter, Apply, leaving the field, or a download/open asking for it). */
   const commit = (): Promise<void> => {
     if (done.current) return done.current;
     const text = input.current?.value ?? line.text;
+    // Only the option changed: not an edit, as with the same text.
     if (sameText(text, line.text)) {
       done.current = Promise.resolve();
       close();
       return done.current;
     }
+    // "Writing…" takes the place of the bar's buttons: with the focus on one of them (Apply, the
+    // option, from the keyboard), hand it back to the field first, so it is not lost (and goes
+    // back to the line afterwards).
+    if (focusInBar()) input.current?.focus({ preventScroll: true });
     writing.current = true;
     setPending(true);
-    done.current = replaceLine(page, line, text, startRev.current)
+    const options = lineEditOptions(decorations, tickedRef.current);
+    done.current = replaceLine(page, line, text, startRev.current, options)
       .catch((e: unknown) => console.error(e))
       .then(() => {
         writing.current = false;
@@ -133,14 +311,17 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
   const commitRef = useRef(commit);
   commitRef.current = commit;
 
-  /** The focus is in the context bar (it got there with Tab). */
-  const focusInBar = () => !!bar.current?.contains(document.activeElement);
+  /** The background option: ticked or not. Not an edit by itself, and never writes. */
+  const toggleOption = () => {
+    tickedRef.current = !tickedRef.current;
+    setTicked(tickedRef.current);
+  };
 
   /**
    * Keep the context bar on screen: under the line when the line is too close to the top of the
-   * viewport (and there is more room below it), and shifted sideways when the line starts near
-   * (or past) an edge of it. Worked out from the field's position alone, so it can run again
-   * after a zoom or a scroll.
+   * viewport (and there is more room below it, within the pages' box: shownBand), and shifted
+   * sideways when the line starts near (or past) an edge of it. Worked out from the field's
+   * position alone, so it can run again after a zoom or a scroll.
    */
   const place = () => {
     const field = input.current;
@@ -157,11 +338,39 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
     const viewLeft = Math.max(s.left, vv ? vv.offsetLeft : -Infinity);
     const viewRight = Math.min(s.left + scroller.clientWidth, vv ? vv.offsetLeft + vv.width : Infinity);
     if (f.bottom <= viewTop || f.top >= viewBottom || f.right <= viewLeft || f.left >= viewRight) return;
-    const roomAbove = f.top - viewTop;
-    setFlip(roomAbove < RING + BAR_GAP + barEl.offsetHeight && viewBottom - f.bottom > roomAbove);
+    // For the bar's planned size and its row of buttons' width, not its size now: the background
+    // option's row may come, and then it only grows the bar away from the line, by as many lines
+    // as its words take at its width, and to the right, as far as optionRoom.
+    const coarse = isCoarse.peek();
+    const row = barEl.querySelector<HTMLElement>(".context-row");
+    const p = field.closest<HTMLElement>(".page")?.getBoundingClientRect();
     const wanted = f.left - RING;
-    const left = Math.max(viewLeft + VIEW_EDGE, Math.min(wanted, viewRight - VIEW_EDGE - barEl.offsetWidth));
-    setNudge(Math.round(left - wanted));
+    const across = barAcross(
+      wanted, row ? row.offsetWidth + BAR_CHROME : barEl.offsetWidth,
+      { left: viewLeft, right: viewRight }, p ?? { left: -Infinity, right: Infinity },
+    );
+    const room = p ? across.optionRoom : 0;
+    // While the edit is written the row holds "Writing…" alone and the option cannot come: the bar
+    // keeps the height it was placed for.
+    let tall = measured.current?.height;
+    if (row && !writing.current) {
+      const texts = boxOptionTexts();
+      const rowWidth = row.getBoundingClientRect().width;
+      const key = [rowWidth, room, coarse, ...texts].join("\n");
+      if (measured.current?.key !== key) {
+        measured.current = { key, height: optionHeight(barEl, texts, rowWidth, room) };
+      }
+      tall = measured.current.height;
+    }
+    // Above and below, only what the pages' box does not clip counts (a short document ends on
+    // screen: the room under its last page is not the viewer's).
+    const shown = shownBand(
+      { top: viewTop, bottom: viewBottom }, field.closest<HTMLElement>(".pages")?.getBoundingClientRect(),
+    );
+    setNudge(Math.round(across.left - wanted));
+    setOptionRoom(room);
+    setOptionTall(tall);
+    setFlip(barGoesBelow(f.top - shown.top, shown.bottom - f.bottom, coarse, tall));
   };
 
   useLayoutEffect(() => {
@@ -222,6 +431,30 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
     return () => cancelAnimationFrame(frame);
   }, [zoom]);
 
+  // What follows the line if it is edited: asked once, without waiting (the field works at once;
+  // the engine answers after what is already in its queue, renders say). Kept only while this
+  // editor is open on the page as it opened; forgotten when it closes.
+  useEffect(() => {
+    let open = true;
+    void askDecorations(page, line, startRev.current, () => open && !done.current).then((info) => {
+      if (!info || !open) return;
+      tickedRef.current = info.box?.suggested ?? false;
+      setTicked(tickedRef.current);
+      setDecorations(info);
+    });
+    return () => {
+      open = false;
+      const mine = editingDecorations.peek();
+      if (mine && mine.pageIndex === page.index && mine.lineIndex === line.index && mine.rev === startRev.current) {
+        editingDecorations.value = null;
+      }
+    };
+  }, []);
+
+  // The option, when the engine offers one. Its row neither moves the bar nor changes its side
+  // (barRoom, barAcross, optionHeight), so the bar is not placed again when it comes.
+  const offered = decorations?.box ?? null;
+
   // The page changed under the editor (undo/redo elsewhere): its line index is stale.
   const rev = page.rev.value;
   useEffect(() => {
@@ -231,12 +464,9 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
     }
   }, [rev]);
 
-  const apply = () => {
-    // From the keyboard the focus is on Apply, which the "writing" state replaces: hand it back
-    // to the field first, so it is not lost (and goes back to the line afterwards).
-    if (focusInBar()) input.current?.focus({ preventScroll: true });
-    void commit();
-  };
+  // From the keyboard the focus is on Apply, which the "writing" state replaces: commit hands it
+  // back to the field first.
+  const apply = () => void commit();
 
   const onBarKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -287,10 +517,11 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
     color: cssColor(line.color),
   };
 
-  // Context bar: above the field unless it would leave the page (or the screen) there.
-  const barHeight = isCoarse.value ? 44 : 36; // as in viewer.css
-  const above = top - RING - BAR_GAP;
-  const below = flip || above - barHeight < 0;
+  // Context bar: above the field unless it would leave the page (or the screen) there, with the
+  // option's row that may come, its words wrapped (barRoom, optionTall), and there is more room
+  // below: on a page too short for it on either side, on the side with more room.
+  const above = top - BAR_OFFSET;
+  const below = flip || barGoesBelow(top, page.height * zoom - (top + height), isCoarse.value, optionTall);
   const slot = below
     ? { top: `${top + height + RING + BAR_GAP}px` }
     : { bottom: `${page.height * zoom - above}px` };
@@ -299,6 +530,7 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
     size: formatFontSize(line.size),
   });
   const showFont = pageWidth >= FONT_CHIP_MIN_PAGE;
+  const option = offered ? boxOptionText(offered, empty) : null;
 
   return (
     <>
@@ -315,6 +547,7 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
         autocomplete="off"
         spellcheck={false}
         enterKeyHint="done"
+        onInput={(e) => setEmpty(e.currentTarget.value.trim() === "")}
         onKeyDown={(e) => {
           if (e.isComposing || e.keyCode === 229) return; // IME composition in progress
           if (e.key === "Enter") {
@@ -336,7 +569,8 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
         <span class="context-indent" style={{ flexBasis: `${Math.max(0, box.left - RING + nudge)}px` }} />
         <div
           ref={bar}
-          class={showFont ? "context-bar has-font" : "context-bar"}
+          class={showFont ? "context-bar line-bar has-font" : "context-bar line-bar"}
+          style={{ "--option-room": `${optionRoom}px` }}
           role="toolbar"
           aria-label={t("edit.inputLabel")}
           onPointerDown={keepFocus}
@@ -344,46 +578,56 @@ function LineEditor({ page, line, zoom }: { page: PageModel; line: LineInfo; zoo
           onKeyDown={onBarKeyDown}
           onFocusOut={onBarFocusOut}
         >
-          {showFont && (
-            <>
-              <span class="context-font" title={fontInfo}>
-                <IconFont />
-                <span class="context-font-text">{fontInfo}</span>
-              </span>
-              <span class="context-sep" aria-hidden="true" />
-            </>
+          {/* The background option: a toggle (a button, so the bar's arrow keys reach it) that looks
+              like a check box, on a row of its own, away from the line (viewer.css). */}
+          {option && !pending && (
+            <button type="button" class="btn context-btn context-option" aria-pressed={ticked} onClick={toggleOption}>
+              <span class="context-option-box" aria-hidden="true">{ticked && <IconCheck />}</span>
+              <span class="context-option-text">{option}</span>
+            </button>
           )}
-          {/* Always in the page, so screen readers announce "Writing…" when it fills in. */}
-          <span class={pending ? "context-writing" : "sr-only"} role="status">
-            {pending && (
+          <div class="context-row">
+            {showFont && (
               <>
-                <span class="spinner" aria-hidden="true" />
-                {t("edit.writing")}
+                <span class="context-font" title={fontInfo}>
+                  <IconFont />
+                  <span class="context-font-text">{fontInfo}</span>
+                </span>
+                <span class="context-sep" aria-hidden="true" />
               </>
             )}
-          </span>
-          {!pending && (
-            <>
-              <button
-                type="button"
-                class="btn context-btn"
-                title={t("edit.cancelTip", { key: t("key.esc") })}
-                onClick={cancel}
-              >
-                <IconClose />
-                <span>{t("edit.cancel")}</span>
-              </button>
-              <button
-                type="button"
-                class="btn btn-primary context-btn"
-                title={t("edit.applyTip", { key: t("key.enter") })}
-                onClick={apply}
-              >
-                <IconCheck />
-                <span>{t("edit.apply")}</span>
-              </button>
-            </>
-          )}
+            {/* Always in the page, so screen readers announce "Writing…" when it fills in. */}
+            <span class={pending ? "context-writing" : "sr-only"} role="status">
+              {pending && (
+                <>
+                  <span class="spinner" aria-hidden="true" />
+                  {t("edit.writing")}
+                </>
+              )}
+            </span>
+            {!pending && (
+              <>
+                <button
+                  type="button"
+                  class="btn context-btn"
+                  title={t("edit.cancelTip", { key: t("key.esc") })}
+                  onClick={cancel}
+                >
+                  <IconClose />
+                  <span>{t("edit.cancel")}</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-primary context-btn"
+                  title={t("edit.applyTip", { key: t("key.enter") })}
+                  onClick={apply}
+                >
+                  <IconCheck />
+                  <span>{t("edit.apply")}</span>
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </>

@@ -612,6 +612,69 @@ export const en = {
   "details.addTextStep2Touch": "Tap Apply (✓), or Done on the keyboard, to put it on the page. To change it, tap the text you wrote.",
   "details.fillStep1Touch": "Tap a field, or anywhere on the page, and type.",
   "shortcut.backToChange": "Back to Change",
+  // -- decorations: editor
+  // The line editor's option for a background or border round the line (LineDecorations.box):
+  // stretched with the new text, or removed with it when the field is empty (the line goes). It has
+  // a row of the bar to itself and wraps there, so it is never shortened.
+  "deco.stretchBackground": "Stretch the background too",
+  "deco.stretchBorder": "Stretch the border too",
+  "deco.stretchBoth": "Stretch the background and border too",
+  "deco.removeBackground": "Remove the background too",
+  "deco.removeBorder": "Remove the border too",
+  "deco.removeBoth": "Remove the background and border too",
+  // What a line edit did to the line's decorations (toasts). {what}: "the underline and the link"
+  "deco.movedOne": "{what} follows the new text too.",
+  "deco.movedMany": "{what} follow the new text too.",
+  "deco.removed": "Removed {what} too.",
+  "deco.leftOne": "Left {what} as it was: {reason}.",
+  "deco.leftMany": "Left {what} as they were.",
+  "deco.list": "{first} and {last}",
+  "deco.one.underline": "the underline",
+  "deco.one.strike": "the strike-through",
+  "deco.one.overline": "the line above the text",
+  "deco.one.background": "the background",
+  "deco.one.border": "the border",
+  "deco.one.link": "the link",
+  "deco.many.underline": "the underlines",
+  "deco.many.strike": "the strike-throughs",
+  "deco.many.overline": "the lines above the text",
+  "deco.many.background": "the backgrounds",
+  "deco.many.border": "the borders",
+  "deco.many.link": "the links",
+  // Why a decoration stays as it was: the {reason} of deco.leftOne and deco.because
+  "deco.reason.pattern": "it's dashed or dotted",
+  "deco.reason.form": "it's part of a drawing the PDF may reuse elsewhere",
+  "deco.reason.colour": "it's a different colour from the text",
+  "deco.reason.overline": "it may be a line to sign on",
+  "deco.reason.shared": "it's shared with other lines or a table",
+  "deco.reason.cover": "it's drawn over the text, not under it",
+  "deco.reason.complex": "this page is too complex to do it safely",
+  "deco.reason.direction": "the text is vertical or slanted",
+  "deco.reason.ambiguous": "it isn't clear where it should end with the new text",
+  // The details panel, while a line is open: what follows its text if it is edited, what stays
+  "deco.follows": "Follows the text",
+  "deco.stays": "Stays as it is",
+  "deco.optional": "{what}: your choice",
+  "deco.because": "{what}: {reason}",
+  "deco.name.underline": "underline",
+  "deco.name.strike": "strike-through",
+  "deco.name.overline": "line above the text",
+  "deco.name.background": "background",
+  "deco.name.border": "border",
+  "deco.name.link": "link",
+  // -- decorations fix: ui
+  // Several decorations of one kind left for one reason (toast): "Left the underlines as they
+  // were: they're dashed or dotted." {reason}: one of deco.reasons
+  "deco.leftSame": "Left {what} as they were: {reason}.",
+  "deco.reasons.pattern": "they're dashed or dotted",
+  "deco.reasons.form": "they're part of a drawing the PDF may reuse elsewhere",
+  "deco.reasons.colour": "they're a different colour from the text",
+  "deco.reasons.overline": "they may be lines to sign on",
+  "deco.reasons.shared": "they're shared with other lines or a table",
+  "deco.reasons.cover": "they're drawn over the text, not under it",
+  "deco.reasons.complex": "this page is too complex to do it safely",
+  "deco.reasons.direction": "the text is vertical or slanted",
+  "deco.reasons.ambiguous": "it isn't clear where they should end with the new text",
 } as const;
 
 export type MessageKey = keyof typeof en;

@@ -20,7 +20,8 @@ repository root keeps working; it replaces it once it does everything the old on
   the edit history and is plain TypeScript, so the tests run it in Node. `images.ts` finds the
   pictures of a page and edits one placement at a time (see "Images"). `forms.ts` lists and
   fills form fields, `newcontent.ts` writes new text and new pictures on a page (see "Fill and
-  sign"). `pdfa.ts` converts a
+  sign"). `decorations.ts` makes a line's underline, strike-through, links and background follow
+  an edit of its text (see "Decorations"). `pdfa.ts` converts a
   copy to PDF/A and checks the result, with our own colour profile from `icc.ts` (see "PDF/A").
   `worker.ts` only turns messages into `EngineSession` calls. `protocol.ts` is the contract;
   `client.ts` is the main-thread side.
@@ -66,7 +67,8 @@ repository root keeps working; it replaces it once it does everything the old on
 1. **Edit whole lines**, never single words in place: there is no reflow, and replacing the
    whole line keeps the reading order of tagged PDFs exact.
 2. **Show which characters came from a fallback font** (`EditResult.fallbackChars`).
-3. **Keep `replaceText`'s safety steps**: shrunk redaction quads, restored links, font dict
+3. **Keep `replaceText`'s safety steps**: shrunk redaction quads, restored links (the same
+   objects, in their place: see "Decorations"), font dict
    proved by glyph ids, probed codes, `/ToUnicode` and `/W` extended, replacement tagged on
    tagged pages, vertical-text workarounds.
 4. **Save** with `garbage=compact,compress=yes` plus `encrypt=none`, or, for a download
@@ -452,6 +454,64 @@ failed edit and keeps its own code.
 in its box; it stays unsigned), flattening the form, running a form's scripts, right-to-left and
 complex scripts (no font of the app draws them), placing new text and pictures in the reading
 order next to the nearest label (they are read last).
+
+## Decorations
+
+PDF has no underline attribute: producers draw an underline, a strike-through, a pill or a
+highlight as shapes of their own, and a link as an annotation. A line edit used to leave them as
+long as the old text, and a deleted line left a broken underline, an empty pill and a link over
+blank space. Now an edit of a plain printed line takes them along, in the same edit (one undo)
+(`decorations.ts`; `EngineSession.lineDecorations`, asked when the line editor opens, and
+`replaceLine`'s options):
+
+- **What follows by itself**: a solid underline or strike-through in the text's own colour, whose
+  ends sit on the edges of the line's characters, touching no other shape, in the page's own
+  content; and the line's links (a rect over one run of this line's characters only, on a line
+  along the page's axes, /Rotate included). They stretch or shrink with the new text, and go
+  with it when its text is deleted: the path and its painting operator, the link out of /Annots
+  and, on a tagged page, out of the structure tree (a link that cannot leave it for sure stays).
+- **What is offered**: a background or border that hugs a run of the line's text (a pill, a
+  button, a chip, a highlight), holding no other line's characters, touching nothing else, drawn
+  before the text or translucent over it: the line editor's option "Allunga anche lo sfondo"
+  ("Togli anche lo sfondo" when the line is emptied), ticked to start with when both side
+  margins are at most 1.5 em and about equal. Never table cells, boxes shared by several lines,
+  or opaque boxes drawn over the text.
+- **What stays, with the reason said** (`DecorationLeftReason`): dashed or dotted rules (a wavy
+  one is a picture: not even seen), shapes inside a Form XObject, a rule in another colour, an
+  overline (it may be a signature line), shapes that are part of a layout, vertical or slanted
+  text, a page too complex to read (past 200,000 paths), and an edit whose change runs across
+  the edge of a partly decorated run (ambiguous). Lines that hold text the app wrote (added or
+  mixed) keep theirs as they are.
+
+**Finding them.** MuPDF's own interpreter (a device pass, with the discipline of "Images") gives
+the paths near the line with their points, colour, alpha, line width and dashes, and the line's
+own glyphs in painting order; the rules work in the line's frame (along the baseline and across
+it, in units of the font size). Each candidate must then be exactly one path of the page's own
+content painted the same way at its bounds (within 0.02 pt). **Following.** Which characters a
+decoration covers after the change comes from the common start and end of the old and new text
+(the whole line's decoration covers the whole new line; text typed right after a decorated run
+continues it); the new text is found where replaceText wrote it and must read what it wrote. A
+path's points past its middle move by the change at the run's end, the others by the change at
+its start, so round ends stay round and a rectangle stays a rectangle; Chrome's skip-ink holes
+(a clip with holes under the descenders) stay under their characters. A link's rect and
+/QuadPoints move the same way, written in user space (`Link.setBounds` takes it, `getBounds`
+gives page space). The links replaceText's redaction removes (any whose rect meets the redacted
+characters) come back as the same objects, at their place in /Annots, keeping /F, /Border and
+/StructParent (they used to be made again at the end without them, which broke a tagged PDF's
+link structure).
+
+**The log.** The TextEdit carries the plan as it was carried out: each shape by its page-space
+bounds and paint, each link by its rect and URI, each with the characters it decorates; no
+resource names or offsets, since a text edit's redaction rewrites the stream. Every replay
+applies that plan as logged and never decides again, so a later change of the rules cannot change
+old history; a page that does not have what the plan says fails the replay, as an image edit's
+`expect` does. When MuPDF cannot read the decorations at all, the line is edited as it was
+before, without them.
+
+**Not in this release**: new skip-ink holes under new descenders; keeping right or centre
+alignment (the text grows to the right, its decorations with it); drawing dashed or dotted rules
+again; shapes inside forms; decorations of mixed and added lines; size and colour changes (the
+line editor cannot make them yet).
 
 ## PDF/A ("PDF/A per l'archivio")
 

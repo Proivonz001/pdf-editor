@@ -9,7 +9,9 @@
 //   start editing (changing, moving, adding text and images) or filling in, and the privacy note;
 // - Modifica with Cambia, nothing open: the three steps, Aggiungi testo and Aggiungi immagine,
 //   the legend of the line and image marks, the shortcuts;
-// - Modifica with a line open: that line's text, font, size, style and colour, the shortcuts;
+// - Modifica with a line open: that line's text, font, size, style and colour, what follows its
+//   text if it is edited and what stays as it is (its decorations, once the engine has said),
+//   the shortcuts;
 // - Modifica with an image selected: its size, pixels and resolution, rotation, how to move it
 //   (with a mouse, or by touch: large tablets have the panel too), and the image's own shortcuts;
 // - Modifica with Aggiungi testo: the writer's size and colour while it is open, the selected
@@ -21,16 +23,18 @@
 // Read-only: it shows state and offers two actions (Edit, Fill & sign), nothing else.
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
-import type { DocInfo, FieldWidget, ImageInfo, LineInfo } from "../engine/protocol";
+import type { DocInfo, FieldWidget, ImageInfo, LineDecorations, LineInfo } from "../engine/protocol";
 import { formatFontSize, formatMm, t } from "../i18n";
 import {
-  currentPage, dirty, editingLine, editingStopped, focusedField, history, INK, openWriter, pendingPlacement,
-  selectedImage, tool, writerOn, type InkColor, type OpenWriter, type SelectedImage,
+  currentPage, dirty, editingDecorations, editingLine, editingStopped, focusedField, history, INK, openWriter,
+  pendingPlacement, selectedImage, tool, writerOn, type InkColor, type OpenWriter, type SelectedImage,
 } from "../state";
 import { fontDisplayName, isSubsetFont } from "../viewer/fontName";
 import { ppi, rotationDeg, sides } from "../viewer/imageGeometry";
 import type { OpenDoc } from "../viewer/model";
-import { lockReasonText, setTool } from "./actions";
+import {
+  decorationNames, decorationReasonText, distinctLeft, listText, lockReasonText, setTool, upperFirst,
+} from "./actions";
 import { fillableFields, formCountText } from "./fill/FillBar";
 import { rescueFocus, viewerScroller } from "./focus";
 import { IconCheck, IconEditText, IconShield, IconSign } from "./icons";
@@ -381,6 +385,52 @@ function WriterInfoSection({ writer }: { writer: OpenWriter }) {
   );
 }
 
+/**
+ * What the details say about the open line's decorations (LineDecorations): what follows its text
+ * by itself if it is edited, and the background option ("Underline and link", "Background: your
+ * choice"); what stays as it is, and why ("Underline: it's dashed or dotted"). Empty lists when
+ * there is nothing to say.
+ */
+export function decorationFacts(info: LineDecorations): { follows: string[]; stays: string[] } {
+  const auto = [
+    ...(info.underlines > 0 ? ["underline" as const] : []),
+    ...(info.strikes > 0 ? ["strike" as const] : []),
+    ...(info.links > 0 ? ["link" as const] : []),
+  ];
+  const follows: string[] = [];
+  if (auto.length) follows.push(upperFirst(listText(decorationNames(auto, true))));
+  if (info.box) {
+    const kinds = [...(info.box.fill ? ["background" as const] : []), ...(info.box.stroke ? ["border" as const] : [])];
+    const what = listText(decorationNames(kinds.length ? kinds : ["background"], true));
+    follows.push(upperFirst(t("deco.optional", { what })));
+  }
+  const stays = distinctLeft(info.left).map(({ kind, reason }) =>
+    upperFirst(t("deco.because", { what: decorationNames([kind], true)[0], reason: decorationReasonText(reason) })));
+  return { follows, stays };
+}
+
+/** The open line's decorations, once the engine has said (editingDecorations): nothing until then. */
+function LineDecorationRows({ line }: { line: LineInfo }) {
+  const known = editingDecorations.value;
+  const open = editingLine.value;
+  if (!known || !open || known.pageIndex !== open.pageIndex || known.lineIndex !== line.index) return null;
+  const { follows, stays } = decorationFacts(known.info);
+  return (
+    <>
+      {follows.length > 0 && (
+        <Row label={t("deco.follows")}>
+          {follows.map((text) => <span key={text}>{text}</span>)}
+        </Row>
+      )}
+      {stays.length > 0 && (
+        <Row label={t("deco.stays")}>
+          {stays.map((text) => <span key={text}>{text}</span>)}
+        </Row>
+      )}
+    </>
+  );
+}
+
 function LineInfoSection({ line }: { line: LineInfo }) {
   const font = fontDisplayName(line.fontName);
   const size = formatFontSize(line.size);
@@ -404,6 +454,7 @@ function LineInfoSection({ line }: { line: LineInfo }) {
             <span class="dp-hex">{color}</span>
           </span>
         </Row>
+        <LineDecorationRows line={line} />
       </dl>
       <p class="dp-note">{t("details.wholeLine")}</p>
     </Section>
