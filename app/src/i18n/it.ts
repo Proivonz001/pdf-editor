@@ -676,4 +676,57 @@ export const it: Messages = {
   "deco.reasons.complex": "questa pagina è troppo complessa per farlo con sicurezza",
   "deco.reasons.direction": "il testo è verticale o inclinato",
   "deco.reasons.ambiguous": "con il nuovo testo non è chiaro dove devono finire",
+  // -- install: ui
+  // Le voci (pagina iniziale, menu e foglio Altro, l'avviso del primo download) e il titolo della finestra
+  "install.button": "Installa l'app",
+  "install.title": "Installa l'app",
+  "install.why": "Si apre come le altre app e funziona anche senza connessione. I tuoi file restano comunque su questo dispositivo.",
+  "install.done": "Installata: la trovi tra le tue app.",
+  "install.none": "Questo browser non può installare l'app. Apri questa pagina in Chrome, Edge o Safari.",
+  "install.install": "Installa",
+  "install.copyLink": "Copia link",
+  "install.copied": "Link copiato.",
+  "install.copyFailed": "Non è stato possibile copiarlo: copia l'indirizzo qui sotto.",
+  "install.address": "L'indirizzo dell'app",
+  // I passaggi, browser per browser. Safari cambia i suoi menu da una versione all'altra: tienili aggiornati.
+  // iPhone e iPad, Safari. Valgono su iOS 26 (Condividi può essere nel menu ••• del layout
+  // Compatto; “Apri come app web” nell'ultimo foglio) e su iOS 18 (Condividi nella barra di Safari:
+  // in basso su iPhone, in alto su iPad; niente “Apri come app web”).
+  "install.ios.step1": "Tocca Condividi nella barra di Safari (su iOS 26 può essere nel menu •••, accanto all'indirizzo).",
+  "install.ios.step2": "Tocca “Aggiungi alla schermata Home” (se non lo vedi, scorri in giù o tocca “Mostra altro”).",
+  "install.ios.step3": "Tocca Aggiungi. Se c'è “Apri come app web”, lascialo attivo.",
+  // iPhone e iPad, un altro browser (Chrome, Edge, Firefox…)
+  "install.iosOther.step1": "Tocca il pulsante Condividi di questo browser (nella barra dell'indirizzo o nel suo menu).",
+  "install.iosOther.step2": "Tocca “Aggiungi alla schermata Home”.",
+  "install.iosOther.step3": "Tocca Aggiungi.",
+  "install.iosOther.note": "Non lo trovi? Copia il link, aprilo in Safari e aggiungi l'app da lì.",
+  // Dentro un'altra app (Instagram, Facebook, TikTok…)
+  "install.inApp.body": "Sei nel browser di un'altra app (Instagram, Facebook…) e da qui l'app non si può installare. Prima apri questa pagina nel tuo browser.",
+  "install.inApp.step1": "Tocca il menu ••• o ⋮ (di solito in alto a destra) e scegli “Apri nel browser” (o “Apri in Safari”, “Apri in Chrome”).",
+  "install.inApp.step2": "Non c'è? Copia il link e incollalo in Safari o in Chrome.",
+  "install.inApp.step3": "Lì tocca di nuovo “Installa l'app”.",
+  // Chrome, Edge… sul computer
+  "install.chromium.step1": "Fai clic sull'icona di installazione in fondo a destra nella barra dell'indirizzo.",
+  "install.chromium.step2": "Non c'è l'icona? Apri il menu del browser (⋮ o …) e scegli “Installa…”: in Chrome è sotto “Trasmetti, salva e condividi”, in Edge sotto “App”.",
+  "install.chromium.step3": "Conferma con Installa.",
+  // Sotto i passaggi di Chromium quando il browser non ha proposto di installarla: dove l'app è
+  // già installata non propone niente.
+  "install.chromium.note": "Se l'hai già installata, aprila dalle tue app: nella barra dell'indirizzo, al posto dell'icona di installazione, c'è quella per aprirla.",
+  // Chrome, Samsung Internet… su Android
+  "install.android.step1": "Apri il menu del browser (⋮ o ≡).",
+  "install.android.step2": "Tocca “Installa app” o “Aggiungi a schermata Home”.",
+  "install.android.step3": "Conferma con Installa.",
+  "install.android.note": "Se l'hai già installata, aprila dalla schermata Home o dall'elenco delle app.",
+  // Safari sul Mac (Aggiungi al Dock: da macOS Sonoma in poi, e lo user agent di Safari non lo dice)
+  "install.mac.step1": "Nella barra dei menu scegli Archivio › Aggiungi al Dock.",
+  "install.mac.step2": "Oppure fai clic sul pulsante Condividi e scegli “Aggiungi al Dock”.",
+  "install.mac.step3": "Fai clic su Aggiungi.",
+  "install.mac.note": "“Aggiungi al Dock” richiede macOS Sonoma o successivo.",
+  // Firefox su Android (dalla versione 141 la voce è in ⋮ › Altro; prima, “Installa” nel menu) e
+  // su Windows
+  "install.firefoxAndroid.step1": "Apri il menu di Firefox ⋮ e tocca “Altro”.",
+  "install.firefoxAndroid.step2": "Tocca “Aggiungi app alla schermata principale” (nelle versioni meno recenti, “Installa” direttamente nel menu).",
+  "install.firefoxAndroid.step3": "Conferma con Aggiungi.",
+  "install.firefoxWindows.step1": "Fai clic sul pulsante dell'app web in fondo a destra nella barra dell'indirizzo.",
+  "install.firefoxWindows.step2": "Firefox aggiunge l'app alla barra delle applicazioni: da lì si apre nella sua finestra.",
 };

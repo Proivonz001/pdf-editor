@@ -675,6 +675,59 @@ export const en = {
   "deco.reasons.complex": "this page is too complex to do it safely",
   "deco.reasons.direction": "the text is vertical or slanted",
   "deco.reasons.ambiguous": "it isn't clear where they should end with the new text",
+  // -- install: ui
+  // The entries (home page, More menu and sheet, the first download's toast) and the dialog's title
+  "install.button": "Install the app",
+  "install.title": "Install the app",
+  "install.why": "It opens like your other apps and works without a connection too. Your files still never leave this device.",
+  "install.done": "Installed: you'll find it among your apps.",
+  "install.none": "This browser can't install the app. Open this page in Chrome, Edge or Safari.",
+  "install.install": "Install",
+  "install.copyLink": "Copy link",
+  "install.copied": "Link copied.",
+  "install.copyFailed": "Couldn't copy it: copy the address below.",
+  "install.address": "The app's address",
+  // The steps, by browser. Safari changes its menus between versions: keep these up to date.
+  // iPhone and iPad, Safari. They hold on iOS 26 (Share may be in the ••• menu of the Compact
+  // layout; “Open as Web App” in the last sheet) and on iOS 18 (Share in Safari's bar: at the
+  // bottom on iPhone, at the top on iPad; no “Open as Web App”).
+  "install.ios.step1": "Tap Share in Safari's bar (on iOS 26 it may be in the ••• menu, next to the address).",
+  "install.ios.step2": "Tap “Add to Home Screen” (if you don't see it, scroll down or tap “View More”).",
+  "install.ios.step3": "Tap Add. If there's “Open as Web App”, leave it on.",
+  // iPhone and iPad, another browser (Chrome, Edge, Firefox…)
+  "install.iosOther.step1": "Tap this browser's Share button (in the address bar or in its menu).",
+  "install.iosOther.step2": "Tap “Add to Home Screen”.",
+  "install.iosOther.step3": "Tap Add.",
+  "install.iosOther.note": "Not there? Copy the link, open it in Safari and add the app from there.",
+  // Inside another app (Instagram, Facebook, TikTok…)
+  "install.inApp.body": "You're in another app's browser (Instagram, Facebook…), and the app can't be installed from here. Open this page in your browser first.",
+  "install.inApp.step1": "Tap the menu ••• or ⋮ (usually at the top right) and choose “Open in browser” (or “Open in Safari”, “Open in Chrome”).",
+  "install.inApp.step2": "No such option? Copy the link and paste it into Safari or Chrome.",
+  "install.inApp.step3": "There, tap “Install the app” again.",
+  // Chrome, Edge… on a computer
+  "install.chromium.step1": "Click the install icon at the right end of the address bar.",
+  "install.chromium.step2": "No icon? Open the browser's menu (⋮ or …) and choose “Install…”: in Chrome it's under “Cast, save, and share”, in Edge under “Apps”.",
+  "install.chromium.step3": "Confirm with Install.",
+  // Under Chromium's steps when the browser has not offered to install: it offers nothing where
+  // the app is installed already.
+  "install.chromium.note": "If you've already installed it, open it from your apps: the address bar shows an icon to open it instead of the install one.",
+  // Chrome, Samsung Internet… on Android
+  "install.android.step1": "Open the browser's menu (⋮ or ≡).",
+  "install.android.step2": "Tap “Install app” or “Add to Home screen”.",
+  "install.android.step3": "Confirm with Install.",
+  "install.android.note": "If you've already installed it, open it from your Home screen or app list.",
+  // Safari on a Mac (Add to Dock: macOS Sonoma or later, which Safari's user agent can't tell)
+  "install.mac.step1": "In the menu bar, choose File › Add to Dock.",
+  "install.mac.step2": "Or click the Share button and choose “Add to Dock”.",
+  "install.mac.step3": "Click Add.",
+  "install.mac.note": "“Add to Dock” needs macOS Sonoma or later.",
+  // Firefox on Android (from version 141 the item is under ⋮ › More; before, “Install” in the menu)
+  // and on Windows
+  "install.firefoxAndroid.step1": "Open Firefox's menu ⋮ and tap “More”.",
+  "install.firefoxAndroid.step2": "Tap “Add app to Home screen” (in older versions, “Install”, right in the menu).",
+  "install.firefoxAndroid.step3": "Confirm with Add.",
+  "install.firefoxWindows.step1": "Click the web app button at the right end of the address bar.",
+  "install.firefoxWindows.step2": "Firefox adds the app to the taskbar: from there it opens in its own window.",
 } as const;
 
 export type MessageKey = keyof typeof en;

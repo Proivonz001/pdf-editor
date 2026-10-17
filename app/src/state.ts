@@ -5,8 +5,9 @@
 // image edits still on their way), the text writer (Compila e firma's, and Modifica's with Aggiungi testo: writerOn,
 // writerKind), what Compila e firma holds (its sub-tool, the signatures of this session, a
 // signature waiting to be placed, the focused form field and whether it takes typing), where the
-// keyboard focus is to go next, toasts and dialogs (the download options, the PDF/A questions,
-// the signature sheet and the fill-and-sign questions among them).
+// keyboard focus is to go next, toasts (one may carry a button: the first download's "Install the
+// app") and dialogs (the download options, the PDF/A questions, the signature sheet, the
+// fill-and-sign questions and the install steps among them).
 // The actions that change it live in src/ui/actions.ts.
 import { batch, computed, signal } from "@preact/signals";
 import { EngineClient, EngineError } from "./engine/client";
@@ -456,30 +457,104 @@ export function hasUnsavedWork() {
 // Toasts
 
 export type ToastKind = "info" | "warn" | "error";
+/**
+ * A button in a toast, after its text (the first download's "Install the app"): pressing it
+ * dismisses the toast, then runs `run`.
+ */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
 export interface Toast {
   id: number;
   kind: ToastKind;
   text: string;
+  action?: ToastAction;
 }
 export const toasts = signal<readonly Toast[]>([]);
 let nextToastId = 1;
 const MAX_TOASTS = 4;
+/** A toast with a button stays a little longer, so there is time to reach it (Tab, a tap). */
+export const TOAST_ACTION_MS = 10_000;
+/** A toast let go with less time than this left (holdToast) gets this much, to finish reading it. */
+export const TOAST_RESUME_MS = 2000;
+
+/** What keeps a toast on screen past its time: the keyboard focus inside it, the pointer on it. */
+export type ToastHold = "focus" | "pointer";
 
 /**
- * Show a toast for `ms` milliseconds; with `ms` 0 it stays until dismissToast() (a status such as
- * "Checking the PDF/A…", taken away when the work ends). Returns its id.
+ * The clock of a timed toast: the time it has left, counted from `since` while it runs. Stopped
+ * (no `timer`) while anything holds it: the focus inside it, the pointer on it.
  */
-export function showToast(kind: ToastKind, text: string, ms = kind === "info" ? 4000 : 10000): number {
-  // The same message is already on screen (e.g. a locked line clicked twice): not again.
+interface ToastClock {
+  left: number;
+  since: number;
+  timer: ReturnType<typeof setTimeout> | null;
+  holds: Set<ToastHold>;
+}
+const clocks = new Map<number, ToastClock>();
+
+function runClock(id: number, clock: ToastClock) {
+  clock.since = Date.now();
+  clock.timer = setTimeout(() => dismissToast(id), clock.left);
+}
+
+/**
+ * Show a toast for `ms` milliseconds (by default 4 s for info, 10 s for warnings, errors and a
+ * toast with an `action`); with `ms` 0 it stays until dismissToast() (a status such as "Checking
+ * the PDF/A…", taken away when the work ends). The time stops while the toast holds the focus or
+ * the pointer (holdToast). Returns its id.
+ */
+export function showToast(kind: ToastKind, text: string, ms?: number, action?: ToastAction): number {
+  // The same message is already on screen (e.g. a locked line clicked twice): not again. One
+  // with a button takes its place instead, so the button is not lost.
   const same = toasts.peek().find((x) => x.kind === kind && x.text === text);
-  if (same) return same.id;
+  if (same && !action) return same.id;
   const id = nextToastId++;
-  toasts.value = [...toasts.value, { id, kind, text }].slice(-MAX_TOASTS);
-  if (ms > 0) setTimeout(() => dismissToast(id), ms);
+  const rest = same ? toasts.peek().filter((x) => x !== same) : toasts.peek();
+  toasts.value = [...rest, { id, kind, text, ...(action ? { action } : {}) }].slice(-MAX_TOASTS);
+  // The one replaced, and the oldest beyond MAX_TOASTS, are gone: so are their clocks.
+  for (const [other, clock] of clocks) {
+    if (toasts.value.some((x) => x.id === other)) continue;
+    if (clock.timer) clearTimeout(clock.timer);
+    clocks.delete(other);
+  }
+  const life = ms ?? (action ? TOAST_ACTION_MS : kind === "info" ? 4000 : 10000);
+  if (life > 0) {
+    const clock: ToastClock = { left: life, since: 0, timer: null, holds: new Set() };
+    clocks.set(id, clock);
+    runClock(id, clock);
+  }
   return id;
 }
 
+/**
+ * Stop the time of toast `id` while `why` holds it (`held`), and let it go on when nothing does:
+ * with the time it had left, at least TOAST_RESUME_MS. So a toast is never taken away under the
+ * focus or the pointer (its button being reached with Tab, its text being read). Nothing for a
+ * toast that is gone or not timed.
+ */
+export function holdToast(id: number, why: ToastHold, held: boolean) {
+  const clock = clocks.get(id);
+  if (!clock) return;
+  const wasHeld = clock.holds.size > 0;
+  if (held) clock.holds.add(why);
+  else clock.holds.delete(why);
+  const isHeld = clock.holds.size > 0;
+  if (isHeld && !wasHeld && clock.timer) {
+    clearTimeout(clock.timer);
+    clock.timer = null;
+    clock.left -= Date.now() - clock.since;
+  } else if (!isHeld && wasHeld) {
+    clock.left = Math.max(clock.left, TOAST_RESUME_MS);
+    runClock(id, clock);
+  }
+}
+
 export function dismissToast(id: number) {
+  const clock = clocks.get(id);
+  if (clock?.timer) clearTimeout(clock.timer);
+  clocks.delete(id);
   toasts.value = toasts.value.filter((x) => x.id !== id);
 }
 
@@ -537,7 +612,12 @@ export type DialogState =
    * `count` required fields are still empty at download: "fill" to fill them in, "download" to
    * download anyway, null on Cancel.
    */
-  | { kind: "missing-fields"; count: number; resolve: (go: "fill" | "download" | null) => void };
+  | { kind: "missing-fields"; count: number; resolve: (go: "fill" | "download" | null) => void }
+  /**
+   * "Install the app": why, and this browser's steps (ui/InstallDialog.tsx), where the browser
+   * has no install dialog of its own ready (openInstall, ui/actions.ts).
+   */
+  | { kind: "install" };
 
 export const dialog = signal<DialogState | null>(null);
 

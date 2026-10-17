@@ -5,9 +5,10 @@
 // and Modifica with Aggiungi testo), fill form fields, place signatures and initials (on every
 // page too; with a tap, or in the middle from the keyboard), keep signatures on the device and
 // say when that fails, undo/redo, download (one tap, or with options: PDF/A, password; asking
-// first about empty required fields; never leaving an empty file where the save failed), share,
-// update. Engine changes run one at a time (a promise chain), so an Undo clicked while an edit
-// is being written applies after it, never in between.
+// first about empty required fields; never leaving an empty file where the save failed; the
+// first one's toast offering to install the app), share, update, install the app. Engine changes
+// run one at a time (a promise chain), so an Undo clicked while an edit is being written applies
+// after it, never in between.
 // Download, share, open, close, update, undo, redo and changing the tool or Modifica's sub-tool
 // first write what is still typed in the line editor or the text writer, or an image's keyboard
 // move still waiting (flushEditor), so it is neither left out of the file nor lost without a warning.
@@ -21,6 +22,7 @@ import {
   type SavePassword, type TextStyle,
 } from "../engine/protocol";
 import { formatMm, locale, t } from "../i18n";
+import { canOfferInstall, installState, promptInstall } from "../platform/install";
 import { applyUpdate } from "../platform/pwa";
 import {
   busy, confirmDialog, countImageEdit, currentPage, dialog, dismissToast, doc, downloadRunning, editingLine,
@@ -29,7 +31,7 @@ import {
   pendingPlacement, recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage, sessionSignatures, sheet,
   showDialog, showToast, tool, typingField, writerKind, writerOn, writerStyle, zoom,
   type BusyKind, type DialogState, type EditTool, type FillTool, type InkColor, type OpenWriter, type SavePurpose,
-  type Signature, type Tool,
+  type Signature, type ToastAction, type Tool,
 } from "../state";
 import { createPages, type OpenDoc, type PageModel } from "../viewer/model";
 import { goToPage } from "../viewer/zoom";
@@ -2040,7 +2042,8 @@ function doneMessage(choice: DownloadChoice, name: string): string {
  * meanwhile, it is a normal download. When the file cannot be written where the user chose, it is
  * downloaded normally instead, and a toast says so. The empty file the save dialog made (or
  * emptied) is never left behind when nothing went into it (writeDownload). Afterwards the edits
- * count as saved.
+ * count as saved. The first download on a device may offer to install the app, with a button in
+ * its "done" toast (installHint).
  *
  * One download at a time: a second click or Ctrl+S while the save dialog is open is ignored
  * (Chrome would refuse a second dialog, and that must not turn into an extra plain download).
@@ -2141,7 +2144,7 @@ async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"block
     delivered = true;
     if (handle && (await writeToHandle(handle, bytes))) {
       markSaved(key); // ignored if another file was opened while writing
-      showToast("info", doneMessage(choice, handle.name));
+      showToast("info", doneMessage(choice, handle.name), undefined, installHint());
       return;
     }
     const downloadName = handle?.name || name;
@@ -2154,7 +2157,7 @@ async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"block
     }
     markSaved(key);
     if (handle) showToast("warn", t("download.savedInstead", { name: downloadName }));
-    else showToast("info", doneMessage(choice, name));
+    else showToast("info", doneMessage(choice, name), undefined, installHint());
   });
   if (handle && !delivered) await removeIfEmpty(handle);
   return outcome;
@@ -2277,4 +2280,77 @@ export async function updateApp() {
   // Normally the page is gone long before this. If no reload came after all, edits made from
   // now on must be protected again.
   setTimeout(() => { leaving = false; }, 10_000);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Installing the app
+//
+// One action behind every "Install the app" (the home page, the More menu and sheet, the first
+// download's toast). Where Chromium kept its offer (installState "prompt", platform/install.ts),
+// the browser's own install dialog, called within the click; everywhere else that can install
+// the app, the steps for this browser (the "install" dialog, ui/InstallDialog.tsx). The entries
+// show only while canOfferInstall: never in the installed app, nor where the browser cannot.
+
+/**
+ * Where the focus goes when the control that had it goes away with an install entry or a toast:
+ * the document's scroll area, or the home page's heading when no document is open (as after
+ * closeDocument), never <body>, where Tab starts over. For rescueFocus.
+ */
+export function pageFocusTarget(): HTMLElement | null {
+  return viewerScroller() ?? document.getElementById("home-title");
+}
+
+/** The browser's own install dialog is up, waiting for the user's choice (openInstall). */
+let prompting = false;
+
+/**
+ * "Install the app": the browser's own install dialog when it is ready (accepted: a toast says
+ * where the app is now; dismissed: nothing more), else, or when that dialog is no longer there
+ * ("unavailable"), the steps for this browser. Nothing when there is nothing to offer, while
+ * another dialog is open, or while the browser's dialog waits for a choice. Call it straight
+ * from the click: the browser's dialog needs it.
+ */
+export async function openInstall(): Promise<void> {
+  // A double click, or another entry tapped, while the browser's dialog is up: its offer is used
+  // up by then, and our steps would open under it and stay after the choice.
+  if (prompting || !canOfferInstall.peek() || dialog.peek()) return;
+  if (installState.peek() === "prompt") {
+    prompting = true;
+    let choice: Awaited<ReturnType<typeof promptInstall>>;
+    try {
+      choice = await promptInstall(); // asked before anything is awaited: still within the click
+    } finally {
+      prompting = false;
+    }
+    if (choice === "accepted") {
+      showToast("info", t("install.done"));
+      // Nothing is offered any more, so the entry that was pressed may be gone with the focus
+      // (the home page's button): the page takes it.
+      rescueFocus(pageFocusTarget);
+    }
+    if (choice !== "unavailable") return;
+  }
+  if (canOfferInstall.peek() && !dialog.peek()) showDialog({ kind: "install" });
+}
+
+/** On this device, the first download's toast has offered to install the app (installHint). */
+export const INSTALL_HINT_KEY = "pdf-editor.installHint";
+
+/**
+ * The "Install the app" button the "done" toast of a download carries, once per device: the
+ * first time a download succeeds where installing can be offered. Never inside another app's
+ * browser (Instagram, Facebook...: installing starts with opening the page elsewhere, too much
+ * for a passing suggestion), never for a share, and never where this device cannot remember that
+ * it was shown (blocked storage), or it would come back with every download. Undefined when not.
+ */
+function installHint(): ToastAction | undefined {
+  if (!canOfferInstall.peek() || installState.peek() === "in-app") return undefined;
+  try {
+    if (localStorage.getItem(INSTALL_HINT_KEY) !== null) return undefined;
+    localStorage.setItem(INSTALL_HINT_KEY, "1");
+    if (localStorage.getItem(INSTALL_HINT_KEY) === null) return undefined; // not kept after all
+  } catch {
+    return undefined; // storage blocked (private browsing, a sandbox)
+  }
+  return { label: t("install.button"), run: () => void openInstall() };
 }

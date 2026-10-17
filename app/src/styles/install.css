@@ -1,0 +1,127 @@
+/* "Install the app" (ui/InstallDialog.tsx): the why, this browser's numbered steps (the iPhone
+   ones with our small drawings of the Share button and of "Add to Home Screen"), a note, "Copy
+   link" with its status and, when the clipboard refuses, the address to copy by hand. A dialog
+   on desktop (ui/Dialog.tsx), a bottom sheet on phones (ui/Sheet.tsx, .sheet-install).
+   Colours only from tokens.css. */
+
+.install-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.install-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+
+.install-text p {
+  margin: 0;
+}
+
+/* The steps as one card, numbered like "How it works" on the home page. */
+.install-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.install-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.install-step + .install-step {
+  border-top: 1px solid var(--line);
+}
+
+.install-step-num {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--highlighter);
+  color: var(--on-highlighter);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One line of text sits on the middle of the 26 px number. */
+.install-step-text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 3px;
+  font-size: var(--fs-base);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* What to look for on the screen: the button's drawing, beside its step. */
+.install-glyph {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin: -3px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--active-fg);
+}
+
+.install-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+/* "Copy link", its status beside it, and the address on a line of its own below. */
+.install-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+/* Always in the page, empty until the first tap: screen readers then hear what is put in it. */
+.install-copy-status {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+
+.field.install-address {
+  flex: 1 1 100%;
+}
+
+/* Phones: the sheet's content scrolls under its header; Close (and Install) share the width. */
+.sheet-install .sheet-content {
+  padding: 16px 20px 20px;
+}
+
+.sheet-install .dialog-actions {
+  flex-wrap: nowrap;
+}
+
+.sheet-install .dialog-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+}

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import preact from "@preact/preset-vite";
-import { VitePWA } from "vite-plugin-pwa";
+import { VitePWA, type ManifestOptions } from "vite-plugin-pwa";
 
 // Everything runs on the device, and this policy backs that up: the app may load only its own
 // files and may not connect to other sites (fetch, XHR, WebSocket, beacons, images, fonts).
@@ -28,6 +28,32 @@ export const CSP = [
   "form-action 'none'",
 ].join("; ");
 
+/** The web app manifest (manifest.webmanifest), tested in tests/install.test.ts (its identity). */
+export const MANIFEST: Partial<ManifestOptions> = {
+  // Working name until the product is named.
+  name: "PDF Editor",
+  short_name: "PDF Editor",
+  description: "Edit the real text of a PDF, on any device. Your file never leaves it.",
+  lang: "en",
+  // No "id", on purpose: the app's identity is then its start page (start_url, resolved against
+  // the manifest's address), the identity browsers have used since the first install, at a domain
+  // root and in a sub-folder alike, so installed copies stay the same app. An explicit id resolves
+  // against the bare origin instead: "./" in a sub-folder (the GitHub Pages fallback) would be the
+  // origin itself, another app. Should an id be needed, it must equal each host's start page.
+  start_url: "./",
+  scope: "./",
+  display: "standalone",
+  background_color: "#eceef2",
+  theme_color: "#ffffff",
+  icons: [
+    { src: "icons/icon-192.png", sizes: "192x192", type: "image/png" },
+    { src: "icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    { src: "icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+  ],
+  // Desktop Chromium: "Open with" for PDF files once the app is installed (see src/platform/launch.ts).
+  file_handlers: [{ action: "./", accept: { "application/pdf": [".pdf"] } }],
+};
+
 export default defineConfig({
   // Relative paths: the same build works at a domain root and in a sub-folder.
   base: "./",
@@ -43,25 +69,7 @@ export default defineConfig({
       registerType: "prompt",
       injectRegister: false,
       includeAssets: ["icons/icon.svg", "icons/apple-touch-icon.png"],
-      manifest: {
-        // Working name until the product is named.
-        name: "PDF Editor",
-        short_name: "PDF Editor",
-        description: "Edit the real text of a PDF, on any device. Your file never leaves it.",
-        lang: "en",
-        start_url: "./",
-        scope: "./",
-        display: "standalone",
-        background_color: "#eceef2",
-        theme_color: "#ffffff",
-        icons: [
-          { src: "icons/icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "icons/icon-512.png", sizes: "512x512", type: "image/png" },
-          { src: "icons/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
-        ],
-        // Desktop Chromium: "Open with" for PDF files once the app is installed (see src/platform/launch.ts).
-        file_handlers: [{ action: "./", accept: { "application/pdf": [".pdf"] } }],
-      },
+      manifest: MANIFEST,
       workbox: {
         // The PDF engine (about 10 MB of WebAssembly) is cached too, so the app works offline.
         globPatterns: ["**/*.{js,css,html,wasm,png,svg,webmanifest}"],

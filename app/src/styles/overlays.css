@@ -1,6 +1,6 @@
 /* Things that float above the app: the drop-down menu (ui/Menu.tsx), dialogs and their fields
    (ui/Dialog.tsx, ui/Dialogs.tsx, the download options of ui/DownloadOptions.tsx), toasts
-   (ui/Toasts.tsx) and the drop overlay (ui/DropOverlay.tsx). They are the only pieces with
+   (ui/Toasts.tsx, with their one action button) and the drop overlay (ui/DropOverlay.tsx). They are the only pieces with
    shadows, besides the PDF pages. Colours only from tokens.css. Hover tints only where there is
    real hover: on touch screens they would stick after a tap. */
 
@@ -548,13 +548,42 @@ div.dialog-body {
   color: inherit;
 }
 
+/* A toast's one action (the first download's "Install the app"): a quiet button on the line of
+   the close button, in the colour of the info bar. */
+.toast .toast-action.btn {
+  flex: none;
+  padding: 0 10px;
+  color: var(--toast-info);
+  font-weight: 600;
+}
+
+/* Narrow screens (phones of 320-480 px): beside the button, the text would be squeezed into a
+   column a few words wide (a file name broken over five lines). The text keeps its line with the
+   close button, and the button goes under it, at the end. */
+@media (max-width: 479.98px) {
+  .toast.has-action {
+    flex-wrap: wrap;
+  }
+
+  .toast.has-action .toast-text {
+    flex-basis: calc(100% - var(--btn) - 8px);
+  }
+
+  .toast.has-action .toast-action.btn {
+    order: 1;
+    margin-left: auto;
+  }
+}
+
 @media (hover: hover) {
-  .toast .toast-close.btn:hover:not(:disabled) {
+  .toast .toast-close.btn:hover:not(:disabled),
+  .toast .toast-action.btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--toast-text) 12%, transparent);
   }
 }
 
-.toast .toast-close.btn:active:not(:disabled) {
+.toast .toast-close.btn:active:not(:disabled),
+.toast .toast-action.btn:active:not(:disabled) {
   background: color-mix(in srgb, var(--toast-text) 18%, transparent);
 }
 

@@ -140,6 +140,13 @@
   color: var(--active-fg);
 }
 
+/* "Install the app": a quiet second action under the privacy line, as wide as its words on
+   phones too (the full-width button above stays the one main action). */
+.btn.home-install {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
 .home-status {
   display: flex;
   align-items: center;
