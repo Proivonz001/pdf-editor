@@ -37,6 +37,14 @@
 // label) is edited part by part: the printed part by redaction, each added line in its block and
 // its own style. A picture the app embeds is kept once per document also across checkpoints
 // (sharePicture).
+//
+// Decorations (ARCHITECTURE.md, "Decorations"): an edit of a plain printed line also stretches or
+// shrinks its underline, its strike-through and its links, and its background or border when the
+// user chooses, or removes them with its text (decorations.ts): part of the same logged edit. The
+// TextEdit logs the plan as it was carried out (shapes by their page-space bounds and paint, links
+// by rect and URI, each with the characters it decorates: no resource names, no offsets), and
+// every replay applies it as logged, failing like an image edit when the page does not have what
+// it says.
 import type * as MuPDF from "mupdf";
 import {
   captureGlyphs,
@@ -52,6 +60,7 @@ import {
   restoreFallbackFonts,
   subsetFallbackFonts,
 } from "./core.js";
+import { applyDecorations, beforeEdit, detectDecorations, mapRun, planOf, summaryOf, type DecorationPlan, type Detected } from "./decorations";
 import { FieldError, applyFieldEdit, formChanged, formInfo, hidePasswords, pageFields, planFieldEdit, type FieldEdit } from "./forms";
 import {
   BadPicture,
@@ -89,6 +98,7 @@ import type {
   AddImageResult,
   AddTextResult,
   AddedText,
+  DecorationReport,
   DocInfo,
   EditResult,
   EditSegment,
@@ -100,6 +110,8 @@ import type {
   ImageEditResult,
   ImageInfo,
   ImageTarget,
+  LineDecorations,
+  LineEditOptions,
   LineInfo,
   Matrix,
   OpenResult,
@@ -223,6 +235,12 @@ export interface TextEdit {
   /** Which match of `find` on the page, counted the way core.findInLines counts. */
   occurrence: number;
   replacement: string;
+  /**
+   * The line's shapes and links that follow the new text, or go with it (decorations.ts): what
+   * the edit did to them when it was new, applied as it is by every replay. Absent when it did
+   * nothing to any (always for the printed part of a MixedLineEdit).
+   */
+  decorations?: DecorationPlan;
 }
 
 /**
@@ -583,10 +601,21 @@ export class EngineSession {
    *   added lines after it move right as much.
    * - Any other line is redacted and written again (core.replaceText); the lines the app wrote
    *   over or under it that the redaction damaged are written back as they were (protectAdded).
+   *   Its decorations (decorations.ts) go with the text, in the same edit: the underlines,
+   *   strike-throughs and links that follow it by themselves, and the background or border
+   *   around it (LineDecorations.box) when `options.box` says so (absent: as suggested); found
+   *   on the page before the edit, stretched or shrunk to the new text after it, or removed with
+   *   it. EditResult.decorations says what followed, what went and what stayed as it was (and
+   *   why: what stays is said when the edit changed or moved its characters, or deleted the
+   *   line); it is absent when there is nothing to say. A vertical line's (wmode 1) all stay,
+   *   with the reason ("direction").
+   * - `options` that are not an object with at most a boolean `box` are refused ("bad-request"),
+   *   with nothing done; mixed and added lines leave them aside.
    */
-  replaceLine(pageIndex: number, lineIndex: number, text: string): EditResult {
+  replaceLine(pageIndex: number, lineIndex: number, text: string, options?: LineEditOptions): EditResult {
     const doc = this.requireDoc();
     this.checkPage(doc, pageIndex);
+    const box = boxOption(options);
     const replacement = normalizeLineText(text);
     const { find, occurrence, added, parts } = this.locateLine(doc, pageIndex, lineIndex);
     const unchanged: EditResult = {
@@ -637,9 +666,49 @@ export class EngineSession {
       };
     }
 
+    // (A vertical line's decorations are all "left", with "direction": nothing is planned.)
+    const detected = this.detectDecorations(doc, pageIndex, find, occurrence);
     const edit: TextEdit = { kind: "text", pageIndex, find, occurrence, replacement };
-    const result = this.commit(doc, edit, () => this.applyText(doc, edit), "Could not edit the line");
-    return { ...this.history([pageIndex]), pageIndex, before: find, after: replacement, ...textOutcome(result) };
+    const plan = detected ? planOf(detected, box) : null;
+    if (plan && (plan.shapes.length || plan.links.length)) edit.decorations = plan;
+    const r = this.commit(doc, edit, () => this.applyText(doc, edit, "new"), "Could not edit the line");
+    return {
+      ...this.history([pageIndex]),
+      pageIndex,
+      before: find,
+      after: replacement,
+      ...textOutcome(r.text),
+      ...decorationOutcome(detected, r.decorations, find, r.written),
+    };
+  }
+
+  /**
+   * What follows line `lineIndex` (LineInfo.index) of the page if it is edited, for the line
+   * editor (decorations.ts): the underlines, strike-throughs and links that follow by themselves,
+   * the background or border that may follow (the option, and whether it starts ticked), and
+   * what stays as it is (with the reason: on a vertical line, everything, "direction"). Nothing
+   * for a line that holds text the app wrote (mixed or added: replaceLine leaves their
+   * decorations as they are).
+   */
+  lineDecorations(pageIndex: number, lineIndex: number): LineDecorations {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const { find, occurrence, added, parts } = this.locateLine(doc, pageIndex, lineIndex);
+    const detected = added || parts ? null : this.detectDecorations(doc, pageIndex, find, occurrence);
+    return detected ? summaryOf(detected) : { underlines: 0, strikes: 0, links: 0, box: null, left: [] };
+  }
+
+  /**
+   * The decorations of a plain printed line (decorations.detectDecorations: `find` at
+   * `occurrence`), or null when they could not be read: the decorations are an extra, so the
+   * line is then edited as it would be without them (and lineDecorations says so: nothing).
+   */
+  private detectDecorations(doc: MuPDF.PDFDocument, pageIndex: number, find: string, occurrence: number): Detected | null {
+    try {
+      return detectDecorations(this.mupdf, doc, pageIndex, find, occurrence);
+    } catch {
+      return null;
+    }
   }
 
   // ------------------------------------------------------------------ images
@@ -1143,11 +1212,11 @@ export class EngineSession {
    * The text an edit of this line must find, which occurrence on the page is this line, the ids
    * of the app's added blocks it consists of (null: it is not made only of added text, the usual
    * case), and its parts when it holds both printed text and text the app wrote (lineParts; null
-   * otherwise), each printed part with its own occurrence. core.findInLines counts every match in
-   * line order, including matches inside other lines (a line "Note" also matches inside an earlier
-   * "Note bene"), so the occurrence is the number of matches in the lines before this one. Within
-   * the line itself the trimmed text can only match at its own start: what precedes it is
-   * whitespace (a part counts the matches before it in the line too).
+   * otherwise), each printed part with its own occurrence. core.findInLines counts every match
+   * in line order, including matches inside other lines (a line "Note" also matches inside an
+   * earlier "Note bene"), so the occurrence is the number of matches in the lines before this
+   * one. Within the line itself the trimmed text can only match at its own start: what precedes
+   * it is whitespace (a part counts the matches before it in the line too).
    */
   private locateLine(doc: MuPDF.PDFDocument, pageIndex: number, lineIndex: number) {
     const page = doc.loadPage(pageIndex);
@@ -1222,7 +1291,7 @@ export class EngineSession {
   private apply(doc: MuPDF.PDFDocument, edit: LoggedEdit) {
     switch (edit.kind) {
       case "text":
-        this.applyText(doc, edit);
+        this.applyText(doc, edit, "replay");
         break;
       case "image":
         this.applyImage(doc, edit);
@@ -1259,12 +1328,30 @@ export class EngineSession {
    * those the redaction damaged: all of the page's, since a TextEdit never covers text the app
    * wrote (replaceLine routes a line holding some to its blocks, or edits only its printed part).
    * Part of the edit: every replay does it.
+   *
+   * With `edit.decorations`, the line's place is read first (decorations.beforeEdit), and once
+   * the new text is written and the added lines are back, the planned shapes and links follow it
+   * or go with it (applyDecorations; `written`: what replaceText wrote as MuPDF reads it on the
+   * page, writtenText). `mode` "new" (replaceLine): what of the plan cannot be carried out stays
+   * as it is and is reported, and the edit keeps the plan as carried out (none: no decorations),
+   * which commit then logs; "replay" (redo, rebuild): the plan is applied as logged, and a page
+   * that does not fit it fails the replay (DecorationMismatch), as an image edit's `expect` does.
+   * Returns replaceText's result, the decorations' report (null without a plan) and `written`.
    */
-  private applyText(doc: MuPDF.PDFDocument, edit: TextEdit) {
+  private applyText(doc: MuPDF.PDFDocument, edit: TextEdit, mode: "new" | "replay") {
+    const plan = edit.decorations;
+    const before = plan ? beforeEdit(this.mupdf, doc, edit.pageIndex, edit.find, edit.occurrence) : null;
     const restore = protectAdded(this.mupdf, doc, edit.pageIndex);
-    const result = replaceText(this.mupdf, doc, edit.pageIndex, edit.find, edit.replacement, { occurrence: edit.occurrence });
+    const text = replaceText(this.mupdf, doc, edit.pageIndex, edit.find, edit.replacement, { occurrence: edit.occurrence });
     restore();
-    return result;
+    const written = writtenText(doc, edit.pageIndex, text);
+    if (!plan || !before) return { text, decorations: null, written };
+    const { applied, report } = applyDecorations(this.mupdf, doc, edit.pageIndex, plan, before, edit.find, written, mode === "replay");
+    if (mode === "new") {
+      if (applied.shapes.length || applied.links.length) edit.decorations = applied;
+      else delete edit.decorations;
+    }
+    return { text, decorations: report, written };
   }
 
   /** Rewrites a line the app wrote in its own block, and removes the blocks it absorbs (AddedTextEdit). */
@@ -1293,8 +1380,10 @@ export class EngineSession {
         missing.push(...this.applyAdded(doc, e).missing);
         continue;
       }
-      text = this.applyText(doc, e);
-      const right = flow && e.replacement ? printedRight(doc, e.pageIndex, flow.start, e.replacement) : null;
+      // (Its printed part carries no decorations: a new edit or a replay, it is the same.)
+      text = this.applyText(doc, e, "replay").text;
+      const drawn = drawnText(text);
+      const right = flow && drawn ? printedRight(doc, e.pageIndex, flow.start, drawn) : null;
       const shift = right === null ? 0 : right - flow!.right;
       if (!(shift > 0.01)) continue;
       for (const f of flow!.followers) {
@@ -1548,12 +1637,20 @@ const toRect = (r: ArrayLike<number>): Rect => [r[0], r[1], r[2], r[3]];
 const copyStyle = (s: TextStyle): TextStyle => ({ ...s, color: [s.color[0], s.color[1], s.color[2]] });
 const copyPoint = (p: [number, number]): [number, number] => [p[0], p[1]];
 const copyPicture = (p: Picture): Picture => ({ ...p, bytes: p.bytes.slice() });
+const copyRect = (r: Rect): Rect => [r[0], r[1], r[2], r[3]];
+const copyPlan = (p: DecorationPlan): DecorationPlan => ({
+  shapes: p.shapes.map((s) => ({ kind: s.kind, paint: s.paint, bbox: copyRect(s.bbox), range: [s.range[0], s.range[1]] })),
+  links: p.links.map((l) => ({ bounds: copyRect(l.bounds), uri: l.uri, range: [l.range[0], l.range[1]] })),
+});
 
 /** A copy of a log entry, its matrices, points, styles, values and bytes included. */
 function copyEdit(e: LoggedEdit): LoggedEdit {
   switch (e.kind) {
-    case "text":
-      return { ...e };
+    case "text": {
+      const out: TextEdit = { ...e };
+      if (e.decorations) out.decorations = copyPlan(e.decorations);
+      return out;
+    }
     case "field": {
       const v = e.value;
       const value: FieldValue = v.kind === "choice" ? { kind: "choice", values: [...v.values] } : { ...v };
@@ -1610,6 +1707,58 @@ function textOutcome(result: ReturnType<typeof replaceText>): Pick<EditResult, "
 }
 
 /**
+ * What an EditResult tells of a line's decorations: what the edit did to them (`report`, null
+ * when it planned nothing), with what stays as it is: what the edit left (in `report`), and what
+ * the detection before it (`detected`) found would stay, when the edit reached its characters
+ * (`find` made `written`: reached). A dashed underline under a word the edit did not touch is
+ * still right under it, and nothing is said of it. Nothing at all when there is nothing to say.
+ */
+function decorationOutcome(detected: Detected | null, report: DecorationReport | null, find: string, written: string): Pick<EditResult, "decorations"> {
+  const stays = detected
+    ? summaryOf({
+      ...detected,
+      shapes: detected.shapes.filter((s) => s.level !== "left" || reached(s.plan.range, find, written)),
+      links: detected.links.filter((l) => l.level !== "left" || reached(l.plan.range, find, written)),
+    }).left
+    : [];
+  const left = [...stays, ...(report?.left ?? [])];
+  const moved = report ? [...report.moved] : [], removed = report ? [...report.removed] : [];
+  const linksMoved = report?.linksMoved ?? 0, linksRemoved = report?.linksRemoved ?? 0;
+  if (!moved.length && !removed.length && !linksMoved && !linksRemoved && !left.length) return {};
+  return { decorations: { moved, removed, linksMoved, linksRemoved, left } };
+}
+
+/**
+ * Whether an edit that makes a line read `now` instead of `old` reaches the characters [a, b) of
+ * `old` (a decoration's run): it does when it deletes the line, and for a run at or after the
+ * change (the first character where the two texts differ: its characters change, or move with
+ * the text before them); a run before the change is reached only when it no longer covers the
+ * same characters (decorations.mapRun: text typed right after a run continues it).
+ */
+function reached([a, b]: [number, number], old: string, now: string): boolean {
+  if (!now) return true;
+  let p = 0;
+  while (p < old.length && p < now.length && old[p] === now[p]) p++;
+  if (b > p) return true;
+  const m = mapRun([a, b], old, now);
+  return !("range" in m) || m.range[0] !== a || m.range[1] !== b;
+}
+
+/**
+ * replaceLine's `options` from the main thread, checked as untrusted: absent, or an object whose
+ * only key is an optional boolean `box` ("bad-request" otherwise). Gives `box`.
+ */
+function boxOption(options: unknown): boolean | undefined {
+  if (options === undefined) return undefined;
+  if (!options || typeof options !== "object" || Array.isArray(options))
+    throw new SessionError("The line edit's options are an object", "bad-request");
+  const { box, ...rest } = options as { box?: unknown };
+  if (Object.keys(rest).length) throw new SessionError(`Unknown line edit option ${Object.keys(rest)[0]}`, "bad-request");
+  if (box !== undefined && typeof box !== "boolean") throw new SessionError("The option box is true or false", "bad-request");
+  return box;
+}
+
+/**
  * A run of a line MuPDF reads as printed text and text the app wrote together (lineParts):
  * printed text, or one whole line the app wrote.
  */
@@ -1648,23 +1797,72 @@ const asRead = (text: string) => text.replace(/[ﬀ-ﬆ]/g, (c) => LIGATURES[c])
 /** How far right the boxes of characters reach (a quad's four x). */
 const rightOf = (chars: { quad: number[] }[]) => Math.max(...chars.flatMap((c) => [c.quad[0], c.quad[2], c.quad[4], c.quad[6]]));
 
+/** A character as core.extractLines gives it (what is read here). */
+type RawChar = { c: string; origin: number[]; quad: number[] };
+
+/** What a core.replaceText result drew: its segments' text joined (without the characters no font has). */
+const drawnText = (result: ReturnType<typeof replaceText>) => result.segments.map((s) => String(s.text)).join("");
+
+/** A space other than U+0020 (a no-break space, an en space...): MuPDF may read it back as U+0020. */
+const OTHER_SPACE = /[^\S ]/;
+
 /**
- * After a printed part was written again: how far right the characters of `text` reach, read on
- * the page from the character that starts at `start` (core.replaceText writes the replacement
- * where the old text's first glyph was). Null when it cannot be found.
+ * The characters of a text core.replaceText drew (`drawn`, drawnText) on the page, as MuPDF reads
+ * them, from the one whose origin is `start` (replaceText writes the replacement where the old
+ * text's first character was), and the text they read; null when they are not there. MuPDF reads
+ * a ligature as its letters ("ﬁ" is "fi": asRead), and a space other than U+0020 as itself or as
+ * U+0020, depending on the code the font draws it with (the original font's own space, as Chrome's
+ * fonts give a no-break space, or a code of its own): either reading is taken.
  */
-function printedRight(doc: MuPDF.PDFDocument, pageIndex: number, start: [number, number], text: string): number | null {
+function readWritten(lines: RawLine[], start: ArrayLike<number>, drawn: string): { chars: RawChar[]; text: string } | null {
+  const want = asRead(drawn);
+  for (const line of lines) {
+    const chars = line.chars as RawChar[];
+    for (let k = 0; k + want.length <= chars.length; k++) {
+      if (Math.hypot(chars[k].origin[0] - start[0], chars[k].origin[1] - start[1]) >= 0.05) continue;
+      const got = chars.slice(k, k + want.length);
+      if (got.every((ch, i) => ch.c === want[i] || (ch.c === " " && OTHER_SPACE.test(want[i]))))
+        return { chars: got, text: got.map((ch) => ch.c).join("") };
+    }
+  }
+  return null;
+}
+
+/**
+ * The text a core.replaceText result wrote, as MuPDF reads it on the page (readWritten): what
+ * decorations.applyDecorations must find there and maps the old line's characters onto, and what
+ * tells which of them the edit reached (decorationOutcome). It is read on the page only when it
+ * holds a space other than U+0020, whose reading depends on the font; otherwise it is the text
+ * drawn, its ligatures as letters. When it is not found, the text drawn that way (applyDecorations
+ * then does not find it either, and leaves the decorations as they are). Read after protectAdded's
+ * restore, in a new edit and in every replay alike, so a replay reads what the new edit read.
+ */
+function writtenText(doc: MuPDF.PDFDocument, pageIndex: number, result: ReturnType<typeof replaceText>): string {
+  const drawn = drawnText(result);
+  const want = asRead(drawn);
+  if (!OTHER_SPACE.test(want)) return want;
   const page = doc.loadPage(pageIndex);
   let raw: RawLine[] = [];
   try {
     raw = extractLines(page);
-    for (const line of raw) {
-      const chars = line.chars as { origin: number[]; quad: number[] }[];
-      for (let k = 0; k < chars.length; k++)
-        if (Math.hypot(chars[k].origin[0] - start[0], chars[k].origin[1] - start[1]) < 0.05 && line.text.startsWith(text, k))
-          return rightOf(chars.slice(k, k + text.length));
-    }
-    return null;
+    return readWritten(raw, result.original.origin as number[], drawn)?.text ?? want;
+  } finally {
+    releasePage(page, raw);
+  }
+}
+
+/**
+ * After a printed part was written again: how far right the characters it drew (`drawn`,
+ * drawnText) reach, read on the page from the character that starts at `start` (readWritten).
+ * Null when they cannot be found.
+ */
+function printedRight(doc: MuPDF.PDFDocument, pageIndex: number, start: [number, number], drawn: string): number | null {
+  const page = doc.loadPage(pageIndex);
+  let raw: RawLine[] = [];
+  try {
+    raw = extractLines(page);
+    const found = readWritten(raw, start, drawn);
+    return found && found.chars.length ? rightOf(found.chars) : null;
   } finally {
     releasePage(page, raw);
   }

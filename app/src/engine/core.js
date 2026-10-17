@@ -1123,6 +1123,68 @@ function shrinkQuad(q, fx = 0.7, fy = 0.5) {
 	return [...p(-1, -1), ...p(1, -1), ...p(-1, 1), ...p(1, 1)];
 }
 
+// App addition (decorations): the entries of the page's /Annots, in order (references as written,
+// or the dictionaries themselves when written directly in the array).
+function annotEntries(pageObj) {
+	const annots = pageObj.get("Annots");
+	const out = [];
+	if (annots.isArray()) annots.forEach((entry) => out.push(entry));
+	return out;
+}
+
+// The same annotation: the same indirect object, or the same direct one in memory.
+const annotIdentity = (o) => (o.isIndirect() ? `n${o.asIndirect()}` : `p${o.pointer}`);
+
+// App addition (decorations fix): an /Annots entry's /Subtype, or "" for a null entry or a
+// reference to nothing (some tools delete an annotation by writing null in its place).
+function annotSubtype(entry) {
+	if (entry.isNull()) return "";
+	const dict = entry.resolve();
+	return dict.isDictionary() ? dict.get("Subtype").asName() : "";
+}
+
+// App addition (decorations fix): under this /Subtype, which MuPDF does not know, the page's own
+// Redact annotations sit out the edit's redaction (replaceText).
+const PENDING_REDACT = "PdfEditPendingRedact";
+
+// App addition (decorations): the annotations that the redaction took out of /Annots (`before`,
+// annotEntries before it) go back in, each the original object, so that it keeps its /F, /Border,
+// /StructParent (the tagged PDF's structure points at that object) and whatever else it had, at
+// its place among the annotations still there: right after the nearest one that came before it.
+// createLink made a new link at the end, without them.
+// App change (decorations fix): every annotation goes back, not only links. MuPDF's redaction
+// also deletes a FreeText it touches (a typewriter text, a comment box), and with it the FreeText's
+// Popup (its /Parent and the FreeText's /Popup stay right: the objects are the same). The app's
+// own Redact is not in `before`. Widgets are not dropped (MuPDF 1.27; deleting one would also take
+// it out of /AcroForm /Fields, which core-fill.test.ts checks). Returns how many went back: the
+// links, and the other annotations.
+function restoreAnnots(doc, pageObj, before) {
+	let annots = pageObj.get("Annots");
+	const present = new Set();
+	if (annots.isArray()) annots.forEach((entry) => present.add(annotIdentity(entry)));
+	const lost = before.filter((entry) => !entry.isNull() && !present.has(annotIdentity(entry)));
+	if (!lost.length) return { links: 0, others: 0 };
+	if (!annots.isArray()) annots = pageObj.put("Annots", doc.newArray());
+	const indexOf = (entry) => {
+		const id = annotIdentity(entry);
+		for (let k = 0; k < annots.length; k++) if (annotIdentity(annots.get(k)) === id) return k;
+		return -1;
+	};
+	for (const entry of lost) {
+		let at = 0;
+		for (let k = before.indexOf(entry) - 1; k >= 0; k--) {
+			const there = indexOf(before[k]);
+			if (there >= 0) {
+				at = there + 1;
+				break;
+			}
+		}
+		arrayInsert(annots, at, entry);
+	}
+	const links = lost.filter((entry) => annotSubtype(entry) === "Link").length;
+	return { links, others: lost.length - links };
+}
+
 function quadBounds(quads) {
 	const xs = quads.flatMap((q) => [q[0], q[2], q[4], q[6]]), ys = quads.flatMap((q) => [q[1], q[3], q[5], q[7]]);
 	return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
@@ -1262,7 +1324,8 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 
 	// ---- remove the old word: Redact annotation over shrunk char quads
 	// Redaction is a privacy tool: it also deletes link annotations touching the
-	// area. An editor must keep them, so snapshot the links and restore any lost.
+	// area (and FreeText ones). An editor must keep them, so snapshot the
+	// annotations and restore any lost.
 	t0 = now();
 	// Tagged page: note which MCID each run of shown bytes belongs to, so the
 	// marked-content sequence that loses the word can be found after redaction.
@@ -1271,14 +1334,26 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 	const props = parents && propsLookup(pageObj);
 	const mcBefore = parents && markedContent(contentText(pageObj), props);
 	tTag = now() - tTag;
-	const linkKey = (l) => JSON.stringify([l.getBounds().map((v) => +v.toFixed(2)), l.getURI()]);
-	const linksBefore = page.getLinks().map((l) => ({ key: linkKey(l), bounds: l.getBounds(), uri: l.getURI() }));
+	// App change (decorations): the links are put back as the very objects they were, at their
+	// place in /Annots (restoreAnnots), instead of new ones made with createLink.
+	const annotsBefore = annotEntries(pageObj);
+	// App change (decorations fix): applyRedactions applies every Redact annotation of the page,
+	// and the page may have some of its own: marks waiting to be applied (made in Acrobat, say),
+	// which are not this edit's to apply. They sit out the call under another /Subtype and get
+	// /Redact back whatever happens, untouched, in their place. (Taking them out of /Annots would
+	// not do: MuPDF reads a page's annotations when it loads the page.)
+	const pending = annotsBefore.filter((entry) => annotSubtype(entry) === "Redact").map((entry) => entry.resolve());
 	const annot = page.createAnnotation("Redact");
 	annot.setQuadPoints(hit.chars.concat(rest).map((ch) => shrinkQuad(ch.quad)));
-	page.applyRedactions(false, 0, 0, 0); // no black box, keep images & line art
-	const linksAfter = new Set(page.getLinks().map(linkKey));
-	let linksRestored = 0;
-	for (const l of linksBefore) if (!linksAfter.has(l.key)) { page.createLink(l.bounds, l.uri); linksRestored++; }
+	for (const dict of pending) dict.put("Subtype", doc.newName(PENDING_REDACT));
+	try {
+		page.applyRedactions(false, 0, 0, 0); // no black box, keep images & line art
+	} finally {
+		for (const dict of pending) dict.put("Subtype", doc.newName("Redact"));
+		annot.destroy(); // (rule 5; the redaction took it off the page)
+	}
+	const restored = restoreAnnots(doc, page.getObject(), annotsBefore);
+	const linksRestored = restored.links, otherAnnotsRestored = restored.others;
 
 	// ---- tag the replacement where the old word was (tagged PDFs)
 	// Redaction keeps every BDC/EMC and the structure tree, but text appended
@@ -1397,7 +1472,7 @@ export function replaceText(mupdf, doc, pageIndex, find, replacement, opts = {})
 			...(s.fb ? { program: s.fb.ref.get("DescendantFonts", 0).get("BaseFont").asName() } : {}),
 			...(s.why ? { why: s.why } : {}), ...(s.how ? { how: s.how } : {}),
 		})),
-		missing, toUnicodeAdded, widthsAdded, linksRestored, style, ops, timings: t,
+		missing, toUnicodeAdded, widthsAdded, linksRestored, otherAnnotsRestored, style, ops, timings: t,
 		...(rest.length ? { rewrittenRest: rest.map((c) => c.c).join("") } : {}),
 		...(tag ? { tag } : {}),
 	};

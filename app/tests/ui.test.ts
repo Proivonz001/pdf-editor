@@ -12,8 +12,12 @@
 // placements, "Put it in the middle", "Next empty field", the focus asked for, Enter on the page),
 // and the small fixes after the owner's test (Modifica's sub-tools Cambia, Aggiungi testo and
 // Aggiungi immagine, with their Escape and Enter and where the focus goes when they swap the
-// layers; no empty file left where a save failed).
+// layers; no empty file left where a save failed), and the decorations that follow an edited line
+// (the line editor's background option and what it sends, the toasts that say what followed the
+// text and what stayed, the details panel's rows; after its review, plurals of one kind, and where
+// the option goes in the bar so that it is never cut and Cancel and Apply never move).
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
 
@@ -28,7 +32,8 @@ vi.mock("../src/engine/client.ts", () => {
     ready = Promise.resolve();
     open(bytes: ArrayBuffer, password?: string) { return e().open(bytes, password); }
     lines() { return Promise.resolve([]); }
-    replaceLine(p: number, l: number, text: string) { return e().replaceLine(p, l, text); }
+    replaceLine(p: number, l: number, text: string, options?: unknown) { return e().replaceLine(p, l, text, options); }
+    lineDecorations(p: number, l: number) { return e().lineDecorations(p, l); }
     images(p: number) { return e().images(p); }
     transformImage(p: number, i: number, matrix: number[]) { return e().transformImage(p, i, matrix); }
     deleteImage(p: number, i: number) { return e().deleteImage(p, i); }
@@ -116,6 +121,8 @@ const engineImpl: any = {
     };
   },
   replaceLine: async () => { calls.push("replaceLine"); return edited([0]); },
+  // Asked by the line editor as it opens, beside the edits: not in `calls`, which the edits' tests read.
+  lineDecorations: async () => ({ underlines: 0, strikes: 0, links: 0, box: null, left: [] }),
   transformImage: async (_p: number, i: number) => { calls.push(`transformImage:${i}`); return imageEdited(i); },
   deleteImage: async (_p: number, i: number) => { calls.push(`deleteImage:${i}`); return imageEdited(null); },
   replaceImage: async (_p: number, i: number, bytes: ArrayBuffer) => {
@@ -3585,5 +3592,518 @@ describe("U54 a save that fails leaves no empty file", () => {
     expect(downloads()).toEqual([]);
     expect(toastTexts()).toEqual(["Downloaded “Chosen.pdf”."]);
     expect(state.dirty.value).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Decorations that follow an edited line: the line editor's background option and what it sends,
+// the toasts that say what followed the text and what stayed, the details panel's rows
+
+/** What a line edit did to the line's decorations (DecorationReport): nothing unless `extra` says. */
+const REPORT = (extra: Record<string, unknown> = {}) =>
+  ({ moved: [], removed: [], linksMoved: 0, linksRemoved: 0, left: [], ...extra }) as any;
+/** What the engine says of a line as its editor opens (LineDecorations): nothing unless `extra` says. */
+const DECORATIONS = (extra: Record<string, unknown> = {}) =>
+  ({ underlines: 0, strikes: 0, links: 0, box: null, left: [], ...extra }) as any;
+const PILL = { fill: true, stroke: false, suggested: true };
+
+describe("U55 decorations that follow an edited line", () => {
+  /**
+   * Edit LINE of a document just opened, with the engine reporting `result` on top of a plain
+   * edit; returns the toasts shown and what the engine was sent.
+   */
+  async function editWith(name: string, result: Record<string, unknown>, options?: { box?: boolean }) {
+    await openWith(name, {});
+    const page = state.doc.value!.pages[0];
+    const replace = engineImpl.replaceLine;
+    let sentArgs: unknown[] = [];
+    engineImpl.replaceLine = async (...args: unknown[]) => {
+      sentArgs = args;
+      return { ...edited([0]), ...result };
+    };
+    state.toasts.value = [];
+    try {
+      await actions.replaceLine(page, LINE, "new", page.rev.peek(), options);
+    } finally {
+      engineImpl.replaceLine = replace;
+    }
+    return { toasts: state.toasts.value.map((x) => [x.kind, x.text]), sent: sentArgs };
+  }
+
+  it("the editor's choice goes to the engine only when it offered one", async () => {
+    const { lineEditOptions } = await import("../src/viewer/LineLayer");
+    let r = await editWith("DA.pdf", {}, { box: false });
+    expect(r.sent).toEqual([0, 0, "new", { box: false }]);
+    r = await editWith("DB.pdf", {});
+    expect(r.sent).toEqual([0, 0, "new", undefined]);
+    expect(r.toasts).toEqual([]); // no decorations reported: nothing said
+    expect(lineEditOptions(null, true)).toBeUndefined(); // no answer from the engine (yet)
+    expect(lineEditOptions(DECORATIONS(), true)).toBeUndefined(); // no background to offer
+    expect(lineEditOptions(DECORATIONS({ box: PILL }), false)).toEqual({ box: false });
+    expect(lineEditOptions(DECORATIONS({ box: PILL }), true)).toEqual({ box: true });
+  });
+
+  it("says what followed the text and what stayed, after the edit's own toasts, two at most", async () => {
+    const r = await editWith("DC.pdf", {
+      fallbackChars: ["é"],
+      decorations: REPORT({
+        moved: ["strike"], removed: ["underline"], linksRemoved: 2, left: [{ kind: "background", reason: "shared" }],
+      }),
+    });
+    expect(r.toasts).toEqual([
+      ["warn", "Not in the original font, written with a similar one: é"],
+      ["info", "The strike-through follows the new text too. Removed the underline and the links too."],
+      ["warn", "Left the background as it was: it's shared with other lines or a table."],
+    ]);
+    const s = await editWith("DD.pdf", { decorations: REPORT() });
+    expect(s.toasts).toEqual([]); // a report with nothing in it: nothing to say
+  });
+
+  it("names what followed, with plurals, in both languages", async () => {
+    const i18n = await import("../src/i18n");
+    const said = (extra: Record<string, unknown>) => actions.decorationToasts(REPORT(extra)).map((x) => [x.kind, x.text]);
+    expect(said({ moved: ["underline"], linksMoved: 1 })).toEqual([["info", "The underline and the link follow the new text too."]]);
+    expect(said({ linksMoved: 1 })).toEqual([["info", "The link follows the new text too."]]);
+    expect(said({ moved: ["underline", "underline"] })).toEqual([["info", "The underlines follow the new text too."]]);
+    expect(said({ moved: ["background", "border"] })).toEqual([["info", "The background and the border follow the new text too."]]);
+    expect(said({ removed: ["background", "underline"], linksRemoved: 1 }))
+      .toEqual([["info", "Removed the underline, the background and the link too."]]);
+    expect(said({ left: [{ kind: "underline", reason: "pattern" }] }))
+      .toEqual([["warn", "Left the underline as it was: it's dashed or dotted."]]);
+    // Two of a kind for one reason: the plural, with the reason (D26).
+    expect(said({ left: [{ kind: "underline", reason: "pattern" }, { kind: "underline", reason: "pattern" }] }))
+      .toEqual([["warn", "Left the underlines as they were: they're dashed or dotted."]]);
+    expect(said({ left: [{ kind: "link", reason: "direction" }, { kind: "link", reason: "direction" }] }))
+      .toEqual([["warn", "Left the links as they were: the text is vertical or slanted."]]);
+    // ...and with something else besides, still the plural in the list.
+    expect(said({ left: [
+      { kind: "underline", reason: "pattern" }, { kind: "underline", reason: "pattern" }, { kind: "link", reason: "direction" },
+    ] })).toEqual([["warn", "Left the underlines and the link as they were."]]);
+    expect(said({ left: [{ kind: "background", reason: "shared" }, { kind: "link", reason: "ambiguous" }] }))
+      .toEqual([["warn", "Left the background and the link as they were."]]);
+    expect(said({ left: [{ kind: "underline", reason: "colour" }, { kind: "underline", reason: "pattern" }] }))
+      .toEqual([["warn", "Left the underlines as they were."]]);
+    expect(actions.decorationToasts(undefined)).toEqual([]);
+
+    i18n.setLocale("it");
+    try {
+      expect(said({ moved: ["underline"], linksMoved: 1 }))
+        .toEqual([["info", "Anche la sottolineatura e il link seguono il nuovo testo."]]);
+      expect(said({ linksMoved: 1 })).toEqual([["info", "Anche il link segue il nuovo testo."]]);
+      expect(said({ moved: ["background"], linksMoved: 2 })).toEqual([["info", "Anche lo sfondo e i link seguono il nuovo testo."]]);
+      expect(said({ removed: ["underline", "background"], linksRemoved: 1 }))
+        .toEqual([["info", "Ho tolto anche la sottolineatura, lo sfondo e il link."]]);
+      expect(said({ moved: ["strike"], removed: ["underline"], left: [{ kind: "background", reason: "shared" }] })).toEqual([
+        ["info", "Anche il barrato segue il nuovo testo. Ho tolto anche la sottolineatura."],
+        ["warn", "Ho lasciato com'era lo sfondo: è in comune con altre righe o con una tabella."],
+      ]);
+      expect(said({ left: [{ kind: "underline", reason: "pattern" }] }))
+        .toEqual([["warn", "Ho lasciato com'era la sottolineatura: è a trattini o a puntini."]]);
+      expect(said({ left: [{ kind: "underline", reason: "pattern" }, { kind: "underline", reason: "pattern" }] }))
+        .toEqual([["warn", "Ho lasciato com'erano le sottolineature: sono a trattini o a puntini."]]);
+      expect(said({ left: [{ kind: "background", reason: "shared" }, { kind: "background", reason: "shared" }] }))
+        .toEqual([["warn", "Ho lasciato com'erano gli sfondi: sono in comune con altre righe o con una tabella."]]);
+      expect(said({ left: [
+        { kind: "underline", reason: "pattern" }, { kind: "underline", reason: "pattern" }, { kind: "link", reason: "direction" },
+      ] })).toEqual([["warn", "Ho lasciato com'erano le sottolineature e il link."]]);
+      expect(said({ left: [{ kind: "background", reason: "shared" }, { kind: "link", reason: "ambiguous" }] }))
+        .toEqual([["warn", "Ho lasciato com'erano lo sfondo e il link."]]);
+    } finally {
+      i18n.setLocale("en");
+    }
+  });
+
+  it("every reason and every kind has its words, in both languages", async () => {
+    const i18n = await import("../src/i18n");
+    const reasons = ["pattern", "form", "colour", "overline", "shared", "cover", "complex", "direction", "ambiguous"] as const;
+    const kinds = ["underline", "strike", "overline", "background", "border", "link"] as const;
+    for (const locale of ["en", "it"] as const) {
+      i18n.setLocale(locale);
+      for (const reasonText of [actions.decorationReasonText, actions.decorationsReasonText]) {
+        const texts = reasons.map((reason) => reasonText(reason));
+        for (const text of texts) expect(text).toMatch(/^[^{}.]+$/); // a clause: no placeholder, no full stop
+        expect(texts.some((text) => text.startsWith("deco."))).toBe(false);
+        expect(new Set(texts).size).toBe(reasons.length);
+      }
+      for (const bare of [false, true]) {
+        const names = actions.decorationNames([...kinds], bare);
+        expect(names).toHaveLength(kinds.length);
+        expect(new Set(names).size).toBe(kinds.length);
+        expect(names.some((name) => name.startsWith("deco."))).toBe(false);
+      }
+      // Two of each kind: the plural names, none of them a singular one.
+      const one = actions.decorationNames([...kinds]);
+      const many = actions.decorationNames([...kinds, ...kinds]);
+      expect(new Set(many).size).toBe(kinds.length);
+      expect(many.filter((name) => one.includes(name))).toEqual([]);
+    }
+    i18n.setLocale("en");
+  });
+
+  it("the background option's words: stretched or removed, always whole", async () => {
+    const i18n = await import("../src/i18n");
+    const { boxOptionText } = await import("../src/viewer/LineLayer");
+    const fill = { fill: true, stroke: false };
+    const stroke = { fill: false, stroke: true };
+    const both = { fill: true, stroke: true };
+    expect(boxOptionText(fill, false)).toBe("Stretch the background too");
+    expect(boxOptionText(stroke, true)).toBe("Remove the border too");
+    expect(boxOptionText(both, false)).toBe("Stretch the background and border too");
+    i18n.setLocale("it");
+    try {
+      expect(boxOptionText(fill, false)).toBe("Allunga anche lo sfondo");
+      expect(boxOptionText(fill, true)).toBe("Togli anche lo sfondo");
+      expect(boxOptionText(stroke, false)).toBe("Allunga anche il bordo");
+      expect(boxOptionText(both, true)).toBe("Togli anche lo sfondo e il bordo");
+    } finally {
+      i18n.setLocale("en");
+    }
+  });
+
+  it("the editor's question: kept only for the editor still open on the page as it was; a failure is quiet", async () => {
+    const { askDecorations } = await import("../src/viewer/LineLayer");
+    await openWith("DE.pdf", {});
+    const page = state.doc.value!.pages[0];
+    state.toasts.value = [];
+    const original = engineImpl.lineDecorations;
+    const info = DECORATIONS({ underlines: 1, links: 1, box: PILL });
+    const asked: number[][] = [];
+    engineImpl.lineDecorations = async (p: number, l: number) => {
+      asked.push([p, l]);
+      return info;
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const rev = page.rev.peek();
+      expect(await askDecorations(page, LINE, rev, () => true)).toBe(info);
+      expect(asked).toEqual([[0, 0]]);
+      expect(state.editingDecorations.value).toEqual({ pageIndex: 0, lineIndex: 0, rev, info });
+      state.editingDecorations.value = null;
+
+      // The editor closed (or wrote) before the answer came.
+      expect(await askDecorations(page, LINE, rev, () => false)).toBeNull();
+      expect(state.editingDecorations.value).toBeNull();
+
+      // The page changed before the answer came: its line indices are stale.
+      const held = hold("lineDecorations");
+      const asking = askDecorations(page, LINE, rev, () => true);
+      const release = await held;
+      state.invalidatePages([0]);
+      release();
+      expect(await asking).toBeNull();
+      expect(state.editingDecorations.value).toBeNull();
+
+      // The engine could not say: the console only, the editor works as without decorations.
+      engineImpl.lineDecorations = async () => { throw new Error("no decorations"); };
+      expect(await askDecorations(page, LINE, page.rev.peek(), () => true)).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(state.editingDecorations.value).toBeNull();
+      expect(toastTexts()).toEqual([]);
+      expect(calls).toEqual([]); // not an edit
+    } finally {
+      warn.mockRestore();
+      engineImpl.lineDecorations = original;
+    }
+  });
+
+  it("the details panel: what follows the text, the option, what stays and why; nothing when there is none", async () => {
+    const i18n = await import("../src/i18n");
+    const { decorationFacts } = await import("../src/ui/DetailsPanel");
+    expect(decorationFacts(DECORATIONS())).toEqual({ follows: [], stays: [] });
+    const info = DECORATIONS({
+      underlines: 2, links: 1, box: { fill: true, stroke: true, suggested: false },
+      left: [{ kind: "underline", reason: "colour" }, { kind: "underline", reason: "colour" }, { kind: "link", reason: "direction" }],
+    });
+    expect(decorationFacts(info)).toEqual({
+      follows: ["Underline and link", "Background and border: your choice"],
+      stays: ["Underline: it's a different colour from the text", "Link: the text is vertical or slanted"],
+    });
+    expect(decorationFacts(DECORATIONS({ strikes: 1, box: PILL }))).toEqual({ follows: ["Strike-through", "Background: your choice"], stays: [] });
+    i18n.setLocale("it");
+    try {
+      expect(decorationFacts(info)).toEqual({
+        follows: ["Sottolineatura e link", "Sfondo e bordo: a scelta"],
+        stays: ["Sottolineatura: ha un colore diverso dal testo", "Link: il testo è verticale o inclinato"],
+      });
+      expect(decorationFacts(DECORATIONS({ left: [{ kind: "overline", reason: "overline" }] })))
+        .toEqual({ follows: [], stays: ["Linea sopra il testo: potrebbe essere una riga per la firma"] });
+    } finally {
+      i18n.setLocale("en");
+    }
+  });
+});
+
+describe("U56 the line editor's bar with the background option", () => {
+  // The layout is CSS (components are not rendered here): its rules that the fixes rest on are read
+  // from the file. Measured in a browser with the real CSS for the review: 304, 344 and 359 px pages
+  // in both languages, pages down to 149 px, the bar above and below the line.
+  const viewerCss = readFileSync(new URL("../src/styles/viewer.css", import.meta.url), "utf8");
+  /** The bodies of the rules of viewer.css whose selector is exactly `selector`, in file order. */
+  function rules(selector: string): string[] {
+    const found: string[] = [];
+    for (const m of viewerCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selectors = m[1].replace(/\/\*[\s\S]*?\*\//g, "").split(",").map((s) => s.trim());
+      if (selectors.includes(selector)) found.push(m[2]);
+    }
+    return found;
+  }
+  const px = (body: string, property: string) => {
+    const m = new RegExp(String.raw`(?:^|[;\s])${property}:\s*(\d+)px`).exec(body);
+    return m ? Number(m[1]) : null;
+  };
+
+  it("the bar's side is chosen with room for the option's row, so its coming never flips the bar", async () => {
+    const { BAR_OFFSET, barGoesBelow, barRoom } = await import("../src/viewer/LineLayer");
+    for (const coarse of [false, true]) {
+      const buttons = coarse ? 44 : 36;
+      // Room above for the row of buttons alone (enough before the fix), not for the option's row
+      // too: below from the start, so the option does not push the buttons to the other side.
+      expect(barGoesBelow(BAR_OFFSET + buttons + 10, 400, coarse)).toBe(true);
+      expect(barGoesBelow(BAR_OFFSET + barRoom(coarse), 400, coarse)).toBe(false);
+      // Less room below than above: it stays above (and the option's row sticks out a little).
+      expect(barGoesBelow(BAR_OFFSET + buttons + 10, BAR_OFFSET + buttons, coarse)).toBe(false);
+    }
+  });
+
+  it("barRoom is the bar's height in viewer.css with one row of the option", async () => {
+    const { barRoom } = await import("../src/viewer/LineLayer");
+    const [row, rowCoarse] = rules(".context-row");
+    const [option, optionCoarse] = rules(".btn.context-option");
+    const gap = px(rules(".context-bar")[0], "gap")!;
+    const chrome = 2 * (1 + px(rules(".context-bar")[0], "padding")!); // its border and padding
+    expect([px(row, "height"), px(rowCoarse, "height"), gap, chrome]).toEqual([28, 36, 4, 8]);
+    expect(barRoom(false)).toBe(chrome + px(row, "height")! + gap + px(option, "min-height")!);
+    expect(barRoom(true)).toBe(chrome + px(rowCoarse, "height")! + gap + px(optionCoarse, "min-height")!);
+  });
+
+  it("the bar's side is chosen for the option's words as they wrap, before the engine says which (D23 edge)", async () => {
+    const { BAR_OFFSET, barFitsAbove, barGoesBelow, barRoom } = await import("../src/viewer/LineLayer");
+    // Measured in the app (vite, the real CSS, desktop, a mouse): decorations-chrome.pdf at 25%, its
+    // page 149 px wide, the line "Amount" with its field 86.5 px below the page's top (94.5 px below
+    // the viewer's). Cancel and Apply make the bar 167 px wide, wider than the page, so the option
+    // gets their width: "Stretch the background and border too" takes three lines there (59 px,
+    // optionHeight), "Allunga anche lo sfondo e il bordo" two (43 px); the bar is 99 px tall.
+    const top = 86.5;
+    const english = 59;
+    const italian = 43;
+    // Placed for one line of words, as before: above the line, and its top 25 px past the page's,
+    // cut off above the first page.
+    expect(barFitsAbove(top, false)).toBe(true);
+    expect(barGoesBelow(top + 8, 400, false)).toBe(false);
+    expect(top - BAR_OFFSET - barRoom(false, english)).toBeLessThan(-20);
+    // Placed for its words as they wrap: below the line from the start, in both languages.
+    for (const option of [english, italian]) {
+      expect(barFitsAbove(top, false, option)).toBe(false);
+      expect(barGoesBelow(top + 8, 400, false, option)).toBe(true);
+    }
+    // Further down the page ("A long link that wraps", 119 px) it fits above, inside the page.
+    expect(barFitsAbove(119, false, english)).toBe(true);
+    expect(barGoesBelow(119 + 8, 400, false, english)).toBe(false);
+    // The room asked for is the bar's height exactly: the buttons' row, the gap, the option's row
+    // as tall as measured (one line of words when not measured yet).
+    for (const coarse of [false, true]) {
+      const buttons = coarse ? 44 : 36;
+      expect(barRoom(coarse)).toBe(barRoom(coarse, coarse ? 36 : 28));
+      for (const option of [28, 36, 43, 59, 76]) {
+        expect(barRoom(coarse, option)).toBe(buttons + 4 + option);
+        expect(barFitsAbove(BAR_OFFSET + barRoom(coarse, option), coarse, option)).toBe(true);
+        expect(barFitsAbove(BAR_OFFSET + barRoom(coarse, option) - 0.5, coarse, option)).toBe(false);
+        // Not enough room above, and less below: it stays above, as with one line.
+        expect(barGoesBelow(BAR_OFFSET + buttons, BAR_OFFSET + buttons - 1, coarse, option)).toBe(false);
+      }
+    }
+  });
+
+  it("the bar is placed for every set of words the option can show, in both languages", async () => {
+    const i18n = await import("../src/i18n");
+    const { boxOptionText, boxOptionTexts } = await import("../src/viewer/LineLayer");
+    const kinds = [{ fill: true, stroke: false }, { fill: false, stroke: true }, { fill: true, stroke: true }];
+    for (const locale of ["en", "it"] as const) {
+      i18n.setLocale(locale);
+      const texts = boxOptionTexts();
+      const shown = [false, true].flatMap((removing) => kinds.map((kind) => boxOptionText(kind, removing)));
+      expect(texts).toEqual(shown);
+      expect(new Set(texts).size).toBe(6);
+    }
+    i18n.setLocale("en");
+    expect(boxOptionTexts()).toContain("Remove the background and border too");
+  });
+
+  it("optionHeight: the tallest of the words, set in a hidden copy of the option at its width, taken out again", async () => {
+    const { optionHeight } = await import("../src/viewer/LineLayer");
+    // A stand-in for the DOM: the copy's height is its lines of words (7 px a character) at its
+    // widest (its max-width, less the check box and padding), 16.25 px a line, as in viewer.css.
+    const made: any[] = [];
+    const element = (tag: string) => {
+      const el: any = {
+        tag, className: "", style: {}, attributes: {}, children: [] as any[], textContent: "", removed: false,
+        setAttribute(name: string, value: string) { el.attributes[name] = value; },
+        appendChild(child: any) { el.children.push(child); child.parent = el; return child; },
+        remove() { el.removed = true; },
+        getBoundingClientRect() {
+          const words = el.children[1]?.textContent ?? "";
+          const lines = Math.ceil((words.length * 7) / (parseFloat(el.style.maxWidth) - 40));
+          return { height: 10 + 16.25 * lines };
+        },
+      };
+      made.push(el);
+      return el;
+    };
+    const create = vi.spyOn(document, "createElement").mockImplementation(element as any);
+    try {
+      const bar: any = { children: [] as any[], appendChild(child: any) { this.children.push(child); return child; } };
+      const texts = ["Stretch the border too", "Stretch the background and border too", "Remove the border too"];
+      // The option as wide as the buttons' row (159 px), the room for it less than that: three lines.
+      expect(optionHeight(bar, texts, 159, 140)).toBe(Math.ceil(10 + 16.25 * 3));
+      const [probe] = bar.children;
+      expect(probe.className).toBe("btn context-btn context-option is-probe");
+      expect(probe.attributes["aria-hidden"]).toBe("true");
+      expect([probe.style.minWidth, probe.style.maxWidth]).toEqual(["159px", "159px"]);
+      expect(probe.children.map((c: any) => c.className)).toEqual(["context-option-box", "context-option-text"]);
+      expect(probe.removed).toBe(true);
+      // More room than the buttons: as wide as its words need, up to the room.
+      expect(optionHeight(bar, texts, 159, 320)).toBe(Math.ceil(10 + 16.25 * 1));
+      expect(bar.children[1].style.maxWidth).toBe("320px");
+      expect(made.filter((el) => el.className.includes("is-probe")).every((el) => el.removed)).toBe(true);
+    } finally {
+      create.mockRestore();
+    }
+    // The copy has the option's own classes, so viewer.css sets its words the same way.
+    const source = readFileSync(new URL("../src/viewer/LineLayer.tsx", import.meta.url), "utf8");
+    expect(source).toContain(`class="btn context-btn context-option"`);
+  });
+
+  it("the option's row never moves the bar: it widens it only as far as the page and the screen go", async () => {
+    const { barAcross } = await import("../src/viewer/LineLayer");
+    const CHROME = 8; // the bar's border and padding across, as in viewer.css
+    // A 320 px phone, its page 304 px wide at fit width, a line at its left edge, the bar's row of
+    // buttons 199 px wide: room for "Allunga anche lo sfondo e il bordo" on one line.
+    const view = { left: 0, right: 320 };
+    const page = { left: 8, right: 312 };
+    expect(barAcross(23, 199, view, page)).toEqual({ left: 23, optionRoom: 281 });
+    // A line further right: the bar is shifted to stay in view as before, the room is what is left.
+    expect(barAcross(200, 199, view, page)).toEqual({ left: 113, optionRoom: 191 });
+    // A page narrower than the buttons (a receipt, a low zoom): the slot puts the bar at the page's
+    // left edge; the option gets no more than the buttons' width (its words wrap there).
+    const narrow = { left: 8, right: 204 };
+    const r = barAcross(23, 199, view, narrow);
+    expect(r.optionRoom).toBeLessThanOrEqual(199 - CHROME);
+    // Over many places: the bar at its widest with the option stays on the page and in view, so
+    // neither the slot's indent nor the nudge (worked out from the buttons alone) moves it.
+    for (const pageWidth of [149, 196, 220, 304, 344, 359, 399, 600, 1200]) {
+      for (const viewRight of [320, 360, 375, 1000]) {
+        for (const width of [183, 191, 199, 388]) {
+          for (const wanted of [-40, 0, 13, 100, 250, 500]) {
+            const p = { left: 8, right: 8 + pageWidth };
+            const v = { left: 0, right: viewRight };
+            const { left, optionRoom } = barAcross(wanted, width, v, p);
+            const placed = Math.max(p.left, Math.min(left, p.right - width));
+            const widest = Math.max(width, optionRoom + CHROME);
+            if (width <= Math.min(p.right, v.right - 8) - placed) {
+              expect(placed + widest).toBeLessThanOrEqual(Math.min(p.right, v.right - 8));
+            } else {
+              expect(widest).toBe(width); // the buttons already fill the room: the option adds nothing
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("viewer.css: the option is never cut, never clamps the bar, and grows away from the line", () => {
+    // The clamp that cut the label and pushed Apply out of narrow bars (D23, D24) is gone.
+    expect(viewerCss).not.toMatch(/\.has-option/);
+    const [option] = rules(".btn.context-option");
+    expect(option).toMatch(/min-width:\s*100%/); // never narrower than Cancel and Apply
+    expect(option).toMatch(/max-width:\s*var\(--option-room, 0px\)/); // never wider than the room
+    expect(option).toMatch(/white-space:\s*normal/); // wraps rather than cuts
+    for (const body of rules(".context-option-text")) expect(body).not.toMatch(/text-overflow|overflow:/);
+    // A column, reversed below the line, so the option's row is on the side away from it (D25);
+    // the buttons' row keeps its own width when the option widens the bar.
+    expect(rules(".context-bar.line-bar")[0]).toMatch(/flex-direction:\s*column;/);
+    expect(rules(".context-slot.is-below .line-bar")[0]).toMatch(/flex-direction:\s*column-reverse/);
+    expect(rules(".context-row")[0]).toMatch(/align-self:\s*flex-start/);
+    // The copy that optionHeight measures: out of the bar's layout, unseen, as wide as its words
+    // need between the min- and max-width it is given (the option's).
+    const [probe] = rules(".btn.context-option.is-probe");
+    expect(probe).toMatch(/position:\s*absolute/);
+    expect(probe).toMatch(/visibility:\s*hidden/);
+    expect(probe).toMatch(/width:\s*max-content/);
+    expect(probe).not.toMatch(/min-width|max-width|white-space|padding|font/);
+  });
+
+  it("a page too short for the bar on either side: the side with more room, on the page and in what the pages' box shows", async () => {
+    const { BAR_OFFSET, barFitsAbove, barGoesBelow, barRoom, shownBand } = await import("../src/viewer/LineLayer");
+    // The pages' box clips what stands out of it: the room it cuts off is not the viewer's.
+    expect(rules(".pages")[0]).toMatch(/overflow:\s*clip/);
+    // Reproduced in the app (vite, the real CSS): desktop 1280x800, English, a single 612x396 pt page
+    // at 25% (153x99 px), the engine offering {fill, stroke}, the line at 350 pt. The viewer shows
+    // 127.5 to 800 px; the pages' box is 127.5 to 306.5 (24 px margins, 32 px more after the last
+    // page). The field's top is 86 px below the page's (237.5 on screen), 5.2 px tall (4 px words).
+    // The option's words at the buttons' width take three lines (59 px): the bar is 99 px tall.
+    const option = 59;
+    const bar = barRoom(false, option);
+    expect(bar).toBe(99);
+    const page = { top: 127.5 + 24, height: 99 };
+    const field = { top: page.top + 86, bottom: page.top + 86 + 5.2 };
+    const view = { top: 127.5, bottom: 800 };
+    const pages = { top: 127.5, bottom: 127.5 + 24 + 99 + 24 + 32 };
+    const onPage = { above: field.top - page.top, below: page.top + page.height - field.bottom };
+    // It fits on neither side of the page.
+    expect(barFitsAbove(onPage.above, false, option)).toBe(false);
+    expect(onPage.below).toBeLessThan(BAR_OFFSET + bar);
+    // Before: below, because it did not fit above (on the page, and on screen counting the empty
+    // viewer under the document), with 48 px of it cut off by the pages' box.
+    const before = barGoesBelow(field.top - view.top, view.bottom - field.bottom, false, option)
+      || !barFitsAbove(onPage.above, false, option);
+    expect(before).toBe(true);
+    expect(field.bottom + BAR_OFFSET + bar - pages.bottom).toBeCloseTo(48.2, 1);
+    // Now: on screen only what the pages' box shows counts, and on the page the side with more room
+    // wins. Above, in the margin over the page: at most its border and padding (4 px) are cut.
+    const shown = shownBand(view, pages);
+    expect(shown).toEqual({ top: 127.5, bottom: 306.5 });
+    const flip = barGoesBelow(field.top - shown.top, shown.bottom - field.bottom, false, option);
+    const below = flip || barGoesBelow(onPage.above, onPage.below, false, option);
+    expect([flip, below]).toEqual([false, false]);
+    const cut = pages.top - (field.top - BAR_OFFSET - bar);
+    expect(cut).toBeCloseTo(2, 5);
+    expect(cut).toBeLessThan(4);
+
+    // D23 stays fixed: decorations-chrome.pdf at 25% (a 210.5 px page), the line "Amount" 86.5 px
+    // down: the bar goes below in both languages (the page decides: the Italian words would fit
+    // above on screen, in the margin over the page, but not on the page).
+    for (const [words, onScreen] of [[59, true], [43, false]] as const) {
+      const top = 127.5 + 24 + 86.5;
+      const b = shownBand(view, { top: 127.5, bottom: 127.5 + 24 + 210.5 + 24 + 32 });
+      const flipped = barGoesBelow(top - b.top, b.bottom - (top + 5.2), false, words);
+      expect(flipped).toBe(onScreen);
+      expect(flipped || barGoesBelow(86.5, 210.5 - (86.5 + 5.2), false, words)).toBe(true);
+    }
+    // A long document: the pages' box reaches past what shows, and changes nothing.
+    expect(shownBand(view, { top: -4000, bottom: 9000 })).toEqual(view);
+    expect(shownBand(view)).toEqual(view);
+
+    // Every place of the line on a short page, every option height: above when the bar fits there;
+    // otherwise below when it fits there; otherwise on the side with more room.
+    for (const coarse of [false, true]) {
+      for (const words of [28, 36, 43, 59, 76]) {
+        const need = BAR_OFFSET + barRoom(coarse, words);
+        for (const height of [60, 99, 150, 260]) {
+          for (let top = 0; top <= height - 5; top += 0.5) {
+            const room = height - (top + 5);
+            const goes = barGoesBelow(top, room, coarse, words);
+            if (top >= need) expect(goes).toBe(false);
+            else if (room >= need) expect(goes).toBe(true);
+            else expect(goes).toBe(room > top);
+          }
+        }
+      }
+    }
+
+    // The editor decides with these: the page's room on both sides, and the band of shownBand.
+    const source = readFileSync(new URL("../src/viewer/LineLayer.tsx", import.meta.url), "utf8");
+    expect(source).toContain("const below = flip || barGoesBelow(top, page.height * zoom - (top + height), isCoarse.value, optionTall);");
+    expect(source).toMatch(/shownBand\(\s*\{ top: viewTop, bottom: viewBottom \}, field\.closest<HTMLElement>\("\.pages"\)\?\.getBoundingClientRect\(\),?\s*\)/);
+    expect(source).toContain("setFlip(barGoesBelow(f.top - shown.top, shown.bottom - f.bottom, coarse, tall));");
   });
 });

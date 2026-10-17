@@ -390,3 +390,304 @@ describe("subsetFallbackFonts and annotation appearances", () => {
     }
   });
 });
+
+// Decorations (phase 3): the links core.replaceText's redaction takes off the page go back as the
+// very objects they were, at their place in /Annots, with /F, /Border and /StructParent (a tagged
+// PDF's structure tree points at the object), instead of new ones made with createLink.
+describe("replaceText puts the original links back", () => {
+  /**
+   * Three lines, each under a link (/F 4, /Border [0 0 0]); the middle one is in the structure
+   * tree too (/StructParent 1, an OBJR in a /Link element).
+   */
+  function linkedPage(): mupdf.PDFDocument {
+    const doc = keep(new mupdf.PDFDocument());
+    const font = new mupdf.Font("Helvetica");
+    const helv = doc.addSimpleFont(font);
+    font.destroy();
+    const ys = [700, 650, 600];
+    const content = ys.map((y, k) => `/P <</MCID ${k}>> BDC BT /F1 12 Tf 50 ${y} Td (Line number ${k + 1}) Tj ET EMC`).join("\n");
+    doc.insertPage(-1, doc.addPage([0, 0, 400, 800], 0, { Font: { F1: helv } }, content));
+    const page = doc.findPage(0);
+    const links = ys.map((y, k) => doc.addObject({
+      Type: "Annot", Subtype: "Link", Rect: [48, y - 4, 140, y + 12], Border: [0, 0, 0], F: 4,
+      ...(k === 1 ? { StructParent: 1 } : {}), A: { S: "URI", URI: doc.newString(`https://example.com/${k + 1}`) },
+    }));
+    const annots = doc.newArray();
+    for (const l of links) annots.push(l);
+    page.put("Annots", annots);
+    page.put("StructParents", 0);
+    const root = doc.addObject({ Type: "StructTreeRoot" });
+    const part = doc.addObject({ Type: "StructElem", S: "Document", P: root });
+    const paragraphs = [0, 1, 2].map((k) => doc.addObject({ Type: "StructElem", S: k === 1 ? "Link" : "P", P: part, Pg: page, K: k }));
+    const objr = doc.newDictionary();
+    objr.put("Type", doc.newName("OBJR"));
+    objr.put("Obj", links[1]);
+    objr.put("Pg", page);
+    paragraphs[1].put("K", [1, objr]);
+    part.put("K", paragraphs);
+    root.put("K", part);
+    root.put("ParentTree", { Nums: [0, paragraphs, 1, paragraphs[1]] });
+    root.put("ParentTreeNextKey", 2);
+    doc.getTrailer().get("Root").put("StructTreeRoot", root);
+    doc.getTrailer().get("Root").put("MarkInfo", { Marked: true });
+    return doc;
+  }
+
+  const annotsOf = (doc: mupdf.PDFDocument) => {
+    const annots = doc.findPage(0).get("Annots");
+    const out: mupdf.PDFObject[] = [];
+    annots.forEach((a) => out.push(a));
+    return out;
+  };
+
+  it("a link with /F 4, /Border and /StructParent keeps them and its place after a line edit, and after save and re-open", () => {
+    const doc = linkedPage();
+    const before = annotsOf(doc).map((a) => a.asIndirect());
+    const r = replaceText(mupdf, doc, 0, "Line number 2", "Line number 2, edited");
+    expect(r.linksRestored).toBe(1);
+    const after = annotsOf(doc);
+    expect(after.map((a) => a.asIndirect())).toEqual(before); // the same objects, in the same order
+    const link = after[1].resolve();
+    expect(link.get("StructParent").asNumber()).toBe(1);
+    expect(link.get("F").asNumber()).toBe(4);
+    expect(link.get("Border").toString()).toBe("[0 0 0]");
+
+    const saved = openBytes(savePdf(mupdf, doc).bytes);
+    const again = annotsOf(saved);
+    expect(again).toHaveLength(3);
+    const uris = again.map((a) => a.resolve().get("A", "URI").asString());
+    expect(uris).toEqual(["https://example.com/1", "https://example.com/2", "https://example.com/3"]);
+    const kept = again[1].resolve();
+    expect([kept.get("StructParent").asNumber(), kept.get("F").asNumber(), kept.get("Border").toString()]).toEqual([1, 4, "[0 0 0]"]);
+    // The structure tree's object reference still names that very annotation (the edit's new
+    // /Span went in the same element, after the old text's MCID).
+    const kids = saved.getTrailer().get("Root", "StructTreeRoot", "ParentTree", "Nums").get(3).get("K");
+    const refs: number[] = [];
+    kids.forEach((k) => { if (k.isDictionary() && k.get("Type").asName() === "OBJR") refs.push(k.get("Obj").asIndirect()); });
+    expect(refs).toEqual([again[1].asIndirect()]);
+    const page = saved.loadPage(0);
+    const links = page.getLinks();
+    expect(links.map((l) => l.getURI())).toEqual(uris);
+    expect(links[1].getBounds()).toEqual([48, 138, 140, 154]); // page space (800 - 662, 800 - 646): not mirrored
+    for (const l of links) l.destroy();
+    page.destroy();
+  });
+
+  it("links the redaction did not touch are left as they were, after save and re-open too", () => {
+    const doc = linkedPage();
+    const before = annotsOf(doc).map((a) => a.asIndirect());
+    expect(replaceText(mupdf, doc, 0, "Line number 1", "First").linksRestored).toBe(1);
+    expect(replaceText(mupdf, doc, 0, "Line number 3", "").linksRestored).toBe(1); // a delete keeps the link too
+    expect(annotsOf(doc).map((a) => a.asIndirect())).toEqual(before);
+    const saved = openBytes(savePdf(mupdf, doc).bytes);
+    expect(annotsOf(saved).map(summary)).toEqual(["Link https://example.com/1", "Link https://example.com/2", "Link https://example.com/3"]);
+  });
+
+  // ---- decorations fix round 1 (review D9, D10, D14)
+
+  /**
+   * A page (400 x 800) with one Helvetica 12 pt line per entry of `lines`, line k with its
+   * baseline at y 700 - 50k from x 50 (PDF space), and in /Annots the entries `annots` returns,
+   * in that order.
+   */
+  function pageWith(lines: string[], annots: (doc: mupdf.PDFDocument, page: mupdf.PDFObject) => mupdf.PDFObject[]) {
+    const doc = keep(new mupdf.PDFDocument());
+    const font = new mupdf.Font("Helvetica");
+    const helv = doc.addSimpleFont(font);
+    font.destroy();
+    const content = lines.map((text, k) => `BT /F1 12 Tf 50 ${700 - 50 * k} Td (${text}) Tj ET`).join("\n");
+    doc.insertPage(-1, doc.addPage([0, 0, 400, 800], 0, { Font: { F1: helv } }, content));
+    const page = doc.findPage(0);
+    const list = doc.newArray();
+    for (const a of annots(doc, page)) list.push(a);
+    page.put("Annots", list);
+    return doc;
+  }
+  /** A rect (PDF space) over line k of pageWith, from x0 to x1. */
+  const over = (k: number, x0 = 48, x1 = 250) => [x0, 700 - 50 * k - 4, x1, 700 - 50 * k + 12];
+  const quadsOf = (r: number[]) => [r[0], r[3], r[2], r[3], r[0], r[1], r[2], r[1]];
+  const linkAt = (doc: mupdf.PDFDocument, rect: number[], uri: string) => doc.addObject({
+    Type: "Annot", Subtype: "Link", Rect: rect, Border: [0, 0, 0], F: 4, A: { S: "URI", URI: doc.newString(uri) },
+  });
+  /** A text field's widget over `rect`, registered in /AcroForm /Fields. */
+  const fieldAt = (doc: mupdf.PDFDocument, page: mupdf.PDFObject, rect: number[]) => {
+    const widget = doc.addObject({ Type: "Annot", Subtype: "Widget", FT: "Tx", T: doc.newString("name"), Rect: rect, F: 4, P: page });
+    doc.getTrailer().get("Root").put("AcroForm", { Fields: [widget] });
+    return widget;
+  };
+  /** An /Annots entry, said so that two documents compare: its subtype, and a link's URI. */
+  function summary(entry: mupdf.PDFObject) {
+    if (entry.isNull()) return "null";
+    const d = entry.resolve();
+    if (!d.isDictionary()) return "nothing";
+    const subtype = d.get("Subtype").asName();
+    return subtype === "Link" ? `Link ${d.get("A", "URI").asString()}` : subtype;
+  }
+  /** The text of page 0's lines, as MuPDF reads it, in reading order. */
+  function linesOf(doc: mupdf.PDFDocument) {
+    const page = doc.loadPage(0);
+    const lines = extractLines(page);
+    try {
+      return lines.map((l) => l.text.trim()).filter(Boolean).sort();
+    } finally {
+      releasePage(page, lines);
+    }
+  }
+  /** What a freshly loaded page 0 lists: its annotations' types (no links, widgets or popups), its widgets, its links. */
+  function loaded(doc: mupdf.PDFDocument) {
+    const page = doc.loadPage(0);
+    try {
+      const links = page.getLinks();
+      const out = { annots: page.getAnnotations().map((a) => a.getType()), widgets: page.getWidgets().length, links: links.map((l) => l.getURI()) };
+      for (const l of links) l.destroy();
+      return out;
+    } finally {
+      page.destroy();
+    }
+  }
+  const fields = (doc: mupdf.PDFDocument) => {
+    const out: number[] = [];
+    doc.getTrailer().get("Root", "AcroForm", "Fields").forEach((f) => out.push(f.asIndirect()));
+    return out;
+  };
+
+  it("several links lost at once go back in their order, among annotations that are not links (D14)", () => {
+    // "Terms Privacy Cookies", a link on each word: one replaceText loses the three. In /Annots the
+    // first link has nothing before it, the other two follow each other after a note, and a
+    // widget and a square (not links: the redaction leaves them) come after.
+    const doc = pageWith(["Terms Privacy Cookies", "Name"], (doc, page) => [
+      linkAt(doc, [49, 696, 84, 712], "https://example.com/terms"),
+      doc.addObject({ Type: "Annot", Subtype: "Text", Rect: [300, 690, 320, 710], F: 4, Contents: doc.newString("note") }),
+      linkAt(doc, [87, 696, 127, 712], "https://example.com/privacy"),
+      linkAt(doc, [130, 696, 174, 712], "https://example.com/cookies"),
+      fieldAt(doc, page, over(0, 180, 250)),
+      doc.addObject({ Type: "Annot", Subtype: "Square", Rect: over(0, 40, 260), F: 4 }),
+    ]);
+    const before = annotsOf(doc).map((a) => a.asIndirect());
+    const r = replaceText(mupdf, doc, 0, "Terms Privacy Cookies", "Terms, Privacy and Cookies");
+    expect(r.linksRestored).toBe(3); // the three were lost at once
+    expect(r.otherAnnotsRestored).toBe(0);
+    expect(annotsOf(doc).map((a) => a.asIndirect())).toEqual(before);
+    expect(loaded(doc).links).toEqual(["https://example.com/terms", "https://example.com/privacy", "https://example.com/cookies"]);
+
+    const saved = openBytes(savePdf(mupdf, doc).bytes);
+    expect(annotsOf(saved).map(summary)).toEqual([
+      "Link https://example.com/terms", "Text", "Link https://example.com/privacy", "Link https://example.com/cookies", "Widget", "Square",
+    ]);
+    expect(linesOf(saved)).toEqual(["Name", "Terms, Privacy and Cookies"]);
+  });
+
+  it("every annotation the redaction drops goes back, not only links: a FreeText over the line and its Popup (D10)", () => {
+    // Every common type over the edited line. MuPDF's redaction drops the link and the FreeText
+    // (a typewriter text, a comment box), and with the FreeText its Popup.
+    const others = ["Text", "Square", "Circle", "Line", "Ink", "Stamp", "Caret", "Highlight", "Underline", "StrikeOut",
+      "Squiggly", "Polygon", "PolyLine", "FileAttachment"];
+    let free = 0, popup = 0, widget = 0;
+    const doc = pageWith(["Pay online for the order", "Second line"], (doc, page) => {
+      const f = doc.addObject({
+        Type: "Annot", Subtype: "FreeText", Rect: over(0), F: 4, Contents: doc.newString("typed"), DA: doc.newString("0 g /Helv 10 Tf"),
+      });
+      const p = doc.addObject({ Type: "Annot", Subtype: "Popup", Rect: [250, 600, 380, 700], Parent: f, Open: false });
+      f.put("Popup", p);
+      const w = fieldAt(doc, page, over(0, 150, 250));
+      [free, popup, widget] = [f.asIndirect(), p.asIndirect(), w.asIndirect()];
+      return [
+        doc.addObject({ Type: "Annot", Subtype: "Text", Rect: [300, 690, 320, 710], F: 4 }),
+        f,
+        linkAt(doc, over(0, 48, 110), "https://example.com/pay"),
+        p,
+        w,
+        ...others.map((subtype) => doc.addObject({ Type: "Annot", Subtype: subtype, Rect: over(0), F: 4 })),
+      ];
+    });
+    const before = annotsOf(doc).map((a) => a.asIndirect());
+    const r = replaceText(mupdf, doc, 0, "Pay online for the order", "Pay online for the order now");
+    expect(r.linksRestored).toBe(1); // (links only, as before)
+    expect(r.otherAnnotsRestored).toBe(2); // the FreeText and its Popup
+    expect(annotsOf(doc).map((a) => a.asIndirect())).toEqual(before); // the same objects, at their places
+    const at = (num: number) => annotsOf(doc).find((a) => a.asIndirect() === num)!.resolve();
+    expect(at(free).get("Popup").asIndirect()).toBe(popup);
+    expect(at(popup).get("Parent").asIndirect()).toBe(free);
+    expect(at(free).get("Contents").asString()).toBe("typed");
+    // The widget is not dropped (MuPDF 1.27): its field is still in /AcroForm /Fields. (If a later
+    // MuPDF dropped it, deleting a widget takes it out of /Fields too, and this would say so.)
+    expect(fields(doc)).toEqual([widget]);
+    const live = loaded(doc); // a page loaded now reads the annotations put back
+    expect(live.annots).toContain("FreeText");
+    expect(live.widgets).toBe(1);
+    expect(live.links).toEqual(["https://example.com/pay"]);
+
+    const saved = openBytes(savePdf(mupdf, doc).bytes);
+    const again = annotsOf(saved);
+    expect(again.map(summary)).toEqual(["Text", "FreeText", "Link https://example.com/pay", "Popup", "Widget", ...others]);
+    expect(again[3].resolve().get("Parent").asIndirect()).toBe(again[1].asIndirect());
+    expect(again[1].resolve().get("Popup").asIndirect()).toBe(again[3].asIndirect());
+    expect(fields(saved)).toEqual([again[4].asIndirect()]);
+    const reread = loaded(saved);
+    expect(reread.annots).toContain("FreeText");
+    expect(reread.widgets).toBe(1);
+    expect(linesOf(saved)).toEqual(["Pay online for the order now", "Second line"]);
+  });
+
+  it("Redact annotations the page already has (marked, not applied) are not applied by a line edit (D9)", () => {
+    // A mark over another line ("Account 12345678 secret") and one over the edited line itself.
+    const doc = pageWith(["Line to fix", "Account 12345678 secret"], (doc) => {
+      const mark = (k: number) => doc.addObject({
+        Type: "Annot", Subtype: "Redact", Rect: over(k), QuadPoints: quadsOf(over(k)), F: 4, OverlayText: doc.newString("REDACTED"),
+      });
+      return [mark(1), linkAt(doc, over(0, 48, 120), "https://example.com/fix"), mark(0)];
+    });
+    const before = annotsOf(doc);
+    const marks = [before[0], before[2]].map((a) => a.resolve().toString());
+    const quads = [before[0], before[2]].map((a) => a.resolve().get("QuadPoints").toString());
+    const r = replaceText(mupdf, doc, 0, "Line to fix", "Line fixed");
+    expect(linesOf(doc)).toEqual(["Account 12345678 secret", "Line fixed"]); // the marked text is still there
+    const after = annotsOf(doc);
+    expect(after.map((a) => a.asIndirect())).toEqual(before.map((a) => a.asIndirect())); // the marks too, at their places
+    expect([after[0], after[2]].map((a) => a.resolve().toString())).toEqual(marks); // unchanged (/Subtype /Redact)
+    expect(r.linksRestored).toBe(1);
+    expect(r.otherAnnotsRestored).toBe(0);
+    expect(loaded(doc)).toEqual({ annots: ["Redact", "Redact"], widgets: 0, links: ["https://example.com/fix"] });
+
+    const saved = openBytes(savePdf(mupdf, doc).bytes);
+    expect(annotsOf(saved).map(summary)).toEqual(["Redact", "Link https://example.com/fix", "Redact"]);
+    expect([0, 2].map((k) => annotsOf(saved)[k].resolve().get("QuadPoints").toString())).toEqual(quads);
+    expect(linesOf(saved)).toEqual(["Account 12345678 secret", "Line fixed"]);
+    // And the marks still work: applying them now is the user's choice.
+    const page = saved.loadPage(0);
+    page.applyRedactions(false, 0, 0, 0);
+    page.destroy();
+    expect(linesOf(saved)).toEqual([]);
+  });
+
+  it("through the session (replaceLine, undo, redo, save): the marked line, its mark and a FreeText over the edited line stay", () => {
+    const doc = pageWith(["Line to fix", "Account 12345678 secret"], (doc) => [
+      doc.addObject({ Type: "Annot", Subtype: "Redact", Rect: over(1), QuadPoints: quadsOf(over(1)), F: 4 }),
+      doc.addObject({ Type: "Annot", Subtype: "FreeText", Rect: over(0, 130, 250), F: 4, Contents: doc.newString("typed"), DA: doc.newString("0 g /Helv 10 Tf") }),
+    ]);
+    const s = new EngineSession(mupdf);
+    expect(s.open(savePdf(mupdf, doc).bytes).ok).toBe(true);
+    try {
+      s.replaceLine(0, lineWith(s.lines(0), "Line to fix").index, "Line fixed");
+      expect(texts(s).sort()).toEqual(["Account 12345678 secret", "Line fixed"]);
+      s.undo();
+      s.redo(); // (a replay of the edit)
+      expect(texts(s).sort()).toEqual(["Account 12345678 secret", "Line fixed"]);
+      const saved = openBytes(new Uint8Array(s.save().bytes));
+      expect(annotsOf(saved).map(summary)).toEqual(["Redact", "FreeText"]);
+      expect(linesOf(saved)).toEqual(["Account 12345678 secret", "Line fixed"]);
+    } finally {
+      s.close();
+    }
+  });
+
+  it("a null entry or a reference to nothing in /Annots is skipped, not a failure", () => {
+    const doc = pageWith(["Pay online"], (doc) => [doc.newNull(), linkAt(doc, over(0, 48, 110), "https://example.com/pay"), doc.newIndirect(9999)]);
+    const r = replaceText(mupdf, doc, 0, "Pay online", "Pay onlineeeeee");
+    expect(r.linksRestored).toBe(1);
+    expect(annotsOf(doc).map(summary)).toEqual(["null", "Link https://example.com/pay", "nothing"]);
+    const saved = openBytes(savePdf(mupdf, doc).bytes);
+    expect(loaded(saved).links).toEqual(["https://example.com/pay"]);
+    expect(linesOf(saved)).toEqual(["Pay onlineeeeee"]);
+  });
+});

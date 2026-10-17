@@ -107,7 +107,8 @@ export function invert(m: Matrix): Matrix {
 
 const translate = (x: number, y: number): Matrix => [1, 0, 0, 1, x, y];
 const scaling = (x: number, y: number): Matrix => [x, 0, 0, y, 0, 0];
-const applyTo = (m: Matrix, x: number, y: number): Point => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
+/** Where point (x, y) goes under m (exported for decorations.ts). */
+export const applyTo = (m: Matrix, x: number, y: number): Point => [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
 const det = (m: Matrix) => m[0] * m[3] - m[1] * m[2];
 
 /** The corners of the unit square under m: (0, 0), (1, 0), (1, 1), (0, 1), going round. */
@@ -624,9 +625,11 @@ function inlineImageEnd(s: string, from: number, d: Record<string, Operand>): nu
 // ---------------------------------------------------------------------------------------------
 // The walk
 
-const PAINT = new Set(["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "sh", "Tj", "TJ", "'", "\""]);
+/** The painting operators: paths, shadings, text shown (exported for decorations.ts, with PATH). */
+export const PAINT = new Set(["S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "sh", "Tj", "TJ", "'", "\""]);
 const SHOW_TEXT = new Set(["Tj", "TJ", "'", "\""]);
-const PATH = new Set(["m", "l", "c", "v", "y", "h", "re"]);
+/** The path-construction operators. */
+export const PATH = new Set(["m", "l", "c", "v", "y", "h", "re"]);
 
 /** The path that made a clip, as written, so that it can be written again elsewhere. */
 interface ClipPath {
@@ -771,8 +774,8 @@ function lookup(obj: Obj, ...path: string[]): Obj {
 }
 
 const nameOf = (o: Obj) => (o.isName() ? o.asName() : null);
-const isNumeric = (args: Operand[], count: number) => args.length === count && args.every((x) => x.num !== undefined);
-const numbersOf = (args: Operand[]) => args.map((x) => x.num!);
+export const isNumeric = (args: Operand[], count: number) => args.length === count && args.every((x) => x.num !== undefined);
+export const numbersOf = (args: Operand[]) => args.map((x) => x.num!);
 
 function matrixOf(o: Obj): Matrix {
   if (!o.isArray() || o.length !== 6) return IDENTITY;
@@ -1152,7 +1155,7 @@ interface Drawn {
 }
 
 /** Stroke state "none" for getBounds (MuPDF accepts null; the types do not say so). */
-const NO_STROKE = null as unknown as MuPDF.StrokeState;
+export const NO_STROKE = null as unknown as MuPDF.StrokeState;
 
 /** What a device callback receives and must destroy. */
 type Received = { destroy(): void };
@@ -1162,7 +1165,7 @@ type Received = { destroy(): void };
  * (the first one), and what the callback received is destroyed in any case. An exception must not
  * leave a device callback, since it would unwind through MuPDF's C frames.
  */
-function guarded() {
+export function guarded() {
   let failure: { error: unknown } | null = null;
   return {
     attempt<T>(work: () => T, ...received: Received[]): T | undefined {
@@ -1403,7 +1406,7 @@ function sharedStream(doc: Doc, num: number): boolean {
  * `s` with bytes start..end replaced by `insert`, kept apart from its neighbours by a space where
  * no whitespace does it already (so that replacing again and again does not pile spaces up).
  */
-function splice(s: string, start: number, end: number, insert: string): string {
+export function splice(s: string, start: number, end: number, insert: string): string {
   const spaceBefore = start > 0 && !WS[s.charCodeAt(start - 1)], spaceAfter = end < s.length && !WS[s.charCodeAt(end)];
   if (!insert) return s.slice(0, start) + (spaceBefore && spaceAfter ? " " : "") + s.slice(end);
   return s.slice(0, start) + (spaceBefore ? " " : "") + insert + (spaceAfter ? " " : "") + s.slice(end);
