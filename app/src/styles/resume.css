@@ -1,0 +1,118 @@
+/* "Riprendi da dove eri" on the home page: ui/resume/ResumeCard.tsx. Colours only from tokens.css.
+   A card like the home page's feature cards: one row per thing kept (the document, the
+   unfinished scan) with its icon, what it is and when, and its two buttons; the note under it.
+   Below 640 px the buttons go under the text and share the row (easy targets for a thumb); from
+   640 px they sit at the end of the row. */
+
+.resume {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.resume-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+}
+
+.resume-item {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px 14px;
+  padding: 14px 16px;
+}
+
+.resume-item + .resume-item {
+  border-top: 1px solid var(--line);
+}
+
+.resume-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius);
+  background: var(--active-bg);
+  color: var(--active-fg);
+}
+
+.resume-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resume-title {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere; /* long file names wrap rather than widen the page */
+}
+
+.resume-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.resume-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.resume-actions .btn {
+  flex: 1 1 auto;
+}
+
+@media (min-width: 640px) {
+  .resume-item {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+
+  .resume-actions {
+    grid-column: auto;
+    flex-wrap: nowrap;
+  }
+
+  .resume-actions .btn {
+    flex: none;
+  }
+}
+
+/* The note, and how it works under it (a native disclosure: keyboard and screen readers know it). */
+.resume-about {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.resume-about summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .resume-about summary {
+    min-height: var(--tap);
+  }
+}
+
+.resume-about p {
+  max-width: 64ch;
+  margin: 4px 0 0;
+}

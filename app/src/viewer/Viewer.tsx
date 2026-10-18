@@ -9,6 +9,11 @@
 // Zoom keeps a point in place: every zoom change records an anchor (a point on a page, in
 // points) and the viewport position it must stay at; after the new layout is committed the
 // scroll position is set so the anchor lands there again.
+//
+// Page operations (release 4) change the pages in place on the same document (doc.layout counts
+// them): the pages are laid out again, each PageView follows its own page (keyed by PageModel.key,
+// not by position), fit-width fits again when the widest page changed, and the page the operation
+// is about (currentPage, set with the change: ui/pageActions.ts, state.ts) is brought into view.
 import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
@@ -107,8 +112,10 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
   const [viewportWidth, setViewportWidth] = useState(0);
   const [services, setServices] = useState<{ vis: PageVisibility; queue: RenderQueue } | null>(null);
   const z = zoom.value;
+  /** Bumped by every page operation: the pages changed in place. */
+  const pagesRev = doc.layout.value;
 
-  const layout = useMemo(() => computeLayout(doc.pages, z, viewportWidth), [doc, z, viewportWidth]);
+  const layout = useMemo(() => computeLayout(doc.pages, z, viewportWidth), [doc, z, viewportWidth, pagesRev]);
   // The layout that is (or is about to be) on screen, for the event handlers below.
   const layoutRef = useRef<Layout>(layout);
   layoutRef.current = layout;
@@ -119,6 +126,9 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
    * the viewport (low zoom, or the last pages, which cannot scroll to the top).
    */
   const picked = useRef<{ index: number; top: number; until: number } | null>(null);
+  /** The page operation seen last (doc.layout), and the page it is about while it waits to be shown. */
+  const shownPages = useRef(pagesRev);
+  const showing = useRef<number | null>(null);
   const banner: BannerKind | null = editingStopped.value
     ? "stopped"
     : editMode.value ? "edit" : fillMode.value ? "fill" : null;
@@ -245,10 +255,42 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
     };
   }, [doc]);
 
+  // After a page operation (before the layout effect below, which then shows its page): the page
+  // it is about is the current page, set with it; in fit-width mode the zoom fits the widest page
+  // again (a page turned or added may be wider), and the page is shown at that zoom. An anchor
+  // from a zoom still on its way names the pages as they were: dropped.
+  useLayoutEffect(() => {
+    if (shownPages.current === pagesRev) return;
+    shownPages.current = pagesRev;
+    const el = scrollerRef.current;
+    if (!el) return;
+    pending.current = null;
+    showing.current = currentPage.peek();
+    if (!fitMode.peek()) return;
+    const fit = fitWidthZoom(doc.pages, el.clientWidth);
+    if (Math.abs(fit - zoom.peek()) > 1e-4) zoom.value = fit;
+  }, [pagesRev]);
+
   // After a zoom or resize: put the anchor back where it was, then update the page indicator.
+  // After a page operation: bring its page into view (unless it is in view whole already) and
+  // keep it the current page, as a page picked from the thumbnails is.
   useLayoutEffect(() => {
     const el = scrollerRef.current;
     if (!el) return;
+    const show = showing.current;
+    if (show !== null && layout.tops.length > 0) {
+      if (Math.abs(layout.zoom - zoom.peek()) > 1e-4) return; // fitting again: shown at the new zoom
+      showing.current = null;
+      pending.current = null;
+      const i = Math.min(Math.max(0, show), layout.tops.length - 1);
+      const top = layout.tops[i], bottom = top + layout.heights[i];
+      if (top < el.scrollTop || bottom > el.scrollTop + el.clientHeight) {
+        el.scrollTop = Math.max(0, Math.min(top - spacing(layout.viewportWidth).gap, el.scrollHeight - el.clientHeight));
+      }
+      picked.current = { index: i, top: el.scrollTop, until: performance.now() + 300 };
+      currentPage.value = i;
+      return;
+    }
     const p = pending.current;
     if (p) {
       pending.current = null;
@@ -289,9 +331,11 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
         <div ref={scrollerRef} class="scroller" tabIndex={0} role="region" aria-label={t("viewer.label")}>
           {services && (
             <div class="pages" style={{ width: `${layout.contentWidth}px`, height: `${layout.contentHeight}px` }}>
+              {/* Keyed by page, not by position: after a page operation each component (its
+                  bitmap, its layers' state) stays with its own page. */}
               {doc.pages.map((page, i) => (
                 <PageView
-                  key={i}
+                  key={page.key}
                   page={page}
                   left={layout.lefts[i]}
                   top={layout.tops[i]}

@@ -612,7 +612,8 @@ function fallbackOwning(doc, ref) {
 // The first font of `chain` that has the code point `cp`, embedded in `doc` on
 // first use (one copy per document, shared by every edit), and its glyph id:
 // { fb, gid }, or null when no font has it. The caller adds the gid to
-// fb.used when it writes it, so saving keeps the glyph in the subset.
+// fb.used when it writes it: what saving keeps in the subset when it cannot
+// read what the document draws (subsetFallbackFonts).
 export function fallbackFor(mupdf, doc, chain, cp) {
 	let cache = fallbackCache.get(doc);
 	if (!cache) fallbackCache.set(doc, (cache = new Map()));
@@ -678,9 +679,9 @@ function fallbackWidths(fb) {
  * appearance (forms.ts) and new text on a page (newcontent.ts). The fonts are
  * the ones replaceText falls back to (fallbackChain: the Nimbus face of
  * `style`, ZapfDingbats, the CJK font for the script of the text), embedded
- * once per document and shared with line edits; the glyphs are marked used, so
- * saving keeps them in the subset (subsetFallbackFonts, which also looks in
- * annotation appearances). Characters no font has, and any above U+FFFF (MuPDF.js
+ * once per document and shared with line edits; the glyphs are marked used
+ * (saving keeps in the subset those the document still draws, annotation
+ * appearances included: subsetFallbackFonts). Characters no font has, and any above U+FFFF (MuPDF.js
  * 1.27 reads them back truncated), are left out and listed once in `missing`.
  *
  * Each run is consecutive characters drawn by one font: `font` is its indirect
@@ -750,7 +751,7 @@ export function releaseFallbackFonts(doc) {
 // bookkeeping outlives `doc`. Saved without garbage collection, a document keeps
 // its object numbers: restoreFallbackFonts gives a document opened from those
 // bytes the same bookkeeping, so its later edits reuse the fonts already
-// embedded and subsetFallbackFonts shrinks them with every glyph used so far.
+// embedded and subsetFallbackFonts shrinks them to the glyphs drawn with them.
 export function fallbackFontState(doc) {
 	const cache = fallbackCache.get(doc);
 	if (!cache) return [];
@@ -774,24 +775,47 @@ export function restoreFallbackFonts(doc, state) {
 
 // A fallback font is embedded whole by addFont() (Nimbus ~30-60 KB, the CJK
 // font ~1.7 MB). Subset it in a scratch document that uses exactly the glyphs
-// we wrote, then point the pages at the grafted subset. Original fonts are
-// never touched. Codes stay valid: for Identity-H CID fonts MuPDF's subsetter
-// keeps glyph ids (unused glyphs are emptied, not renumbered).
+// the document draws with it, then point the pages at the grafted subset.
+// Original fonts are never touched. Codes stay valid: for Identity-H CID fonts
+// MuPDF's subsetter keeps glyph ids (unused glyphs are emptied, not renumbered).
 // App change (release 3): annotation appearances are pointed at the subset
-// too (form fields filled with a fallback font, encodeWithFallbacks), and a
-// font already subset is left as it is, so calling this again only shrinks
-// the whole copies fallbackFor added since (see there).
+// too (form fields filled with a fallback font, encodeWithFallbacks).
+// App change (release 4): the glyphs are those the document still draws with
+// the font (fallbackUse: its pages' content and annotation appearances, as
+// they are now), not every glyph ever written with it (fb.used), which would
+// keep in a download the outlines of text the user wrote on a page deleted
+// since, on a page an extract leaves out, or in a line deleted or rewritten
+// since: a subset's glyphs tell which characters were written. A font already
+// subset is left as it is while it still draws the same glyphs, and subset
+// again from its whole program when they changed (the PDF/A conversion may
+// remove or redraw what drew with it); a whole copy fallbackFor added since is
+// subset too (see there). When the document cannot be read that way, fb.used
+// decides, as before. A font nothing draws with any more but a page or an
+// appearance still lists is subset to its .notdef glyph alone.
 export function subsetFallbackFonts(mupdf, doc) {
 	const cache = fallbackCache.get(doc);
 	if (!cache) return 0;
-	const swap = new Map(); // object number of a whole font (or its vertical twin) -> its subset
+	let use = null;
+	try {
+		use = fallbackUse(doc, cache);
+	} catch {
+		use = null; // (a document MuPDF reads but this reader cannot: every glyph written, as before)
+	}
+	const swap = new Map(); // object number of a font (or its vertical twin) -> its subset
 	let n = 0;
 	for (const fb of cache.values()) {
-		if (!fb.ref || !fb.used.size || fb.subset) continue;
+		if (!fb.ref) continue;
+		const glyphs = use ? use.glyphs.get(fb) : fb.used;
+		// Left as it is: a subset of just these glyphs already, or a font nothing draws with and
+		// nothing lists (garbage collection drops it); without `use`, as before release 4.
+		const done = use
+			? fb.subset ? sameGlyphs(fb.subset, glyphs) : !glyphs.size && !use.listed.has(fb)
+			: !glyphs.size || fb.subset;
+		if (done) continue;
 		const scratch = new mupdf.PDFDocument();
 		try {
 			const ref = scratch.addFont(fb.font);
-			const hex = [...fb.used].map((g) => hexCode(g, 2)).join("");
+			const hex = glyphs.size ? [...glyphs].sort((a, b) => a - b).map((g) => hexCode(g, 2)).join("") : "0000";
 			scratch.insertPage(-1, scratch.addPage([0, 0, 100, 100], 0, { Font: { F: ref } }, `BT /F 10 Tf <${hex}> Tj ET`));
 			scratch.subsetFonts();
 			const small = identityCidToGid(doc.graftObject(ref)); // App change: see identityCidToGid
@@ -800,7 +824,7 @@ export function subsetFallbackFonts(mupdf, doc) {
 			if (fb.refV) swap.set(fb.refV.asIndirect(), smallV);
 			fb.ref = small;
 			fb.refV = smallV;
-			fb.subset = new Set(fb.used); // the glyphs the subset has
+			fb.subset = new Set(glyphs); // the glyphs the subset has
 			n++;
 		} finally {
 			scratch.destroy();
@@ -817,7 +841,289 @@ export function subsetFallbackFonts(mupdf, doc) {
 		const annots = pageObj.get("Annots");
 		if (annots.isArray()) annots.forEach((annot) => swapInAppearance(annot, swapIn, seen));
 	}
+	// ...and every other /Font dictionary or ExtGState /Font the reader found one in (a form's).
+	if (use) {
+		for (const fonts of use.fontDicts) swapIn(fonts);
+		for (const pair of use.stateFonts) {
+			const v = pair.get(0);
+			if (v.isIndirect() && swap.has(v.asIndirect())) pair.put(0, swap.get(v.asIndirect()));
+		}
+	}
 	return n;
+}
+
+const sameGlyphs = (a, b) => a.size === b.size && [...a].every((g) => b.has(g));
+
+// App addition (release 4): what the fallback fonts of `cache` draw in `doc` now,
+// for subsetFallbackFonts: `glyphs`, each font's glyph ids (Identity-H/V: a
+// code is a glyph id) shown by the text operators (Tj ' " TJ) of every page's
+// content and every annotation's appearances (/N, /D, /R), through the forms
+// they draw (Do), the tiling patterns and Type3 glyphs of the resources they
+// draw with, the font chosen by Tf (or an ExtGState's /Font) and kept by q/Q,
+// a form starting with its caller's font; `listed`, the fonts some /Font
+// dictionary or ExtGState of those holds; `fontDicts` and `stateFonts`, those
+// dictionaries and ExtGState /Font arrays, to point at the subsets. Content
+// whose resources can reach no fallback font is not read. Throws when the
+// document cannot be read so (the caller then keeps every glyph written).
+function fallbackUse(doc, cache) {
+	const byNum = new Map(); // object number of a fallback font or its vertical twin -> its bookkeeping
+	for (const fb of cache.values()) {
+		if (!fb.ref) continue;
+		byNum.set(fb.ref.asIndirect(), fb);
+		if (fb.refV) byNum.set(fb.refV.asIndirect(), fb);
+	}
+	const glyphs = new Map([...cache.values()].map((fb) => [fb, new Set()]));
+	const listed = new Set(), fontDicts = [], stateFonts = [];
+	const fallbackAt = (ref) => (ref && ref.isIndirect() ? byNum.get(ref.asIndirect()) || null : null);
+	const dictOf = (o, key) => {
+		if (!o || !o.isDictionary()) return null;
+		const v = o.get(key);
+		return v.isDictionary() ? v : null;
+	};
+	const named = (res, kind, name) => {
+		const d = dictOf(res, kind);
+		return d && typeof name === "string" ? d.get(name) : null;
+	};
+	const isForm = (x) => x && x.isStream() && x.get("Subtype").isName() && x.get("Subtype").asName() === "Form";
+	const isTiling = (p) => p && p.isStream() && p.get("PatternType").isNumber() && p.get("PatternType").asNumber() === 1;
+	const isType3 = (f) => f && f.isDictionary() && f.get("Subtype").isName() && f.get("Subtype").asName() === "Type3";
+
+	// Whether anything drawn with `res` can draw with a fallback font (by object number, once).
+	const reach = new Map();
+	const canDraw = (res, depth = 0) => {
+		if (!res || !res.isDictionary() || depth > 32) return false;
+		const key = res.isIndirect() ? res.asIndirect() : 0;
+		if (key && reach.has(key)) return reach.get(key);
+		if (key) reach.set(key, false); // (a loop draws nothing more)
+		let found = false, holds = false;
+		const fonts = dictOf(res, "Font");
+		for (const [, f] of dictEntries(fonts)) {
+			const fb = fallbackAt(f);
+			if (fb) {
+				listed.add(fb);
+				found = holds = true;
+			} else if (isType3(f) && canDraw(dictOf(f, "Resources"), depth + 1)) found = true;
+		}
+		if (holds) fontDicts.push(fonts); // (a direct one may come twice: swapping it twice changes nothing)
+		for (const [, gs] of dictEntries(dictOf(res, "ExtGState"))) {
+			const pair = gs.isDictionary() ? gs.get("Font") : null;
+			const fb = pair && pair.isArray() && pair.length ? fallbackAt(pair.get(0)) : null;
+			if (!fb) continue;
+			listed.add(fb);
+			stateFonts.push(pair);
+			found = true;
+		}
+		for (const [, x] of dictEntries(dictOf(res, "XObject"))) if (isForm(x) && canDraw(dictOf(x, "Resources"), depth + 1)) found = true;
+		for (const [, p] of dictEntries(dictOf(res, "Pattern"))) if (isTiling(p) && canDraw(dictOf(p, "Resources"), depth + 1)) found = true;
+		if (key) reach.set(key, found);
+		return found;
+	};
+
+	const visited = new Set(); // forms (with the font they start with), patterns and glyph procedures read
+	const show = (fb, s) => {
+		if (!fb || !(s instanceof Uint8Array)) return;
+		const set = glyphs.get(fb);
+		for (let k = 0; k + 1 < s.length; k += 2) set.add((s[k] << 8) | s[k + 1]);
+	};
+	const read = (bytes, res, start, depth) => {
+		if (depth > 32 || (!start && !canDraw(res))) return;
+		let font = start;
+		const saved = [];
+		readOps(bytes, (op, args) => {
+			const last = args[args.length - 1];
+			switch (op) {
+				case "q": saved.push(font); break;
+				case "Q": if (saved.length) font = saved.pop(); break;
+				case "Tf": {
+					const name = args[args.length - 2];
+					font = name && typeof name === "object" && "name" in name ? fallbackAt(named(res, "Font", name.name)) : null;
+					break;
+				}
+				case "gs": {
+					const gs = last && last.name !== undefined ? named(res, "ExtGState", last.name) : null;
+					const pair = gs && gs.isDictionary() ? gs.get("Font") : null;
+					if (pair && pair.isArray() && pair.length) font = fallbackAt(pair.get(0));
+					break;
+				}
+				case "Tj": case "'": case "\"": show(font, last); break;
+				case "TJ": if (Array.isArray(last)) for (const x of last) show(font, x); break;
+				case "Do": {
+					const x = last && last.name !== undefined ? named(res, "XObject", last.name) : null;
+					if (isForm(x)) form(x, res, font, depth + 1);
+					break;
+				}
+			}
+		});
+		// What these resources draw elsewhere: tiling patterns, and the glyphs of Type3 fonts.
+		for (const [, p] of dictEntries(dictOf(res, "Pattern"))) if (isTiling(p)) form(p, res, null, depth + 1);
+		for (const [, f] of dictEntries(dictOf(res, "Font"))) {
+			if (!isType3(f)) continue;
+			const own = dictOf(f, "Resources") || res;
+			for (const [, proc] of dictEntries(dictOf(f, "CharProcs"))) {
+				if (!proc.isStream() || visited.has(`p${proc.asIndirect()}`)) continue;
+				visited.add(`p${proc.asIndirect()}`);
+				read(streamBytes(proc), own, null, depth + 1);
+			}
+		}
+	};
+	const form = (x, parent, font, depth) => {
+		const key = `${x.asIndirect()} ${font ? font.name : ""}`;
+		if (visited.has(key)) return;
+		visited.add(key);
+		read(streamBytes(x), dictOf(x, "Resources") || parent, font, depth);
+	};
+
+	for (let i = 0; i < doc.countPages(); i++) {
+		const pageObj = doc.findPage(i);
+		const res = pageObj.getInheritable("Resources");
+		const contents = pageObj.get("Contents");
+		const parts = [];
+		if (contents.isArray()) contents.forEach((c) => { if (c.isStream()) parts.push(streamBytes(c)); });
+		else if (contents.isStream()) parts.push(streamBytes(contents));
+		if (parts.length && canDraw(res)) read(joinBytes(parts), res, null, 0);
+		const annots = pageObj.get("Annots");
+		if (!annots.isArray()) continue;
+		annots.forEach((annot) => {
+			const ap = dictOf(annot, "AP");
+			for (const key of ["N", "D", "R"]) {
+				const v = ap ? ap.get(key) : null;
+				if (!v) continue;
+				if (v.isStream()) form(v, res, null, 1);
+				else if (v.isDictionary()) for (const [, state] of dictEntries(v)) if (state.isStream()) form(state, res, null, 1);
+			}
+		});
+	}
+	return { glyphs, listed, fontDicts, stateFonts };
+}
+
+// A stream's decoded bytes, copied out of the wasm heap (MuPDF calls made while
+// they are read may move it).
+function streamBytes(stm) {
+	const buf = stm.readStream();
+	try {
+		return buf.asUint8Array().slice();
+	} finally {
+		buf.destroy();
+	}
+}
+
+// Content streams one after the other, as MuPDF reads a page's /Contents array.
+function joinBytes(parts) {
+	if (parts.length === 1) return parts[0];
+	const out = new Uint8Array(parts.reduce((n, p) => n + p.length + 1, 0));
+	let at = 0;
+	for (const p of parts) {
+		out.set(p, at);
+		out[at + p.length] = 10;
+		at += p.length + 1;
+	}
+	return out;
+}
+
+// App addition (release 4): a small content-stream reader for fallbackUse:
+// calls onOp(op, operands) for each operator, the operands numbers, names
+// ({ name }, #xx decoded), strings (their bytes, a Uint8Array), null for other
+// values, and arrays of those; dictionaries (a BDC's property list) are read
+// past and an inline image's data jumped over (up to EI between white space).
+// Not a full PDF parser.
+function readOps(s, onOp) {
+	const n = s.length;
+	let i = 0, args = [], dict = 0;
+	const arrays = [];
+	const push = (v) => {
+		if (!dict) (arrays.length ? arrays[arrays.length - 1] : args).push(v);
+	};
+	while (i < n) {
+		const c = s[i];
+		if (CLASS[c] === 1) { i++; continue; }
+		if (c === 37) { while (i < n && s[i] !== 10 && s[i] !== 13) i++; continue; } // %comment
+		if (c === 40) { // (literal string)
+			const out = [];
+			let depth = 1;
+			for (i++; i < n;) {
+				const x = s[i++];
+				if (x === 92) { // backslash
+					const y = s[i++];
+					if (y >= 48 && y <= 55) {
+						let v = y - 48;
+						for (let d = 0; d < 2 && i < n && s[i] >= 48 && s[i] <= 55; d++) v = v * 8 + (s[i++] - 48);
+						out.push(v & 255);
+					} else if (y === 110) out.push(10);
+					else if (y === 114) out.push(13);
+					else if (y === 116) out.push(9);
+					else if (y === 98) out.push(8);
+					else if (y === 102) out.push(12);
+					else if (y === 13) { if (s[i] === 10) i++; } // a line continued
+					else if (y !== 10 && y !== undefined) out.push(y);
+					continue;
+				}
+				if (x === 40) depth++;
+				else if (x === 41 && --depth === 0) break;
+				out.push(x);
+			}
+			push(Uint8Array.from(out));
+			continue;
+		}
+		if (c === 60) {
+			if (s[i + 1] === 60) { dict++; i += 2; continue; } // << dictionary
+			const out = []; // <hex string>
+			let hi = -1;
+			for (i++; i < n && s[i] !== 62; i++) {
+				const v = HEX[s[i]];
+				if (v < 0) continue;
+				if (hi < 0) hi = v;
+				else { out.push(hi * 16 + v); hi = -1; }
+			}
+			if (hi >= 0) out.push(hi * 16);
+			i++;
+			push(Uint8Array.from(out));
+			continue;
+		}
+		if (c === 62) {
+			if (s[i + 1] === 62) { i += 2; if (dict && --dict === 0) push(null); } else i++;
+			continue;
+		}
+		if (c === 91) { i++; if (!dict) arrays.push([]); continue; }
+		if (c === 93) { i++; if (!dict && arrays.length) push(arrays.pop()); continue; }
+		if (c === 47) { // /name
+			let j = i + 1;
+			while (j < n && !CLASS[s[j]]) j++;
+			push({ name: nameText(s, i + 1, j) });
+			i = j;
+			continue;
+		}
+		if (CLASS[c] === 2) { i++; continue; } // a stray ) { }
+		let j = i;
+		while (j < n && !CLASS[s[j]]) j++;
+		const word = j - i > 32 ? "" : String.fromCharCode(...s.subarray(i, j));
+		i = j;
+		if (/^[+-]?(\d+\.?\d*|\.\d+)$/.test(word)) { push(Number(word)); continue; }
+		if (dict) continue;
+		if (word === "true" || word === "false" || word === "null" || !word) { push(null); continue; }
+		if (word === "ID") { // inline image data: binary, up to EI between white space
+			let k = i + 1;
+			while (k + 1 < n && !(s[k] === 69 && s[k + 1] === 73 && CLASS[s[k - 1]] === 1 && (k + 2 >= n || CLASS[s[k + 2]] === 1))) k++;
+			i = k + 2;
+			args = [];
+			arrays.length = 0;
+			continue;
+		}
+		arrays.length = 0; // an operator ends any array left open
+		onOp(word, args);
+		args = [];
+	}
+}
+
+// A name's characters (from just after its slash), its #xx escapes decoded.
+function nameText(s, from, to) {
+	let out = "";
+	for (let i = from; i < to; i++) {
+		if (s[i] === 35 && i + 2 < to && HEX[s[i + 1]] >= 0 && HEX[s[i + 2]] >= 0) {
+			out += String.fromCharCode(HEX[s[i + 1]] * 16 + HEX[s[i + 2]]);
+			i += 2;
+		} else out += String.fromCharCode(s[i]);
+	}
+	return out;
 }
 
 // App addition (release 3): calls swapIn on the /Font dictionaries an

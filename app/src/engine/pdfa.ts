@@ -1458,7 +1458,8 @@ export function convertToPdfA(mupdf: MuPDFModule, doc: Doc, options: ConvertOpti
   // value; buttons without appearance states all get one on state) are drawn first by forms.ts,
   // as a field edit draws them: all of them in a form with /NeedAppearances (its appearances may
   // be stale), else those without an appearance. The fallback fonts the writer embeds whole are
-  // subset at once (a font already subset is left as it is). A password widget without an
+  // subset by the glyphs the document still draws with them (core.js subsetFallbackFonts: a font
+  // already subset is subset again when that set changed). A password widget without an
   // appearance gets its frame first: MuPDF would draw its value in clear.
   if (hidePasswords(mupdf, doc).length) out.fixes++;
   const needAppearances = acro.isDictionary() && boolOf(acro, "NeedAppearances");

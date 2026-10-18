@@ -12,30 +12,52 @@
 // Download, share, open, close, update, undo, redo and changing the tool or Modifica's sub-tool
 // first write what is still typed in the line editor or the text writer, or an image's keyboard
 // move still waiting (flushEditor), so it is neither left out of the file nor lost without a warning.
+//
+// Release 4: what a document opened another way takes (adoptOpened: Riprendi, a new PDF made
+// from photos, newFromPicturesAction; opens are sequenced, the one asked for last lands: beginOpen
+// for Riprendi's own requests; such a document counts as not downloaded until it is), and what
+// page operations (ui/pageActions.ts) need from here: the engine's queue, closing what is open on
+// the pages first (its page indices are about to change: closePageWork, prepareForPages), and the
+// download path for extracted pages (downloadBytes). Undo and redo of a page operation close the
+// same things, and the page list is rebuilt from the layout the engine returns (state.ts,
+// recordHistory). While such a step is on its way no writer, line editor or image selection opens
+// (pagesChanging): it would close them when it lands, with what was typed. An undo or a redo on
+// its way counts when it will reach a page operation once those asked before it have run (two
+// undos: the last two edits); one asked after a page operation runs after it, although the page
+// operation first waits for what was asked before it (takePlaceInLine). Edits asked for with a
+// page index before a page operation that lands first (a tick tapped, a picture being prepared)
+// follow their page through it (they hold its PageModel) and are dropped when it went or was
+// turned. The delete toast's "Annulla" undoes that very edit or nothing (undoEdit).
 import { batch, effect } from "@preact/signals";
 import { EngineError } from "../engine/client";
 import {
   MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE,
   type AddedText, type DecorationKind, type DecorationLeftReason, type DecorationReport, type DocInfo,
-  type FieldValue, type FieldWidget, type ImageEditResult, type ImageInfo, type ImageLockReason, type ImageTarget,
-  type LineEditOptions, type LineInfo, type Matrix, type PdfaReport, type Rect, type SaveFormat, type SaveOptions,
-  type SavePassword, type TextStyle,
+  type FieldValue, type FieldWidget, type HistoryState, type ImageEditResult, type ImageInfo, type ImageLockReason,
+  type ImageTarget, type LineEditOptions, type LineInfo, type Matrix, type OpenResult, type PagePicture,
+  type PdfaReport, type Rect, type SaveFormat, type SaveOptions, type SavePassword, type TextStyle,
 } from "../engine/protocol";
 import { formatMm, locale, t } from "../i18n";
 import { canOfferInstall, installState, promptInstall } from "../platform/install";
 import { applyUpdate } from "../platform/pwa";
 import {
-  busy, confirmDialog, countImageEdit, currentPage, dialog, dismissToast, doc, downloadRunning, editingLine,
-  editingStopped, editMode, editTool, engine, engineStatus, fillMode, fillTool, fitMode, flushEditor, focusedField,
-  focusRequest, hasUnsavedWork, history, imageEditsPending, INK, initialsSource, markSaved, opening, openWriter,
-  pendingPlacement, recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage, sessionSignatures, sheet,
-  showDialog, showToast, tool, typingField, writerKind, writerOn, writerStyle, zoom,
+  busy, confirmDialog, countImageEdit, currentPage, dialog, dismissToast, doc, downloadRunning, editingDecorations,
+  editingLine, editingStopped, editMode, editTool, engine, engineStatus, fillMode, fillTool, fitMode, flushEditor,
+  focusedField, focusRequest, hasUnsavedWork, history, imageEditsPending, INK, initialsSource, isApplied, lastEditId,
+  markSaved, opening, openWriter, pendingPlacement, recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage,
+  sessionSignatures, sheet, showDialog, showToast, startHistory, stepAsked, stepChangesPages, stepsAheadChangePages, tool,
+  typingField, writerKind, writerOn, writerStyle, zoom,
   type BusyKind, type DialogState, type EditTool, type FillTool, type InkColor, type OpenWriter, type SavePurpose,
   type Signature, type ToastAction, type Tool,
 } from "../state";
-import { createPages, type OpenDoc, type PageModel } from "../viewer/model";
+import { lastFieldFocus } from "../viewer/fields";
+import { releaseSprite } from "../viewer/images";
+import { createDoc, type OpenDoc, type PageModel } from "../viewer/model";
 import { goToPage } from "../viewer/zoom";
 import { dateText } from "./fill/dates";
+// FillBar imports this module too: forgetLastField is only called while a page operation runs,
+// never while the modules load.
+import { forgetLastField } from "./fill/FillBar";
 import { anchorOf, placeOn, rectMatrix, signatureInField, signatureRect, writerOrigin } from "./fill/geometry";
 import {
   forget as forgetStored, list as listStored, MAX_SAVED, save as saveStored,
@@ -51,8 +73,8 @@ let chain: Promise<unknown> = Promise.resolve();
 /** The chain as of the last change asked for (an edit, undo or redo): settled once all of them have run. */
 let lastChange: Promise<unknown> = Promise.resolve();
 
-/** Run engine changes one after the other, with `busy` set while each runs. */
-function exclusive<T>(kind: BusyKind, fn: () => Promise<T>): Promise<T> {
+/** Run engine changes one after the other, with `busy` set while each runs (page operations too: ui/pageActions.ts). */
+export function exclusive<T>(kind: BusyKind, fn: () => Promise<T>): Promise<T> {
   const run = chain.then(async () => {
     busy.value = kind;
     try {
@@ -106,7 +128,7 @@ function isAbort(e: unknown) {
  * `notEditable` says the engine refused: a locked field, a page that cannot take new content)
  * and a document the engine could not restore are reported as such, anything else with `message`.
  */
-function reportEngineError(e: unknown, message: string, notEditable = t("edit.notEditable")) {
+export function reportEngineError(e: unknown, message: string, notEditable = t("edit.notEditable")) {
   const code = e instanceof EngineError ? e.code : undefined;
   if (code === "not-editable") {
     showToast("info", notEditable);
@@ -168,6 +190,144 @@ function clearOpenWork(forStep = false) {
   });
 }
 
+/**
+ * Before and after a step that changes the pages themselves (a page operation, or the undo or
+ * redo of one): everything that holds a page index lets it go, since the indices are about to
+ * change (or just did). What clearOpenWork closes, the new text's writer too (nothing it holds is
+ * written afterwards: flushEditor first for that), and what the app asked to focus, the initials
+ * "On every page…" copies, the line's decorations in the details panel, the field focused last
+ * (for Tab across pages and "Next empty field"), the selected image's sprite, whether a form
+ * control takes typing (its page may be gone with it), and a question about a page still open
+ * (the initials' pages, a signature for a field).
+ */
+export function closePageWork(): void {
+  const w = openWriter.peek();
+  if (w && !committing.has(w)) committing.set(w, Promise.resolve()); // its blur writes nothing now
+  batch(() => {
+    clearOpenWork();
+    focusRequest.value = null;
+    initialsSource.value = null;
+    editingDecorations.value = null;
+    typingField.value = false;
+    lastFieldFocus.value = null;
+    const open = dialog.peek();
+    if (open?.kind === "initials-pages" || (open?.kind === "signature" && open.forField)) showDialog(null);
+  });
+  forgetLastField();
+  releaseSprite();
+}
+
+/**
+ * The keyboard focus is on something in the pages (a form field, an image frame, a line box): it
+ * may go with its page in a page operation, and then the document's scroller takes it (never
+ * <body>). A focus elsewhere (the thumbnails) is left to what holds it.
+ */
+export function focusInPages(): boolean {
+  if (typeof document === "undefined") return false;
+  const active = document.activeElement as (Element & { closest?: (s: string) => Element | null }) | null;
+  return typeof active?.closest === "function" && active.closest(".viewer .pages") !== null;
+}
+
+/**
+ * Before a page operation is sent: what is typed is written (flushEditor), what is open on the
+ * pages closes (closePageWork), and the edits asked for so far land first: writers and marks on
+ * their way, edits, undos and redos in the engine's queue, image edits being prepared. Their page
+ * indices are those of the pages as they are now.
+ */
+export async function prepareForPages(): Promise<void> {
+  await flushEditor();
+  closePageWork();
+  await Promise.allSettled(writing);
+  await changesLanded();
+}
+
+/**
+ * In the engine's queue, right before a step that changes the pages is sent (a page operation,
+ * or the undo or redo of one): what is open on the pages closes (closePageWork). Nothing that
+ * holds typed text should be open by then (pagesChanging refused it while the step was on its
+ * way); should a text writer or the line editor be, what is typed in it is not dropped without a
+ * word: flushEditor puts it in the queue behind the step, where a new text follows its page (or
+ * is refused with a word when its page went or was turned), and a line edit is written when its
+ * page is as it was, else refused with a word.
+ */
+export function closeForPageStep(): void {
+  if (openWriter.peek() || editingLine.peek()) void flushEditor().catch((e: unknown) => console.error(e));
+  closePageWork();
+}
+
+/**
+ * Page operations (ui/pageActions.ts) of each document asked for and not finished yet: waiting
+ * for what was asked before (a download being written, a picture being prepared, the edits ahead
+ * in the queue) or running. (Undos and redos on their way count through the history mirror:
+ * state.ts, stepAsked.)
+ */
+const pageSteps = new WeakMap<OpenDoc, number>();
+
+/**
+ * Count a step that changes the pages of `d` from now until the function it returns is called
+ * (once). Meanwhile pagesChanging() is true for `d`.
+ */
+export function countPagesStep(d: OpenDoc): () => void {
+  pageSteps.set(d, (pageSteps.get(d) ?? 0) + 1);
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    pageSteps.set(d, Math.max(0, (pageSteps.get(d) ?? 1) - 1));
+  };
+}
+
+/** Resolves once every page operation asked for so far has taken its place in the engine's queue (or given up). */
+let pagesInLine: Promise<unknown> = Promise.resolve();
+
+/**
+ * A page operation is asked for (ui/pageActions.ts). It takes its place in the engine's queue only
+ * once what was asked before it has landed (prepareForPages); until the function returned here is
+ * called (once: it has taken that place, or given up), an undo or a redo asked for after it waits
+ * to take its own (historyStep), so that it runs after it, as it was asked: Alt+↓ then Ctrl+Z
+ * undoes the move, even behind a download or a long insert.
+ */
+export function takePlaceInLine(): () => void {
+  let placed!: () => void;
+  const mine = new Promise<void>((resolve) => { placed = resolve; });
+  pagesInLine = Promise.all([pagesInLine, mine]);
+  return () => placed();
+}
+
+/**
+ * A step that changes the open document's pages is asked for or running: a page operation
+ * (countPagesStep), or an undo or a redo that will reach one once those asked before it have run,
+ * as the history mirror says now (state.ts, stepsAheadChangePages: two undos reach the last two
+ * edits). Until it has landed nothing that holds what the user types, or a page index, opens on
+ * the pages: a text writer, the line editor, an image selection (openWriterAt, openLine,
+ * selectImage). The step closes what is open on the pages when it lands, and what was typed there
+ * would go with it. A tick, a cross, a date or a picture asked for meanwhile is still written: it
+ * follows its page (or is refused, with a word, when the page went or was turned).
+ */
+export function pagesChanging(): boolean {
+  const d = doc.peek();
+  return d !== null && ((pageSteps.get(d) ?? 0) > 0 || stepsAheadChangePages(d));
+}
+
+/**
+ * What goes with the document on screen when another one takes its place (or none does): what is
+ * open on its pages, what was asked to be focused, the image edits still counted, a stop of
+ * editing, an open sheet.
+ */
+function leaveDocument() {
+  clearOpenWork();
+  focusRequest.value = null;
+  typingField.value = false; // its form controls go with it, perhaps without a blur
+  initialsSource.value = null;
+  editingDecorations.value = null;
+  lastFieldFocus.value = null;
+  resetImageEdits(); // those of the document before end on their own, written nowhere
+  editingStopped.value = false;
+  sheet.value = null;
+  forgetLastField();
+  releaseSprite();
+}
+
 export function isPdfFile(file: File) {
   return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
 }
@@ -203,13 +363,7 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
   }
   const seq = ++openSeq;
   batch(() => {
-    clearOpenWork();
-    focusRequest.value = null;
-    typingField.value = false; // its form controls go with it, perhaps without a blur
-    initialsSource.value = null;
-    resetImageEdits(); // those of the document before end on their own, written nowhere
-    editingStopped.value = false;
-    sheet.value = null;
+    leaveDocument();
     doc.value = null;
     opening.value = file.name;
   });
@@ -223,17 +377,7 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
     const result = await engine().open(bytes, opts.password);
     if (seq !== openSeq) return;
     if (result.ok) {
-      const info: DocInfo = {
-        pageCount: result.pageCount, pages: result.pages, encrypted: result.encrypted,
-        needsPassword: result.needsPassword, canKeepPassword: result.canKeepPassword, pdfa: result.pdfa,
-        signatures: result.signatures, form: result.form ?? null, title: result.title,
-      };
-      batch(() => {
-        fitMode.value = true;
-        currentPage.value = 0;
-        doc.value = { id: seq, fileName: file.name, info, pages: createPages(info) };
-      });
-      void loadSavedSignatures();
+      adopt(result, file.name, seq);
     } else if (result.reason === "damaged") {
       showDialog({ kind: "alert", title: t("open.damagedTitle"), body: t("open.damaged", { name: file.name }) });
     } else {
@@ -249,6 +393,137 @@ export async function openFile(file: File, opts: { password?: string; confirmed?
     } else {
       showDialog({ kind: "alert", title: t("open.damagedTitle"), body: t("open.failed", { name: file.name }) });
     }
+  } finally {
+    if (seq === openSeq) opening.value = null;
+  }
+}
+
+/**
+ * The document the engine has just opened (`result`), on screen as `fileName` with the id `id`:
+ * what was open on the pages before goes, the zoom fits the width, the first page shows, and the
+ * history mirror starts from `history` (none for a file opened; Riprendi's when resumed; see
+ * startHistory, with `unsaved` for a document that exists nowhere else: made from scans, resumed).
+ */
+function adopt(
+  result: Extract<OpenResult, { ok: true }>, fileName: string, id: number, history?: HistoryState, unsaved = false,
+) {
+  // Field by field: whatever else the result carries (Riprendi's history) is not the document's.
+  const info: DocInfo = {
+    pageCount: result.pageCount, pages: result.pages, encrypted: result.encrypted,
+    needsPassword: result.needsPassword, canKeepPassword: result.canKeepPassword, pdfa: result.pdfa,
+    signatures: result.signatures, form: result.form ?? null, title: result.title,
+  };
+  batch(() => {
+    leaveDocument();
+    fitMode.value = true;
+    currentPage.value = 0;
+    doc.value = createDoc(id, fileName, info);
+    startHistory(history, unsaved);
+  });
+  void loadSavedSignatures();
+}
+
+/**
+ * An open asked for by a caller that sends its own request to the engine (Riprendi: resumeSession,
+ * or open for a document kept as the file itself). Opens are sequenced, so that the one asked for
+ * last is the one on screen and in the engine: the caller takes its ticket before its request
+ * (beginOpen), sends the request only while the ticket is current (as openFile does), and gives
+ * the ticket to adoptOpened, which refuses a ticket that is no longer current.
+ */
+export interface OpenTicket {
+  readonly seq: number;
+  /** No other open (a file, a new PDF from pictures, another ticket) and no close was asked for since. */
+  current(): boolean;
+}
+
+/**
+ * Start an open of `fileName` that the caller sends to the engine itself (see OpenTicket): an
+ * open still on its way from before lands nowhere now, and the "opening…" card shows its name.
+ * For the home page (no document open). Whatever is asked for after it takes over: an open, a new
+ * PDF from pictures, a close, another ticket.
+ */
+export function beginOpen(fileName: string): OpenTicket {
+  const seq = ++openSeq;
+  opening.value = fileName;
+  return { seq, current: () => seq === openSeq };
+}
+
+/** What adoptOpened is told besides the document. */
+export interface AdoptOptions {
+  /** The ticket of this open (beginOpen): nothing is adopted when another open was asked for since. */
+  ticket?: OpenTicket;
+  /**
+   * The document as it was opened exists nowhere else: it counts as not downloaded until it is,
+   * also once every edit is undone (neverDownloaded). By default true: a document resumed with
+   * Riprendi is not downloaded until it is. False only when it is known to have come from a file
+   * that exists elsewhere (a file opened from the device, kept with its edits).
+   */
+  unsaved?: boolean;
+}
+
+/**
+ * What openFile does once the engine has opened a file, for a document the engine opened another
+ * way: resumed with Riprendi (`history`: the edits applied again, which undo can take back; not
+ * downloaded), or made from photos (newFromPicturesAction). It becomes the open document, with
+ * what was open on the pages before closed, the zoom fitting the width and the first page shown
+ * (Riprendi then restores the view). With a ticket (beginOpen) it is refused, and nothing changes,
+ * when another open was asked for after it: that one lands instead, on screen as in the engine.
+ * Without one it takes a new id itself (an open still on its way lands nowhere). True when adopted.
+ */
+export async function adoptOpened(
+  result: Extract<OpenResult, { ok: true }>, fileName: string, history?: HistoryState, options: AdoptOptions = {},
+): Promise<boolean> {
+  const { ticket, unsaved = true } = options;
+  if (ticket && !ticket.current()) return false;
+  const seq = ticket ? ticket.seq : ++openSeq;
+  adopt(result, fileName, seq, history, unsaved);
+  opening.value = null;
+  return true;
+}
+
+/**
+ * Make a new PDF from `pictures` (photos or scanned sheets, one page each, in order) and open it
+ * as `fileName`, in place of the open document: asks first when there are edits not downloaded,
+ * as openFile does. The pictures' bytes are transferred to the engine (emptied). The new document
+ * exists only here until it is downloaded: it counts as not downloaded (a close or a reload asks).
+ * True when it is open; false when the user said no, or it failed (and was told).
+ */
+export async function newFromPicturesAction(pictures: PagePicture[], fileName: string): Promise<boolean> {
+  if (!pictures.length) return false;
+  await flushEditor(); // typed text becomes an edit, so the question below covers it
+  if (hasUnsavedWork()) {
+    const ok = await confirmDialog({
+      title: t("unsaved.title"),
+      body: t("pageOps.newBody"),
+      confirmLabel: t("pageOps.newConfirm"),
+    });
+    if (!ok) return false;
+  }
+  const seq = ++openSeq;
+  batch(() => {
+    leaveDocument();
+    doc.value = null;
+    opening.value = fileName;
+  });
+  resetHistory();
+  try {
+    const result = await engine().newFromPictures(pictures);
+    if (seq !== openSeq) return false;
+    if (!result.ok) {
+      showDialog({ kind: "alert", title: t("pageOps.newFailedTitle"), body: t("pageOps.newFailed") });
+      return false;
+    }
+    adopt(result, fileName, seq, undefined, true);
+    return true;
+  } catch (e) {
+    if (seq !== openSeq) return false;
+    console.error(e);
+    if (e instanceof EngineError && (e.code === "crashed" || e.code === "init")) {
+      engineStatus.value = "error"; // the empty state explains it
+    } else {
+      showDialog({ kind: "alert", title: t("pageOps.newFailedTitle"), body: t("pageOps.newFailed") });
+    }
+    return false;
   } finally {
     if (seq === openSeq) opening.value = null;
   }
@@ -284,14 +559,8 @@ export async function closeDocument() {
   ++openSeq; // an open still in progress lands nowhere
   homeFocus = true; // the control that closed it is about to go: the home page takes the focus
   batch(() => {
-    clearOpenWork();
-    focusRequest.value = null;
-    typingField.value = false; // its form controls go with it, perhaps without a blur
-    initialsSource.value = null;
-    resetImageEdits(); // one still queued ends on its own, written nowhere: no "unsaved" warning
-    editingStopped.value = false;
+    leaveDocument(); // an image edit still queued ends on its own, written nowhere: no "unsaved" warning
     tool.value = null;
-    sheet.value = null;
     doc.value = null;
     opening.value = null;
   });
@@ -500,42 +769,89 @@ export function decorationToasts(report: DecorationReport | undefined): { kind: 
   return toasts;
 }
 
-async function historyStep(step: "undo" | "redo") {
+/**
+ * Undo or redo, after what is typed is written, in the engine's queue. `expected`: the edit an
+ * undo is meant for (the delete toast's "Annulla", undoEdit); checked in the queue, once what was
+ * typed and what was asked for before have landed: when another edit came after it (text that
+ * was still in the writer when the button was pressed, say), nothing is undone and a toast says
+ * why; when it was undone already, nothing at all. It is on its way from now until it has run
+ * (state.ts, stepAsked): when it will reach a page operation (or an edit not known: a history
+ * resumed with Riprendi) once the undos and redos asked before it have run, nothing that holds
+ * typed text opens meanwhile (pagesChanging). A page operation asked for before it takes its place
+ * in the queue first (takePlaceInLine): Alt+↓ then Ctrl+Z undoes the move.
+ */
+async function historyStep(step: "undo" | "redo", expected?: number) {
   const d = doc.peek();
   if (!d) return;
-  // What the line editor or the writer holds, or an image's keyboard move still waiting, is the
-  // latest change: written first, then undone (redo brings it back).
-  await flushEditor();
-  return exclusive(step, async () => {
-    if (doc.peek() !== d || editingStopped.peek()) return;
-    const h = history.peek();
-    if (step === "undo" ? !h.canUndo : !h.canRedo) return;
-    // Image indices may change with the step: the selection goes, as the line editor, a
-    // reopened text's writer, a signature waiting to be placed and the focused field do (field
-    // values are read again: recordHistory drops the pages' fields).
-    batch(() => {
-      clearOpenWork(true);
-      initialsSource.value = null;
+  const ran = stepAsked(d, step, expected);
+  const inLine = pagesInLine;
+  try {
+    // What the line editor or the writer holds, or an image's keyboard move still waiting, is the
+    // latest change: written first, then undone (redo brings it back).
+    await flushEditor();
+    await inLine;
+    await exclusive(step, async () => {
+      try {
+        if (doc.peek() !== d || editingStopped.peek()) return;
+        const h = history.peek();
+        if (step === "undo" ? !h.canUndo : !h.canRedo) return;
+        if (expected !== undefined && lastEditId() !== expected) {
+          if (isApplied(expected)) showToast("info", t("pageOps.undoGone"));
+          return;
+        }
+        // Image indices may change with the step: the selection goes, as the line editor, a
+        // reopened text's writer, a signature waiting to be placed and the focused field do (field
+        // values are read again: recordHistory drops the pages' fields). A step that changes the
+        // pages themselves (a page operation's, or one not known: a history resumed with Riprendi)
+        // changes every page index: whatever holds one goes, a new text's writer too (none can
+        // have opened since it was asked for: pagesChanging; one that did anyway is written after
+        // the step, closeForPageStep).
+        const pages = stepChangesPages(step) !== false;
+        batch(() => {
+          if (pages) closeForPageStep();
+          else clearOpenWork(true);
+          initialsSource.value = null;
+        });
+        try {
+          const inPages = focusInPages();
+          const state = step === "undo" ? await engine().undo() : await engine().redo();
+          if (doc.peek() !== d) return;
+          batch(() => {
+            // With a layout, the page list is rebuilt (recordHistory); what opened meanwhile named the old pages.
+            recordHistory(state, step);
+            ran(); // the mirror has it now: no longer on its way
+            if (state.layout) closePageWork();
+          });
+          if (state.layout && inPages) rescueFocus(viewerScroller);
+        } catch (e) {
+          reportEngineError(e, t("history.failed"));
+        }
+      } finally {
+        ran();
+      }
     });
-    try {
-      const state = step === "undo" ? await engine().undo() : await engine().redo();
-      if (doc.peek() === d) recordHistory(state, step);
-    } catch (e) {
-      reportEngineError(e, t("history.failed"));
-    }
-  });
+  } finally {
+    ran();
+  }
 }
 
 export const undo = () => historyStep("undo");
 export const redo = () => historyStep("redo");
 
 /**
+ * Undo edit `id` (recordHistory's), and only that one: nothing when another edit came after it by
+ * the time the undo's turn comes (a toast says so), or when it was undone already.
+ */
+export const undoEdit = (id: number) => historyStep("undo", id);
+
+/**
  * Open the line editor on `line` (a click or tap on its box, in Modifica with Cambia),
  * deselecting the selected image. A keyboard move of that image still waiting is written first;
  * if it changed this page, the line's index may be stale, so no editor opens (the line is clicked
- * again). As for images, nothing opens while an edit, undo or redo is being written or an image
- * edit waits for its turn (a Delete behind a download, say): when it lands the page is read
- * again, which closes the editor and would drop what was typed in it without a word.
+ * again). As for images, nothing opens while an edit, undo or redo is being written, an image
+ * edit waits for its turn (a Delete behind a download, say), or a step that changes the pages
+ * does (pagesChanging): when it lands the page is read again (or the pages change), which closes
+ * the editor and would drop what was typed in it without a word.
  */
 export async function openLine(pageIndex: number, line: LineInfo): Promise<void> {
   const d = doc.peek();
@@ -582,12 +898,13 @@ export function lockReasonText(reason: ImageLockReason | null): string {
 }
 
 /**
- * An edit, undo or redo is running, or an image edit of the open document waits for its turn:
- * the pages' image and line indices may be about to change.
+ * An edit, undo or redo is running, an image edit of the open document waits for its turn, or a
+ * step that changes its pages does (pagesChanging): the pages' image and line indices may be
+ * about to change.
  */
 function changing() {
   const kind = busy.peek();
-  return kind === "edit" || kind === "undo" || kind === "redo" || imageEditsPending.peek() > 0;
+  return kind === "edit" || kind === "undo" || kind === "redo" || imageEditsPending.peek() > 0 || pagesChanging();
 }
 
 /** The open document, when `page` is one of its pages (not one of a document closed since). */
@@ -625,8 +942,8 @@ function isSelected(page: PageModel, image: ImageInfo) {
  * cleared instead. A locked image says why and is not selected. Selecting closes the line editor
  * and the writer. Nothing is selected in browse mode, where the writer is on (Compila e firma,
  * Aggiungi testo) unless the user added it, while another change is being written (as for
- * lines), or while an image edit waits for its turn (behind a download, say). Deselecting always
- * works.
+ * lines), or while an image edit or a step that changes the pages waits for its turn (behind a
+ * download, say). Deselecting always works.
  */
 export async function selectImage(pageIndex: number, image: ImageInfo | null, rev?: number): Promise<void> {
   const d = doc.peek();
@@ -967,7 +1284,9 @@ interface WriterOptions {
  * once, one tap. A new one is kept on the page (originOnPage). `opts.editing` reopens a text
  * written before (its AddedText id), in a writer of its kind, with its size, ink and style
  * (reopenAdded), once the changes asked for before have landed. A writer still on its way when
- * another is asked for (or when a picture is selected, the tool changes...) does not open.
+ * another is asked for (or when a picture is selected, the tool changes...) does not open; nor
+ * does one while a step that changes the pages is on its way (pagesChanging: a toast says to
+ * wait), which would close it, and drop what was typed, when it lands.
  * Resolves with where the text starts, as used: kept on the page (a tap near an edge moves it in),
  * or where the reopened text is now; null when nothing was written and no writer opened (refused,
  * failed, or asked for something else since). The fill layer draws its copy and says where there.
@@ -986,6 +1305,16 @@ interface Opened {
   pageIndex: number;
   origin: [number, number];
   id: number | null;
+}
+
+/**
+ * A step that changes the pages is on its way (pagesChanging): a writer does not open now, and a
+ * toast says to wait (the tap did something). True when refused.
+ */
+function refusedWhilePagesChange(): boolean {
+  if (!pagesChanging()) return false;
+  showToast("info", t("pageOps.wait"));
+  return true;
 }
 
 /** openWriterAt's work: what it wrote or opened, or null for nothing. */
@@ -1015,9 +1344,11 @@ async function openOrWrite(
     });
     const written = text ?? (kind === "date" ? todayText() : MARK_TEXT[kind]);
     const at = originOnPage(page.bounds, origin, size, textWidth(written, size, mark));
-    const id = await track(writeNew(d, pageIndex, at, written, inkStyle(size, color)));
-    return id === null ? null : { pageIndex, id, origin: at };
+    const id = await track(writeNew(d, page, page.bounds, at, written, inkStyle(size, color)));
+    return id === null ? null : { pageIndex: page.index, id, origin: at };
   }
+  // A writer would hold what is typed while the pages change under it (pagesChanging): not now.
+  if (refusedWhilePagesChange()) return null;
   let at = origin;
   let shown = text ?? "";
   let shownKind = kind;
@@ -1041,7 +1372,10 @@ async function openOrWrite(
       shownKind = addedKind(fresh.text);
     }
   }
-  if (ask !== writerAsks) return null;
+  // A page operation that landed meanwhile closed what was open and moved the pages: the writer
+  // opens where the page is now, or not at all when it went; one asked for meanwhile, not yet.
+  if (ask !== writerAsks || !docOf(page) || refusedWhilePagesChange()) return null;
+  pageIndex = page.index;
   const w: OpenWriter = {
     pageIndex, origin: at, text: shown, size, color, kind: shownKind, editing, rev: page.rev.peek(),
   };
@@ -1131,7 +1465,8 @@ async function writeWriter(w: OpenWriter, text: string, origin: [number, number]
   const base = reopenedStyle.get(w);
   if (w.editing === null) {
     if (!text.trim()) return;
-    await writeNew(d, w.pageIndex, origin, text, inkStyle(size, color, base));
+    const page = d.pages[w.pageIndex];
+    await writeNew(d, page, page.bounds, origin, text, inkStyle(size, color, base));
     return;
   }
   const patch: { text?: string; origin?: [number, number]; style?: TextStyle } = {};
@@ -1186,14 +1521,23 @@ export function deleteAdded(pageIndex: number, id: number, rev: number): Promise
   return track(editAdded(d, page, id, { text: "" }, rev));
 }
 
-/** Write a new text (a writer's, a mark, a date): one edit. Its id, or null when nothing was written. */
+/**
+ * Write a new text (a writer's, a mark, a date) on `page` at `origin`, worked out against the
+ * page's `bounds` then: one edit. Its id, or null when nothing was written. A page operation that
+ * lands first is followed (the page's index then); when the page went, or was turned (its bounds
+ * changed: `origin` no longer means the same place), nothing is written and a toast says so.
+ */
 function writeNew(
-  d: OpenDoc, pageIndex: number, origin: [number, number], text: string, style: TextStyle,
+  d: OpenDoc, page: PageModel, bounds: Rect, origin: [number, number], text: string, style: TextStyle,
 ): Promise<number | null> {
   return exclusive("edit", async () => {
     if (doc.peek() !== d || editingStopped.peek()) return null;
+    if (!docOf(page) || page.bounds !== bounds) {
+      showToast("error", t("writer.failed"));
+      return null;
+    }
     try {
-      const result = await engine().addText(pageIndex, origin, text, style);
+      const result = await engine().addText(page.index, origin, text, style);
       if (doc.peek() !== d) return null;
       recordHistory(result, "edit");
       if (result.missingChars.length) showToast("error", t("edit.missing", { chars: result.missingChars.join(" ") }));
@@ -1216,6 +1560,11 @@ function editAdded(
   }
   return exclusive("edit", async () => {
     if (doc.peek() !== d || editingStopped.peek()) return;
+    // Its page went with a page operation that landed first: the id would name another page's text.
+    if (!docOf(page)) {
+      showToast("error", t("writer.failed"));
+      return;
+    }
     try {
       const result = await engine().editAddedText(page.index, id, patch);
       if (doc.peek() !== d) return;
@@ -1479,6 +1828,7 @@ async function placeAndSelect(pageIndex: number, sig: Signature, matrix: Matrix)
   const d = doc.peek();
   const page = d?.pages[pageIndex];
   if (!d || !page || editingStopped.peek()) return null;
+  const bounds = page.bounds; // what `matrix` was worked out against
   cancelPlacement();
   let selected: number | null = null;
   await counted(page, async () => {
@@ -1491,15 +1841,16 @@ async function placeAndSelect(pageIndex: number, sig: Signature, matrix: Matrix)
       return;
     }
     if (doc.peek() !== d) return;
-    const placed = await addPicture(d, bytes, [{ pageIndex, matrix }], sig.description);
+    const placed = await addPicture(d, bytes, [{ page, bounds, matrix }], sig.description);
     const index = placed?.[0]?.imageIndex ?? null;
     if (!placed || doc.peek() !== d) return;
+    const at = placed[0]?.pageIndex ?? page.index; // where the page is now
     batch(() => {
-      if (index !== null && sig.kind === "initials") initialsSource.value = { docId: d.id, pageIndex, imageIndex: index, sig };
-      if (index !== null && selectAdded(pageIndex, index)) selected = index;
+      if (index !== null && sig.kind === "initials") initialsSource.value = { docId: d.id, pageIndex: at, imageIndex: index, sig };
+      if (index !== null && selectAdded(at, index)) selected = index;
     });
     const touch = isCoarse.peek();
-    const page1 = pageIndex + 1;
+    const page1 = at + 1;
     showToast("info", sig.kind === "initials"
       ? t(touch ? "initials.placedTouch" : "initials.placed", { page: page1 })
       : t(touch ? "sign.placedTouch" : "sign.placed", { page: page1 }));
@@ -1511,10 +1862,12 @@ async function placeAndSelect(pageIndex: number, sig: Signature, matrix: Matrix)
  * Select a picture just added (its frame shows), where pictures are shown: Compila e firma and
  * Modifica. Not while the text writer or the line editor is open (opened while the picture was on
  * its way, a phone photo being prepared, say): selecting would close it, and what is typed in it
- * would be lost. The picture is placed all the same, and its toast says where. True when selected.
+ * would be lost. Nor while a step that changes the pages is on its way (pagesChanging): it would
+ * close the selection, with a keyboard move made meanwhile. The picture is placed all the same,
+ * and its toast says where. True when selected.
  */
 function selectAdded(pageIndex: number, index: number): boolean {
-  if (tool.peek() === null || openWriter.peek() || editingLine.peek()) return false;
+  if (tool.peek() === null || openWriter.peek() || editingLine.peek() || pagesChanging()) return false;
   // A text reopened while the picture was on its way still opens afterwards (the user's latest
   // wish), and the selection then goes.
   selectedImage.value = { pageIndex, index };
@@ -1522,11 +1875,34 @@ function selectAdded(pageIndex: number, index: number): boolean {
 }
 
 /**
+ * Where a picture goes: on `page` (its PageModel, so a page operation landing first is followed),
+ * at `matrix`, worked out against `bounds`, the page's bounds then.
+ */
+interface PictureTarget {
+  page: PageModel;
+  bounds: Rect;
+  matrix: Matrix;
+}
+
+/**
+ * The engine's targets for `targets` now: at their pages' indices now; null when a page went, or
+ * was turned since (its bounds changed: the matrix no longer means the same place).
+ */
+function targetsNow(targets: readonly PictureTarget[]): ImageTarget[] | null {
+  const now: ImageTarget[] = [];
+  for (const { page, bounds, matrix } of targets) {
+    if (!docOf(page) || page.bounds !== bounds) return null;
+    now.push({ pageIndex: page.index, matrix });
+  }
+  return now;
+}
+
+/**
  * Add a picture (`bytes`, transferred) at `targets`, one edit; the result's placements, or null
  * when it failed (and the user was told).
  */
 function addPicture(
-  d: OpenDoc, bytes: ArrayBuffer, targets: ImageTarget[], alt: string | null,
+  d: OpenDoc, bytes: ArrayBuffer, targets: PictureTarget[], alt: string | null,
 ): Promise<Placed | null> {
   return exclusive("edit", () => sendPicture(d, bytes, targets, alt));
 }
@@ -1536,14 +1912,19 @@ type Placed = { pageIndex: number; imageIndex: number | null }[];
 /**
  * addPicture's engine call, for a caller already in the engine's queue. A failure says that
  * nothing was added (`failed`: the signature or picture by default), not that an image could not
- * be changed.
+ * be changed; so does a target whose page went or was turned by a page operation that landed first.
  */
 async function sendPicture(
-  d: OpenDoc, bytes: ArrayBuffer, targets: ImageTarget[], alt: string | null, failed = t("fill.placeFailed"),
+  d: OpenDoc, bytes: ArrayBuffer, targets: PictureTarget[], alt: string | null, failed = t("fill.placeFailed"),
 ): Promise<Placed | null> {
   if (doc.peek() !== d || editingStopped.peek()) return null;
+  const now = targetsNow(targets);
+  if (!now) {
+    showToast("error", failed);
+    return null;
+  }
   try {
-    const result = await engine().addImage(bytes, targets, alt === null ? null : alt.slice(0, MAX_ALT_CHARS));
+    const result = await engine().addImage(bytes, now, alt === null ? null : alt.slice(0, MAX_ALT_CHARS));
     if (doc.peek() !== d) return null;
     recordHistory(result, "edit");
     return result.placed;
@@ -1627,7 +2008,10 @@ function copyInitials(
     }
     const anchor = anchorOf(image.matrix, page.bounds);
     const from = image.matrix;
-    const targets = pages.map((p) => ({ pageIndex: p, matrix: placeOn(anchor, from, d.pages[p].bounds) }));
+    const targets = pages.filter((p) => d.pages[p]).map((p) => {
+      const to = d.pages[p];
+      return { page: to, bounds: to.bounds, matrix: placeOn(anchor, from, to.bounds) };
+    });
     const placed = await sendPicture(d, bytes, targets, source.sig.description, t("initials.failed"));
     return placed?.filter((x) => x.imageIndex !== null).length ?? 0;
   });
@@ -1729,13 +2113,19 @@ export function addPictureFromFile(file: File): Promise<void> {
       dismissToast(status);
     }
     if (doc.peek() !== d) return;
-    const matrix = pictureMatrix(visiblePart(pageIndex), page.bounds, picture.width, picture.height);
-    const placed = await addPicture(d, picture.bytes, [{ pageIndex, matrix }], null);
+    // A page operation may have landed while the picture was prepared: the page is where it is now.
+    if (!docOf(page)) {
+      showToast("error", t("fill.placeFailed"));
+      return;
+    }
+    const matrix = pictureMatrix(visiblePart(page.index), page.bounds, picture.width, picture.height);
+    const placed = await addPicture(d, picture.bytes, [{ page, bounds: page.bounds, matrix }], null);
     const index = placed?.[0]?.imageIndex ?? null;
     if (!placed || doc.peek() !== d) return;
-    if (index !== null) selectAdded(pageIndex, index);
+    const at = placed[0]?.pageIndex ?? page.index;
+    if (index !== null) selectAdded(at, index);
     // On touch screens one finger scrolls the page: the picture moves by its round grip.
-    showToast("info", t(isCoarse.peek() ? "fill.imagePlacedTouch" : "fill.imagePlaced", { page: pageIndex + 1 }));
+    showToast("info", t(isCoarse.peek() ? "fill.imagePlacedTouch" : "fill.imagePlaced", { page: at + 1 }));
   });
 }
 
@@ -1898,9 +2288,9 @@ export function defaultChoice(info: DocInfo): DownloadChoice {
  * A file that needed a password the download cannot be protected with again (one the engine
  * cannot carry or other readers would read differently, or the owner password it was opened
  * with): one tap must not quietly drop the protection, so it opens the download options, where
- * the user picks a new password or none.
+ * the user picks a new password or none. (Extracted pages ask too: ui/pageActions.ts.)
  */
-const mustChoosePassword = (info: DocInfo) => info.needsPassword && !info.canKeepPassword;
+export const mustChoosePassword = (info: DocInfo) => info.needsPassword && !info.canKeepPassword;
 
 /**
  * The regular PDF offered instead of a PDF/A carries the one-tap password, which is none for
@@ -2111,7 +2501,33 @@ async function deliver(d: OpenDoc, choice: DownloadChoice, purpose: SavePurpose)
  * normally instead (downloaded as the name the user chose), and the toast says so.
  */
 async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"blocked" | void> {
-  const name = outputName(d.fileName, choice.format);
+  return writeFile(d, outputName(d.fileName, choice.format), () => buildPdf(choice), (name) => doneMessage(choice, name), true);
+}
+
+/**
+ * Download a file made from the open document that is not the document itself (the pages
+ * "Estrai" takes out: ui/pageActions.ts), named `name`, through the same path as a download: the
+ * save dialog where the browser has one (asked first, while the click still counts), else a
+ * normal download; never an empty file left where the dialog made one. `build` makes the bytes in
+ * the engine's queue, after the changes asked for before (null: it failed, and the user was told);
+ * `done` is the toast once they are out. The document's own state of download does not change.
+ */
+export async function downloadBytes(
+  d: OpenDoc, name: string, build: () => Promise<ArrayBuffer | null>, done: (name: string) => string,
+): Promise<void> {
+  await writeFile(d, name, build, done, false);
+}
+
+/**
+ * writeDownload's work, for any file: `build` makes the bytes in the engine's queue ("blocked":
+ * the engine refused the PDF/A; null: it failed, and the user was told), `done` names the toast
+ * for the name the file got. `own`: the file is the document itself, so its edits then count as
+ * downloaded (markSaved), and the first download may offer to install the app.
+ */
+async function writeFile(
+  d: OpenDoc, name: string, build: () => Promise<ArrayBuffer | "blocked" | null>, done: (name: string) => string,
+  own: boolean,
+): Promise<"blocked" | void> {
   const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
   let handle: FileSystemFileHandle | null = null;
   if (picker) {
@@ -2138,13 +2554,13 @@ async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"block
   const outcome = await exclusive("save", async () => {
     if (doc.peek() !== d) return;
     const key = saveKey();
-    const bytes = await buildPdf(choice);
+    const bytes = await build();
     if (bytes === "blocked") return "blocked";
     if (!bytes) return;
     delivered = true;
     if (handle && (await writeToHandle(handle, bytes))) {
-      markSaved(key); // ignored if another file was opened while writing
-      showToast("info", doneMessage(choice, handle.name), undefined, installHint());
+      if (own) markSaved(key); // ignored if another file was opened while writing
+      showToast("info", done(handle.name), undefined, own ? installHint() : undefined);
       return;
     }
     const downloadName = handle?.name || name;
@@ -2155,9 +2571,9 @@ async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"block
       showToast("error", t("download.failed"));
       return;
     }
-    markSaved(key);
+    if (own) markSaved(key);
     if (handle) showToast("warn", t("download.savedInstead", { name: downloadName }));
-    else showToast("info", doneMessage(choice, name), undefined, installHint());
+    else showToast("info", done(name), undefined, own ? installHint() : undefined);
   });
   if (handle && !delivered) await removeIfEmpty(handle);
   return outcome;

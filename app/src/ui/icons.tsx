@@ -402,3 +402,68 @@ export const IconCopy = () => (
     <path d="M15.5 8.5V6.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" />
   </Svg>
 );
+
+// The page organizer (ui/organizer, viewer/Thumbnails.tsx). Duplicate uses IconCopy above, turning
+// clockwise IconRotate, "From another PDF" IconOpen.
+
+/** IconRotate mirrored: turn the pages 90° anticlockwise. */
+export const IconRotateLeft = () => (
+  <Svg>
+    <rect x="10.5" y="10.5" width="10" height="10" rx="1.6" />
+    <path d="M16 6.5h-5.5a5 5 0 0 0-5 5v2.5" />
+    <path d="m8 11.5-2.5 2.5-2.5-2.5" />
+  </Svg>
+);
+
+/** A page with an arrow leaving it at the top right: extract the pages into a new PDF. */
+export const IconPageExtract = () => (
+  <Svg>
+    <path d="M12.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5.5" />
+    <path d="m12 12 8-8" />
+    <path d="M15 4h5v5" />
+  </Svg>
+);
+
+/** Three lines beside an arrow up and down: move the pages to a position ("Move to…"). */
+export const IconPageMove = () => (
+  <Svg>
+    <path d="M4 6.5h9M4 12h9M4 17.5h9" />
+    <path d="M18 4.5v15" />
+    <path d="m15.5 7 2.5-2.5L20.5 7M15.5 17l2.5 2.5 2.5-2.5" />
+  </Svg>
+);
+
+/** A page with a folded corner and a plus: a blank page. */
+export const IconPageBlank = () => (
+  <Svg>
+    <path d="M13.5 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" />
+    <path d="M13.5 3.5V9H19" />
+    <path d="M12 12.5v5M9.5 15h5" />
+  </Svg>
+);
+
+/** A camera: pages from a photo or a scan. */
+export const IconPageScan = () => (
+  <Svg>
+    <path d="M3.5 8.5a2 2 0 0 1 2-2h2.2l1.6-2.2h5.4l1.6 2.2h2.2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" />
+    <circle cx="12" cy="13" r="3.5" />
+  </Svg>
+);
+
+// The scan flow (ui/scan): the camera is IconPageScan above, the gallery IconImage.
+
+/** An arrow up: move a page up in the scan's tray. */
+export const IconArrowUp = () => (
+  <Svg>
+    <path d="M12 19V5.5" />
+    <path d="m6.5 11 5.5-5.5 5.5 5.5" />
+  </Svg>
+);
+
+/** An arrow down: move a page down in the scan's tray. */
+export const IconArrowDown = () => (
+  <Svg>
+    <path d="M12 5v13.5" />
+    <path d="m6.5 13 5.5 5.5 5.5-5.5" />
+  </Svg>
+);

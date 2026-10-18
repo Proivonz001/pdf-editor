@@ -2,14 +2,16 @@
 // "opening…" state). With one, on desktop: top bar, tool rail, thumbnails panel, viewer and
 // details panel, both panels docked in their own columns (the thumbnails open by default from
 // 1024 px, the details from 1200 px, one remembered choice each: panels.ts); on phones: top bar,
-// viewer, tab bar and the bottom sheets (the details among them). Plus the drop overlay, toasts
-// and dialogs. Global listeners (shortcuts, "Open with", beforeunload, "updated in another
-// window") are installed once here.
+// viewer, tab bar and the bottom sheets (the details among them). Plus the drop overlay, toasts,
+// the scan flow while `scanFlow` is set (ui/scan: photos into pages, with or without a document)
+// and dialogs (a question the scan flow asks opens over it: the modal shown last is on top).
+// Global listeners (shortcuts, "Open with", beforeunload, "updated in another window") are
+// installed once here.
 import { useEffect, useLayoutEffect } from "preact/hooks";
 import { t } from "./i18n";
 import { onLaunchFiles } from "./platform/launch";
 import { updateInstalled } from "./platform/pwa";
-import { busy, doc, opening, showToast, startEngine } from "./state";
+import { busy, doc, opening, scanFlow, showToast, startEngine } from "./state";
 import { openFile, shouldWarnBeforeUnload } from "./ui/actions";
 import { DetailsPanel } from "./ui/DetailsPanel";
 import { Dialogs } from "./ui/Dialogs";
@@ -20,6 +22,7 @@ import { isNarrow } from "./ui/media";
 import { PagesPanel } from "./ui/PagesPanel";
 import { detailsPanelOpen, pagesPanelOpen } from "./ui/panels";
 import { PhoneSheets } from "./ui/PhoneSheets";
+import { ScanFlow, scanFlowKey } from "./ui/scan/ScanFlow";
 import { installShortcuts } from "./ui/shortcuts";
 import { TabBar } from "./ui/TabBar";
 import { Toasts } from "./ui/Toasts";
@@ -58,6 +61,7 @@ export function App() {
 
   const d = doc.value;
   const narrow = isNarrow.value;
+  const flow = scanFlow.value;
 
   // A document just opened (the "Open" button or the opening card that had the focus are gone),
   // or the layout switched at 640 px (the top bar, rail or tab bar that had it are gone): keep
@@ -87,6 +91,7 @@ export function App() {
       {d && narrow && <PhoneSheets key={`sheets:${d.id}`} doc={d} />}
       <DropOverlay />
       <Toasts />
+      {flow && <ScanFlow key={scanFlowKey(flow)} target={flow} />}
       <Dialogs />
     </div>
   );

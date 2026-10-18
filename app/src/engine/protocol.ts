@@ -253,6 +253,11 @@ export interface HistoryState {
   canRedo: boolean;
   /** Pages whose appearance changed in this step: the UI re-renders them and re-reads their lines. */
   changedPages: number[];
+  /**
+   * Present when the step changed the pages themselves (count, order, size or rotation): a page
+   * operation, or the undo or redo of one. The UI then rebuilds its page list from it.
+   */
+  layout?: PageLayout;
 }
 
 export interface EditResult extends HistoryState {
@@ -472,7 +477,11 @@ export type FieldValue =
   /** Combo and list: export values (0 or 1, or several for a multi-select list). */
   | { kind: "choice"; values: string[] };
 
-/** The document's form as it is at open (DocInfo.form), read in one pass over every widget without loading pages. */
+/**
+ * The document's form as it is now (DocInfo.form, read at open; page operations and their undo
+ * and redo give it again as PageLayout.form, by the pages' new order), read in one pass over
+ * every widget without loading pages.
+ */
 export interface FormInfo {
   /**
    * Listed widgets per page (index = page index): every widget the overlay shows (not hidden,
@@ -602,7 +611,26 @@ export type Request =
   | { op: "save"; options: SaveOptions }
   /** What converting to PDF/A would do, without writing a file (to ask the user first). */
   | { op: "pdfaCheck" }
-  | { op: "close" };
+  | { op: "close" }
+  // Release 4: pages, other PDFs, pictures as pages, Riprendi (see the section below).
+  /** One page operation, one undoable edit. */
+  | { op: "editPages"; edit: PagesEdit }
+  /**
+   * Open another PDF read-only beside the document, for the page picker of "Da un altro PDF"
+   * (bytes transferred, at most MAX_SOURCE_BYTES). One at a time: opening another closes it.
+   */
+  | { op: "openSource"; bytes: ArrayBuffer; password?: string }
+  /** A page of the open source, as `render` does for the document. */
+  | { op: "renderSource"; source: number; pageIndex: number; scale: number }
+  | { op: "closeSource"; source: number }
+  /** A new PDF with only `pages` of the document as it is now (the document is not changed). */
+  | { op: "extractPages"; pages: number[]; options: SaveOptions }
+  /** Make a new PDF from pictures (one page each) and open it as the document (one made here: SessionExport.madeHere). */
+  | { op: "newFromPictures"; pictures: PagePicture[] }
+  /** What "Riprendi" keeps of the open document; null when it must not be kept (see SessionExport). */
+  | { op: "exportSession" }
+  /** Open `original` again and apply `log` (from exportSession), as the document (made here when the log says so: SessionExport.madeHere). */
+  | { op: "resumeSession"; original: ArrayBuffer; log: unknown; password?: string };
 
 export interface ResultMap {
   open: OpenResult;
@@ -626,7 +654,127 @@ export interface ResultMap {
   save: SaveResult;
   pdfaCheck: PdfaReport;
   close: null;
+  editPages: PagesResult;
+  openSource: SourceResult;
+  renderSource: RenderResult;
+  closeSource: null;
+  extractPages: SaveResult;
+  newFromPictures: OpenResult;
+  exportSession: SessionExport | null;
+  resumeSession: ResumeResult;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Release 4: pages ("Pagine"), pictures as pages (photos and scans), Riprendi.
+
+/**
+ * The pages after a step that changed them. `from[k]` is the index page k had before the step,
+ * or null for a page the step made (blank, copy, inserted, picture); pages of the old layout
+ * that appear in no `from` were deleted. The form and the signature count are the document's
+ * now (an inserted PDF can bring fields or signatures, a deleted page can take them away).
+ */
+export interface PageLayout {
+  pages: PageInfo[];
+  from: (number | null)[];
+  form: FormInfo | null;
+  signatures: number;
+}
+
+/**
+ * One page operation. Page indices are the document's as it is when the edit is made.
+ * - "move": `order[k]` is the index of the page that goes to position k (a permutation of all
+ *   pages; anything else is refused);
+ * - "delete": those pages, cleanly (their text and fields leave the file; links, bookmarks,
+ *   named destinations and tags that led there go); never all pages;
+ * - "blank": a new empty page at `at` (0..pageCount), `size` in points, default the size of the
+ *   page next to it;
+ * - "duplicate": copies of `pages`, inserted together at `at` (fields in the copies are renamed);
+ * - "rotate": turn `pages` clockwise by `by` degrees;
+ * - "insert": pages of the open source (openSource), all or the chosen ones in that order, at
+ *   `at`; `title` names the bookmark that leads to them (null: none);
+ * - "pictures": one new page per picture at `at`, each the picture's size at its dpi.
+ */
+export type PagesEdit =
+  | { kind: "move"; order: number[] }
+  | { kind: "delete"; pages: number[] }
+  | { kind: "blank"; at: number; size?: [number, number] }
+  | { kind: "duplicate"; pages: number[]; at: number }
+  | { kind: "rotate"; pages: number[]; by: 90 | 180 | 270 }
+  | { kind: "insert"; at: number; source: number; pages: number[] | "all"; title: string | null }
+  | { kind: "pictures"; at: number; pictures: PagePicture[] };
+
+/**
+ * A picture that becomes a page of its own (a photo, a scanned sheet): JPEG (colour or grey) or
+ * PNG (a 1-bit black-and-white scan) bytes, at most MAX_IMAGE_BYTES, transferred. The page is
+ * `width` × `height` pixels at `dpi` (points = pixels / dpi × 72). `alt` describes it on tagged
+ * documents (default "Pagina scansionata" / "Scanned page", in the document's language).
+ */
+export interface PagePicture {
+  bytes: ArrayBuffer;
+  width: number;
+  height: number;
+  dpi: number;
+  alt?: string;
+}
+
+/** What a page operation did besides the pages themselves (said to the user when not empty). */
+export interface PagesReport {
+  /**
+   * What the user could see go because it led to a page that is gone or was not added: links,
+   * other annotations' actions (a button's GoTo) and, for a delete, bookmarks (one with children
+   * stays, without its target: counted too). Not counted, though cleaned all the same: named
+   * destinations and /AA actions (nothing shows them), and the bookmarks of another PDF that lead
+   * to its pages not added (an insert never brings them).
+   */
+  linksRemoved: number;
+  /** Fields renamed so they stay separate (a copy, or a PDF that has fields with the same names). */
+  fieldsRenamed: number;
+  /** Digital signatures brought in by an inserted PDF (they are no longer valid in this document). */
+  signaturesAdded: number;
+}
+
+export interface PagesResult extends HistoryState {
+  layout: PageLayout;
+  report: PagesReport;
+}
+
+/** openSource: the other PDF, read-only, for the page picker. */
+export type SourceResult =
+  | { ok: true; source: number; pageCount: number; pages: PageInfo[]; title: string | null }
+  | { ok: false; reason: "password-required" | "wrong-password" | "damaged" | "too-big"; message?: string };
+
+/** Largest other PDF accepted by openSource, in bytes. */
+export const MAX_SOURCE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * What "Riprendi" keeps: the file as opened and the edits made since, opaque to the UI (plain
+ * data a structured clone can store; an insert holds only the pages added of the other PDF).
+ * exportSession gives null when nothing must be kept: no document, no edits on a file from the
+ * device (a document made here is kept with none: see `madeHere`), a document that needed a
+ * password to open (its edits would be kept unencrypted on the device), or edits that hold pages
+ * of another PDF that needed a password (for as long as that insert is not undone).
+ */
+export interface SessionExport {
+  original: ArrayBuffer;
+  log: unknown;
+  editCount: number;
+  /**
+   * True when the document was made on this device (newFromPictures, or a resume of such a
+   * document), absent otherwise: it exists nowhere else until the user downloads it, so it is
+   * kept even with no edits (editCount 0), and after a download too. The log says so as well,
+   * so resumeSession of that log keeps it a document made here.
+   */
+  madeHere?: boolean;
+}
+
+/**
+ * resumeSession: the document opened again with its edits, as `open` answers, plus the history
+ * after them. When an edit can no longer be applied (the app changed since), the ones before it
+ * are kept and `failedAt` says which one stopped (null when all were applied).
+ */
+export type ResumeResult =
+  | ({ ok: true; history: HistoryState; applied: number; failedAt: number | null } & DocInfo)
+  | { ok: false; reason: "password-required" | "wrong-password" | "damaged"; message?: string };
 
 /** renderImage: the bitmap covers `rect` (page space), the image's visible box rounded out to whole pixels. */
 export interface ImageRenderResult extends RenderResult {

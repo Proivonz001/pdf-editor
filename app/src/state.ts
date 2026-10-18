@@ -14,7 +14,7 @@ import { EngineClient, EngineError } from "./engine/client";
 import type {
   HistoryState, LineDecorations, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode, Rect,
 } from "./engine/protocol";
-import type { OpenDoc } from "./viewer/model";
+import { applyLayout, type OpenDoc, type PageModel } from "./viewer/model";
 
 // ---------------------------------------------------------------------------------------------
 // Engine
@@ -72,6 +72,15 @@ export const downloadRunning = signal(false);
 // The worker owns the history; the UI mirrors it as a stack of edit ids, so it can tell exactly
 // whether the current state is the one last downloaded (undoing back to it counts as clean,
 // a different edit with the same count does not).
+//
+// Edit marks (the thumbnails' "edited") are kept by page, not by index: the PageModel keys of
+// the pages each edit changed (model.ts), so they follow the pages through page operations, go
+// with a deleted page and come back with it on undo. A step that changed the pages themselves
+// (release 4: a page operation, its undo or redo) carries the new layout (HistoryState.layout):
+// recordHistory rebuilds the page list from it (applyLayout), and keeps, for each page operation,
+// the PageModels before and after it, so that its undo and redo bring back those very models.
+// The undos and redos asked for and not run yet are kept too, in order (stepAsked): gone through
+// on the mirror, they say whether one on its way will change the pages (stepsAheadChangePages).
 
 export const EMPTY_HISTORY: HistoryState = { editCount: 0, canUndo: false, canRedo: false, changedPages: [] };
 export const history = signal<HistoryState>(EMPTY_HISTORY);
@@ -80,18 +89,50 @@ const applied = signal<readonly number[]>([]);
 let redoStack: number[] = [];
 let nextEditId = 1;
 const savedKey = signal("");
-/** The pages each edit changed, by edit id (for editedPages). */
-const editPages = new Map<number, readonly number[]>();
+/**
+ * A saved key no state of the edits has: a document that exists nowhere else yet (one made from
+ * scans) is not downloaded until it is, edits or not.
+ */
+const NEVER_SAVED = "-";
+
+/**
+ * The pages each edit changed, by edit id: the keys of their PageModels; an index with no page
+ * there (no document open, or a page the UI does not have) is kept as the bare index.
+ */
+const editMarks = new Map<number, { keys: readonly number[]; indices: readonly number[] }>();
+/** For each page operation, by edit id: the document's PageModels before and after it, in page order. */
+const editLayouts = new Map<number, { before: readonly PageModel[]; after: readonly PageModel[] }>();
+/** Edits the engine had before the UI saw them (a history resumed with Riprendi): their pages are not known. */
+const unknownEdits = new Set<number>();
 
 /** There are edits that have not been downloaded (or shared) yet. */
 export const dirty = computed(() => applied.value.join(",") !== savedKey.value);
 
-/** Indices of the pages that hold at least one applied edit (marked in the thumbnails). */
+/** Keys of the PageModels (PageModel.key) that hold at least one applied edit. */
+export const editedKeys = computed(() => {
+  const keys = new Set<number>();
+  for (const id of applied.value) for (const k of editMarks.get(id)?.keys ?? []) keys.add(k);
+  return keys as ReadonlySet<number>;
+});
+
+/**
+ * Indices of the pages that hold at least one applied edit (marked in the thumbnails), in the
+ * pages as they are now: it follows page operations (reading doc.pages follows `layout`).
+ */
 export const editedPages = computed(() => {
   const pages = new Set<number>();
-  for (const id of applied.value) for (const p of editPages.get(id) ?? []) pages.add(p);
+  const keys = editedKeys.value;
+  const d = doc.value;
+  if (d && keys.size) for (const p of d.pages) if (keys.has(p.key)) pages.add(p.index);
+  for (const id of applied.value) for (const i of editMarks.get(id)?.indices ?? []) pages.add(i);
   return pages as ReadonlySet<number>;
 });
+
+function forgetEdit(id: number) {
+  editMarks.delete(id);
+  editLayouts.delete(id);
+  unknownEdits.delete(id);
+}
 
 export function resetHistory() {
   batch(() => {
@@ -100,37 +141,190 @@ export function resetHistory() {
     savedKey.value = "";
   });
   redoStack = [];
-  editPages.clear();
+  editMarks.clear();
+  editLayouts.clear();
+  unknownEdits.clear();
+}
+
+/**
+ * The open document exists nowhere else yet: made here (from scans), or resumed with Riprendi
+ * without knowing that the file it was kept from is somewhere else, and not downloaded or shared
+ * in any state since. An undo back to its start does not make it clean (dirty stays true). What
+ * Riprendi's record keeps, so the resumed document counts the same (adoptOpened's `unsaved`).
+ */
+export function neverDownloaded(): boolean {
+  return savedKey.peek() === NEVER_SAVED;
+}
+
+/**
+ * The history of a document just opened, as the engine has it: none (a file opened), or `state`
+ * (Riprendi: `state.editCount` edits applied, which can be undone; which pages they changed is not
+ * known, so no page is marked; they are not downloaded). `unsaved`: the document itself exists
+ * nowhere else yet (made from scans, or resumed as such): it counts as not downloaded until it
+ * is, also once every edit is undone (neverDownloaded).
+ */
+export function startHistory(state?: HistoryState, unsaved = false) {
+  resetHistory();
+  const ids: number[] = [];
+  const count = state ? Math.max(0, Math.floor(state.editCount)) : 0;
+  for (let k = 0; k < count; k++) {
+    const id = nextEditId++;
+    ids.push(id);
+    unknownEdits.add(id);
+  }
+  batch(() => {
+    if (state) {
+      history.value = { editCount: state.editCount, canUndo: state.canUndo, canRedo: false, changedPages: [] };
+    }
+    applied.value = ids;
+    if (unsaved) savedKey.value = NEVER_SAVED;
+  });
+}
+
+/** The marks of an edit that changed `indices` of `d` (the pages as they are after it). */
+function marksOf(d: OpenDoc | null, indices: readonly number[]) {
+  const keys: number[] = [];
+  const loose: number[] = [];
+  for (const i of indices) {
+    const page = d?.pages[i];
+    if (page && typeof page.key === "number") keys.push(page.key);
+    else loose.push(i);
+  }
+  return { keys, indices: loose };
+}
+
+/**
+ * The page to show after a step that changed the pages: the one shown before (`shown`, among
+ * `before`), wherever it is now; when it went, the nearest page after it that stayed, else before.
+ */
+function pageAfter(before: readonly PageModel[], after: readonly PageModel[], shown: PageModel | undefined): number {
+  const now = new Set(after);
+  const at = shown ? before.indexOf(shown) : -1;
+  if (shown && now.has(shown)) return shown.index;
+  for (let i = at + 1; i < before.length; i++) if (now.has(before[i])) return before[i].index;
+  for (let i = at - 1; i >= 0; i--) if (now.has(before[i])) return before[i].index;
+  return 0;
+}
+
+/**
+ * Whether the edit an undo would take back (or a redo apply again) changed the pages themselves
+ * (a page operation): true or false, or null when it is not known (a history resumed with
+ * Riprendi). False when there is nothing to undo (or redo).
+ */
+export function stepChangesPages(step: "undo" | "redo"): boolean | null {
+  const id = step === "undo" ? applied.peek().at(-1) : redoStack.at(-1);
+  if (id === undefined) return false;
+  if (unknownEdits.has(id)) return null;
+  return editLayouts.has(id);
+}
+
+/** An undo or a redo asked for and not run yet: its document, and for an "Annulla" the edit it is for. */
+interface StepAhead {
+  doc: OpenDoc;
+  step: "undo" | "redo";
+  expected?: number;
+}
+
+/** The undos and redos on their way (asked for, not run yet), in the order asked (actions.ts, historyStep). */
+const stepsAhead: StepAhead[] = [];
+
+/**
+ * Count an undo or a redo of `d` (`expected`: the edit an "Annulla" is for) as on its way, from
+ * now until the function it returns is called (once): when it has run, in the same moment as
+ * recordHistory records it, or when it was dropped.
+ */
+export function stepAsked(d: OpenDoc, step: "undo" | "redo", expected?: number): () => void {
+  const entry: StepAhead = { doc: d, step, expected };
+  stepsAhead.push(entry);
+  return () => {
+    const i = stepsAhead.indexOf(entry);
+    if (i >= 0) stepsAhead.splice(i, 1);
+  };
+}
+
+/**
+ * One of the undos and redos of `d` on its way (stepAsked) will take back, or apply again, a page
+ * operation (or an edit whose pages are not known: a history resumed with Riprendi). Each is taken
+ * in turn on the mirror as the ones before it leave it, as they will run: two undos reach the last
+ * two edits; an "Annulla" whose edit is not the last one by then does nothing; nothing to undo or
+ * redo, nothing. Worked out anew from the mirror each time, so edits landing meanwhile count.
+ */
+export function stepsAheadChangePages(d: OpenDoc): boolean {
+  const ids = [...applied.peek()];
+  const redo = [...redoStack];
+  for (const ahead of stepsAhead) {
+    if (ahead.doc !== d) continue;
+    let id: number | undefined;
+    if (ahead.step === "undo") {
+      if (ahead.expected !== undefined && ids.at(-1) !== ahead.expected) continue;
+      id = ids.pop();
+      if (id !== undefined) redo.push(id);
+    } else {
+      id = redo.pop();
+      if (id !== undefined) ids.push(id);
+    }
+    if (id !== undefined && (unknownEdits.has(id) || editLayouts.has(id))) return true;
+  }
+  return false;
+}
+
+/** The id of the last edit applied (for an action that offers to undo that very edit), or null. */
+export function lastEditId(): number | null {
+  return applied.peek().at(-1) ?? null;
+}
+
+/** Edit `id` (recordHistory's) is applied: not undone, and not dropped by another document. */
+export function isApplied(id: number): boolean {
+  return applied.peek().includes(id);
 }
 
 /**
  * Record a history step returned by the engine and refresh the pages it changed. An edit that
- * changed no page (e.g. only spaces around the text) is not one: the engine did not log it.
+ * changed no page (e.g. only spaces around the text) is not one: the engine did not log it;
+ * unless it changed the pages themselves (`layout`: a delete changes no page that stays). With a
+ * `layout`, the page list is rebuilt first (applyLayout: an undo or a redo brings back the
+ * PageModels the pages had then), and the current page follows the page it showed (or its
+ * nearest neighbour that stayed); the indices of `changedPages` are those of the new pages.
+ * Returns the new edit's id (for "edit"), else null.
  */
-export function recordHistory(state: HistoryState, step: "edit" | "undo" | "redo") {
-  if (step === "edit" && state.changedPages.length === 0) {
+export function recordHistory(state: HistoryState, step: "edit" | "undo" | "redo"): number | null {
+  const layout = state.layout;
+  if (step === "edit" && state.changedPages.length === 0 && !layout) {
     history.value = state;
-    return;
+    return null;
   }
+  let recorded: number | null = null;
   batch(() => {
+    const d = doc.peek();
     const ids = [...applied.value];
+    let id: number | undefined;
     if (step === "edit") {
-      const id = nextEditId++;
+      id = nextEditId++;
       ids.push(id);
-      editPages.set(id, state.changedPages);
-      for (const dropped of redoStack) editPages.delete(dropped);
+      for (const dropped of redoStack) forgetEdit(dropped);
       redoStack = [];
+      recorded = id;
     } else if (step === "undo") {
-      const id = ids.pop();
+      id = ids.pop();
       if (id !== undefined) redoStack.push(id);
     } else {
-      const id = redoStack.pop();
+      id = redoStack.pop();
       if (id !== undefined) ids.push(id);
     }
+    if (layout && d) {
+      const known = id === undefined ? undefined : editLayouts.get(id);
+      const before = d.pages.slice();
+      const shown = before[Math.min(Math.max(0, currentPage.peek()), before.length - 1)];
+      applyLayout(d, layout, step === "undo" ? known?.before : step === "redo" ? known?.after : undefined);
+      if (step === "edit" && id !== undefined) editLayouts.set(id, { before, after: d.pages.slice() });
+      currentPage.value = pageAfter(before, d.pages, shown);
+    }
+    if (step === "edit" && id !== undefined) editMarks.set(id, marksOf(d, state.changedPages));
     applied.value = ids;
     history.value = state;
     invalidatePages(state.changedPages);
   });
+  return recorded;
 }
 
 /**
@@ -617,9 +811,23 @@ export type DialogState =
    * "Install the app": why, and this browser's steps (ui/InstallDialog.tsx), where the browser
    * has no install dialog of its own ready (openInstall, ui/actions.ts).
    */
-  | { kind: "install" };
+  | { kind: "install" }
+  /**
+   * Release 4: "Da un altro PDF…": choose a PDF, then all its pages or some, inserted at `at`
+   * (ui/organizer: the page picker; the source is open in the engine while the dialog is).
+   */
+  | { kind: "insert-from-pdf"; at: number }
+  /** Release 4: "Sposta in posizione…" for `pages` (the keyboard and screen-reader way to move pages). */
+  | { kind: "move-pages"; pages: number[] };
 
 export const dialog = signal<DialogState | null>(null);
+
+/**
+ * Release 4: the scan flow is open (ui/scan): to make a new PDF from photos or scans, or to
+ * insert them into the open document at `at`. Null when it is closed.
+ */
+export type ScanTarget = { kind: "new" } | { kind: "insert"; at: number };
+export const scanFlow = signal<ScanTarget | null>(null);
 
 /** Answer `question` "no" (Cancel), so its caller goes on. */
 function answerNo(question: DialogState) {

@@ -9,10 +9,11 @@
 // (Compila e firma with Testo, Modifica with Aggiungi testo), Enter on the page region (the
 // viewer's scroll area, where the focus goes when a writer closes) opens a writer in the middle of
 // what shows, as "Put it in the middle" does (no pointer needed). Undo/redo are left to the field
-// while typing in one; nothing is handled while a dialog or a sheet is open.
+// while typing in one; nothing is handled while a dialog, a sheet or the scan flow is open (a
+// modal: the document under it is not to change unseen; the scan flow's Escape is its own).
 import {
-  dialog, doc, editingLine, editMode, editTool, fillMode, openWriter, pendingPlacement, selectedImage, sheet,
-  writerKind, writerOn,
+  dialog, doc, editingLine, editMode, editTool, fillMode, openWriter, pendingPlacement, scanFlow, selectedImage,
+  sheet, writerKind, writerOn,
 } from "../state";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
 import {
@@ -58,18 +59,23 @@ function writeOnEnter(target: EventTarget | null): boolean {
   return true;
 }
 
+/** A modal is open: a dialog, a sheet, or the scan flow (its own signal). */
+function modalOpen(): boolean {
+  return !!(dialog.peek() || sheet.peek() || scanFlow.peek());
+}
+
 function onKeyDown(e: KeyboardEvent) {
   const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
   if (e.key === "Escape" && plain) {
-    if (!dialog.peek() && !sheet.peek() && !isTypingTarget(e.target) && escapeStep()) e.preventDefault();
+    if (!modalOpen() && !isTypingTarget(e.target) && escapeStep()) e.preventDefault();
     return;
   }
   if (e.key === "Enter" && plain) {
-    if (!e.defaultPrevented && !e.repeat && !dialog.peek() && !sheet.peek() && writeOnEnter(e.target)) e.preventDefault();
+    if (!e.defaultPrevented && !e.repeat && !modalOpen() && writeOnEnter(e.target)) e.preventDefault();
     return;
   }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  if (dialog.peek() || sheet.peek()) return;
+  if (modalOpen()) return;
   const key = e.key.toLowerCase();
   const hasDoc = doc.peek() !== null;
 

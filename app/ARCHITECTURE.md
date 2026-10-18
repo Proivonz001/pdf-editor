@@ -21,7 +21,8 @@ repository root keeps working; it replaces it once it does everything the old on
   pictures of a page and edits one placement at a time (see "Images"). `forms.ts` lists and
   fills form fields, `newcontent.ts` writes new text and new pictures on a page (see "Fill and
   sign"). `decorations.ts` makes a line's underline, strike-through, links and background follow
-  an edit of its text (see "Decorations"). `pdfa.ts` converts a
+  an edit of its text (see "Decorations"). `pages.ts` moves, deletes, copies, turns and adds
+  pages (see "Pages, scans and Riprendi"). `pdfa.ts` converts a
   copy to PDF/A and checks the result, with our own colour profile from `icc.ts` (see "PDF/A").
   `worker.ts` only turns messages into `EngineSession` calls. `protocol.ts` is the contract;
   `client.ts` is the main-thread side.
@@ -111,7 +112,11 @@ compressed once, by the first snapshot after it was placed, not again at every l
 
 Save never replays: it serializes the working document, re-opens the copy, subsets only the
 fallback fonts there and writes it, leaving what the working document holds untouched (it may
-now be that serialization re-opened: see above). (When the session
+now be that serialization re-opened: see above). Each fallback font keeps the glyphs the copy
+still draws with it (its pages' content and annotation appearances, read as they are then:
+`core.subsetFallbackFonts`), not every glyph ever written with it: a subset's glyphs tell which
+characters were written, so a line deleted or rewritten, a page deleted, or the pages an extract
+leaves out would otherwise leave their characters in the file. (When the session
 is broken, the copy is the last good state rebuilt from the log.) What is written depends on
 the download's `SaveOptions`:
 
@@ -164,7 +169,8 @@ nothing is written into it afterwards (the engine failed or refused the PDF/A, a
 was opened), `writeDownload` (`ui/actions.ts`) removes it while it is still empty; when writing
 into it fails, the bytes already built are downloaded normally instead. No empty PDF is left.
 
-The edit list is plain data, so it can later be stored for "resume session".
+The edit list is plain data, so it can be stored on the device for "Riprendi" (see "Pages, scans
+and Riprendi").
 
 ## Images
 
@@ -382,7 +388,8 @@ a no-op. Then `applyFieldEdit`, shared by the first application and every replay
   app never fills password fields (they are locked). One exception, on screen only: in a form
   with /NeedAppearances MuPDF redraws every field for display, the stored password too, until
   the first field edit drops the flag. No file the app writes carries it.
-- **Saving.** `subsetFallbackFonts` also points annotation appearances at the subset fonts. The
+- **Saving.** `subsetFallbackFonts` also reads annotation appearances for the glyphs they draw,
+  and points them at the subset fonts. The
   PDF/A conversion draws with the writer what MuPDF would draw wrongly, and gives an unsigned
   signature field an empty appearance: MuPDF's own is an orange "SIGN" tag, which would be
   written into the file.
@@ -512,6 +519,114 @@ before, without them.
 alignment (the text grows to the right, its decorations with it); drawing dashed or dotted rules
 again; shapes inside forms; decorations of mixed and added lines; size and colour changes (the
 line editor cannot make them yet).
+
+## Pages, scans and Riprendi
+
+Release 4 ("Pagine e foto") moves, deletes, copies, turns and adds pages, adds pages of another
+PDF, makes pages of photos and scanned sheets, and keeps the open document and its edits on the
+device so that the user can resume after the tab was closed or killed ("Riprendi").
+
+**Page operations** (`pages.ts`; `EngineSession.editPages`, one request per operation): "move",
+"delete", "blank", "duplicate", "rotate", "insert" (pages of another PDF) and "pictures". MuPDF's
+ready-made calls cannot be used as they are: `rearrangePages` rebuilds the catalog (the form, the
+tags and the labels go), `deletePage` leaves fields, tags, bookmarks and destinations pointing at
+the page, which keeps it, and what the user wrote on it, in every download, and `graftPage` copies
+no annotation and drags in the source's whole page tree through any reference to one of its pages.
+So `pages.ts` has its own: inherited MediaBox, CropBox, Rotate and Resources given to the pages
+first, labels read before and written back after, a clean delete (every reference to the page and
+its annotations removed, then any reference left cut by a pass over every object), copies as new
+page dictionaries with their own content, annotations and renamed fields, and an import that copies
+only what cannot reach a page that was not chosen. Its header lists what is out of scope: tags
+for added and copied pages (they come in untagged), among others. Each operation is one edit: undo,
+redo, checkpoints and rollback work as for any other.
+
+**What is logged.** A `kind: "pages"` entry, plain data like the others, holding the operation with
+what it needs to be made again exactly: its page indices as they were, the size of a blank page
+(the page's before it as seen, when none was asked), for "insert" the chosen pages of the other
+PDF as a file of their own and their indices in it in the chosen order ("all" made a list; see
+"The other PDF"), for "pictures" each picture as addImage keeps one, with its page's size and its
+description. The indices of the entries before and after it stay as
+they were: replaying in log order makes them right, so nothing is renumbered. `pages.ts` depends
+only on its arguments and the document's state, so a replay repeats field renames (`nome_2`,
+`nome_copia1`), label repairs and where a bookmark goes. Everything is checked before anything is
+logged ("bad-request"); a page tree MuPDF cannot read is "not-editable".
+
+**The layout.** A step that changed the pages (an operation, its undo or its redo) answers with
+`HistoryState.layout`: the pages now, and for each the index it had before the step, worked out
+from the operation itself (`layoutFrom`: a move gives its permutation, a delete the pages that
+stay, new pages a `from` of null at their place and the pages after them shifted, a rotation every
+page where it was; an undo the inverse, `undoneFrom`, where the pages a delete brings back have
+no `from`). Never by matching page objects before and after: an undo compares the working
+document with one rebuilt from a checkpoint or the original, and two paths to the same state do
+not number their objects alike (a picture embedded again after a snapshot, which forgets what was
+embedded, shifts every later object). The form and the signature count are read again (an
+inserted PDF can bring fields or signatures, a delete take them away). `encrypted`, `needsPassword` and `canKeepPassword`
+stay as they were at open: read again they would change after the first snapshot. `changedPages`
+lists the pages turned or made. The UI rebuilds its page list from the layout, keeping the
+PageModels of the pages that stayed (`viewer/model.ts`, `applyLayout`).
+
+**Layers.** MuPDF reads a document's layer list once, the first time it draws optional content:
+layers an insert adds after that draw as visible until the document is opened again. So after an
+insert that brought layers the working document is written out and opened again (as a checkpoint
+does), and a replay goes on with a copy opened again at that point: what the pages show never
+depends on the path the history took (undo, redo, a rebuild, a resume).
+
+**The other PDF** (`openSource`, `renderSource`, `closeSource`), for the page picker of "Da un
+altro PDF": one at a time beside the document, at most `MAX_SOURCE_BYTES` (100 MiB), its password
+asked as for a document. Its password fields get a frame-only look (`hidePasswords`), and while it
+is open it is kept as a private copy written unencrypted (`encrypt=none`). An insert takes its
+chosen pages from that copy into a file of their own (`insertPart`): a scratch copy with the
+other pages deleted cleanly (`keepPages`, which cuts the links that led to them: counted in the
+report as an insert from the whole file counts them), without what an insert never copies (the
+catalog's attachments, scripts, structure tree, metadata and actions, the form's XFA, the pages'
+/PieceInfo and thumbnails; the bookmarks too when there is no title), written unencrypted and
+garbage collected. That file is what the insert logs and opens at every run, the first one
+included (never the copy open for the picker's thumbnails, which drawing may have changed), so a
+replay needs no password and repeats the first run exactly, and the log, its exports and the
+device's store hold nothing of the pages the user did not add. The other PDF is closed by
+closeSource, by opening or closing a document, and when another one is opened. The added pages sit
+in the log once, and their copied objects in every later checkpoint (thinned past 256 MB in total
+as before). An inserted signed PDF keeps its signatures (counted in the report): like the
+document's own, they are no longer valid in the new file, and the UI says so.
+
+**Extract** (`extractPages`): a scratch copy of the document as it is, the other pages deleted
+cleanly there (`keepPages`), then exactly the path a download takes (fallback fonts subset, PDF/A
+conversion when asked, the password). The document does not change. A normal-PDF part never claims
+PDF/A, edited or not: nothing checked it.
+
+**Pictures as pages.** A picture (JPEG, or a 1-bit grey PNG for a black-and-white scan) becomes a
+new page of its own size, its pixels at its dpi (A4 at 200 dpi is 1654 × 2339 pixels), with the
+picture over the whole page as the app's own picture (`newcontent.addImage`, the session's
+`sharePicture`): it can be moved, replaced or deleted like a signature. On a tagged document it is a
+Figure described "Pagina scansionata", or "Scanned page" when the document's /Lang is not Italian,
+unless the scan gave a description. MuPDF 1.27 stores a grey PNG whose pixels are only black and
+white as a 1-bit image and writes it CCITT G4 (about 80 KB for an A4 page at 300 dpi). Pictures
+are checked as addImage's are, besides their size: the file's pixels must be what they say (within
+a pixel), at most 40 million, each page side 1..14,400 pt. `newFromPictures` builds a new PDF the
+same way and opens it as the document: that file is the original, and the log starts empty. The
+scan itself (finding the sheet, straightening it, the modes) runs in a separate short-lived worker
+in plain JavaScript (`src/scan/`), not in the engine: no second MuPDF.
+
+**Riprendi** (`exportSession`, `resumeSession`; the store is `platform/resume.ts`, the autosave and
+the home page card `ui/resume/`). What is kept: the original as it was opened and the log
+(`SessionLog`, version 1), every byte array in them a copy of its own. Nothing is kept for a file
+from the device with no edits (the user has it). A document made here (`newFromPictures`;
+`SessionExport.madeHere`, carried in the log across a resume) is kept even with no edits and after
+a download: it exists nowhere else. Nothing is kept for a document that needed a password to
+open: its original stays encrypted, but its edits (what the user wrote, field values, pictures,
+inserted PDFs) would sit on the device unencrypted. Nor while the log holds pages of another PDF that needed a password (the
+insert is marked `protectedSource`): they sit in the log unencrypted; once that insert is undone,
+what is left is kept again. It is kept only on this device, in an IndexedDB database of its own
+("pdf-editor-resume": signatureStore's "pdf-editor" is never opened at another version), never
+sent anywhere. One document at a time: it is forgotten when the user closes it, when another
+document with edits takes its place, or with "Dimentica" (which forgets exactly the record it was
+pressed for); a page load forgets only what it kept itself, so another tab's record stays.
+`resumeSession` refuses a log that is not exportSession's (another version, an entry of an
+unknown kind or shape: "bad-request") before anything is done; then it opens the original and
+applies the edits one by one as redo does, taking checkpoints as new edits do, so undo works as it
+did. An edit that no longer applies (the app changed since) stops there: the document goes back to
+the edits before it, which stay, and `failedAt` says which one stopped. The redo stack and the
+checkpoints are not kept (checkpoints hold functions, and are made again).
 
 ## PDF/A ("PDF/A per l'archivio")
 
