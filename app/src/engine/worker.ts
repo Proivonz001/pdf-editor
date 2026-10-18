@@ -97,6 +97,33 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
       return reply<"pdfaCheck">(s.pdfaCheck());
     case "close":
       return reply<"close">(s.close());
+    case "editPages":
+      // A "pictures" operation's bytes arrived transferred, like those of "addImage": the session keeps them in its log.
+      return reply<"editPages">(s.editPages(msg.edit, { transfer: true }));
+    case "openSource":
+      return reply<"openSource">(s.openSource(msg.bytes, msg.password));
+    case "renderSource": {
+      const { width, height, rgba, scale } = s.renderSource(msg.source, msg.pageIndex, msg.scale);
+      const bitmap = await createImageBitmap(new ImageData(rgba, width, height));
+      return reply<"renderSource">({ bitmap, width, height, scale }, [bitmap]);
+    }
+    case "closeSource":
+      return reply<"closeSource">(s.closeSource(msg.source));
+    case "extractPages": {
+      const result = s.extractPages(msg.pages, msg.options);
+      return reply<"extractPages">(result, [result.bytes]);
+    }
+    case "newFromPictures":
+      // Transferred like the bytes of "open" and "addImage": the session keeps them, not copies.
+      return reply<"newFromPictures">(s.newFromPictures(msg.pictures, { transfer: true }));
+    case "exportSession": {
+      // Every byte array in it is a copy of its own (exportSession): all of them are transferred.
+      const result = s.exportSession();
+      return reply<"exportSession">(result, result ? buffersIn(result) : []);
+    }
+    case "resumeSession":
+      // The original and the log's byte arrays arrived with this message: the session keeps them as they are.
+      return reply<"resumeSession">(s.resumeSession(msg.original, msg.log, msg.password, { transfer: true }));
     default: {
       const unknown: never = msg;
       throw new Error(`Unknown request ${JSON.stringify(unknown)}`);
@@ -107,4 +134,20 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
 /** Ties each result to its op's type in ResultMap. */
 function reply<K extends Op>(result: ResultMap[K], transfer: Transferable[] = []): Reply<K> {
   return [result, transfer];
+}
+
+/** The buffers of the byte arrays inside `value` (plain objects and arrays), each once: what a reply can transfer. */
+function buffersIn(value: unknown): ArrayBuffer[] {
+  const found = new Set<ArrayBuffer>(), seen = new Set<object>();
+  const visit = (v: unknown) => {
+    if (v instanceof ArrayBuffer) found.add(v);
+    else if (ArrayBuffer.isView(v)) {
+      if (v.buffer instanceof ArrayBuffer) found.add(v.buffer);
+    } else if (v && typeof v === "object" && !seen.has(v)) {
+      seen.add(v);
+      for (const x of Object.values(v)) visit(x);
+    }
+  };
+  visit(value);
+  return [...found];
 }

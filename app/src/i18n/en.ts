@@ -728,6 +728,290 @@ export const en = {
   "install.firefoxAndroid.step3": "Confirm with Add.",
   "install.firefoxWindows.step1": "Click the web app button at the right end of the address bar.",
   "install.firefoxWindows.step2": "Firefox adds the app to the taskbar: from there it opens in its own window.",
+  // -- r4: DocModel
+  // Page operations (ui/pageActions.ts): what they did, in toasts, and why one was refused.
+  "pageOps.failed": "Could not change the pages.",
+  "pageOps.notEditable": "The pages of this PDF can't be changed.",
+  "pageOps.keepOne": "At least one page must stay.",
+  "pageOps.deletedOne": "1 page deleted.",
+  "pageOps.deleted": "{count} pages deleted.",
+  // The button in the delete's toast: undoes that delete.
+  "pageOps.undo": "Undo",
+  "pageOps.undoGone": "Other changes came after it: undo those first.",
+  "pageOps.duplicatedOne": "Page duplicated.",
+  "pageOps.duplicated": "{count} pages duplicated.",
+  "pageOps.blankAdded": "Blank page added.",
+  "pageOps.addedOne": "1 page added.",
+  "pageOps.added": "{count} pages added.",
+  // What the engine reports: links, bookmarks and named destinations that led to pages that are gone or not added.
+  "pageOps.linkRemoved": "1 link removed.",
+  "pageOps.linksRemoved": "{count} links removed.",
+  "pageOps.fieldsRenamed": "Fields renamed to keep them separate.",
+  "pageOps.signaturesInvalid": "The added PDF's digital signatures are no longer valid.",
+  // "Extract": the file downloaded with some pages only ({name}: the document's name without .pdf).
+  "pageOps.extractName": "{name} - pages {pages}.pdf",
+  "pageOps.extractNameOne": "{name} - page {page}.pdf",
+  "pageOps.extractFailed": "Could not extract the pages.",
+  "pageOps.extractPlainTitle": "Extract without a password?",
+  "pageOps.extractPlainBody": "The new PDF with these pages won't have this document's password.",
+  "pageOps.extractPlainConfirm": "Extract anyway",
+  // A new PDF made from photos or scans, in place of the open document.
+  "pageOps.newBody": "You have edits you haven't downloaded yet. If you make a new PDF, they will be lost.",
+  "pageOps.newConfirm": "Make it anyway",
+  "pageOps.newFailedTitle": "The PDF can't be made",
+  "pageOps.newFailed": "Something went wrong while making the PDF from the pictures.",
+  // -- r4: ResumeUI
+  // "Pick up where you left off" on the home page (ui/resume/ResumeCard.tsx): the last document,
+  // with its edits, and an unfinished scan, kept on this device only (ui/resume/autosave.ts).
+  "resume.label": "Pick up where you left off",
+  "resume.document": "Resume “{name}”",
+  "resume.editsOne": "1 edit",
+  "resume.edits": "{count} edits",
+  // A document made here (from photos or scans) kept with no edits: {pages} is "2 pages".
+  "resume.newDocument": "{pages}, not downloaded yet",
+  // {what}: the edits (or the line above); {when}: resume.justNow… or a date.
+  "resume.meta": "{what} · {when}",
+  "resume.scan": "Unfinished scan ({pages})",
+  "resume.resume": "Resume",
+  "resume.forget": "Forget",
+  // The buttons' names for screen readers.
+  "resume.resumeLabel": "Resume “{name}”",
+  "resume.forgetLabel": "Forget “{name}”",
+  "resume.resumeScanLabel": "Resume the unfinished scan",
+  "resume.forgetScanLabel": "Forget the unfinished scan",
+  // The note under the card, and what opens under it.
+  "resume.note": "It stays only on this device.",
+  "resume.about": "The app keeps one document at a time, with its edits, and a scan you haven't finished, only on this device (in this browser), never online. The document stays until you close it, tap Forget, or another one takes its place: one with edits, or a PDF made here from photos, which stays even without edits. Opening a PDF just to read it doesn't remove it. The scan stays until you finish it, cancel it or tap Forget. PDFs that need a password to open are never kept, nor pages added from one.",
+  "resume.justNow": "just now",
+  "resume.minutesAgo": "{count} min ago",
+  "resume.today": "today at {time}",
+  "resume.yesterday": "yesterday at {time}",
+  // After Resume, when an edit no longer applies (the app changed since): the ones before it are kept.
+  "resume.partialOne": "Resumed the first edit: the next one no longer applies.",
+  "resume.partial": "Resumed the first {count} edits: the next one no longer applies.",
+  "resume.partialNone": "The edits no longer apply: the document is as it was when you opened it.",
+  // After resuming a document, when a scan meant for that document is kept too.
+  "resume.scanToo": "There's also an unfinished scan for this document ({pages}).",
+  "resume.resumeScan": "Resume the scan",
+  "resume.failedTitle": "“{name}” can't be resumed",
+  "resume.damaged": "What was kept on this device no longer opens, so it has been forgotten.",
+  "resume.failed": "Something went wrong while resuming “{name}”.",
+  "resume.gone": "It's no longer kept on this device.",
+  "resume.scanGone": "The scan is no longer kept on this device.",
+  "resume.scanFailed": "Something went wrong while resuming the scan.",
+  "resume.forgotten": "“{name}” forgotten.",
+  "resume.scanForgotten": "Scan forgotten.",
+  // The button in the "forgotten" toast: keeps it after all.
+  "resume.undo": "Undo",
+  // Said once, when the device refuses to keep it (full storage).
+  "resume.cantKeep": "Couldn't keep a copy on this device to resume later.",
+  // -- r4: ScanUI
+  // The scan flow (ui/scan): photos of sheets, from the camera or the gallery, made into pages,
+  // then a new PDF or pages added to the open document. The home page's entry, and the titles.
+  "scan.homeEntry": "Scan a document",
+  "scan.titleNew": "Scan a document",
+  "scan.titleInsert": "Add photos or scans",
+  // Before the first photo.
+  "scan.startHint": "Take the photo from above, in good light, with the whole sheet in view. I'll find its edges, and you can correct them.",
+  "scan.startHintDesktop": "Choose photos or scanned pictures of the sheets: one page each. I'll find their edges, and you can correct them.",
+  "scan.camera": "Camera",
+  "scan.gallery": "Gallery",
+  "scan.choose": "Choose pictures",
+  "scan.keptNote": "Each page you finish stays on this device only: if the app closes, you'll find it again on the home page.",
+  // Reading a photo. {n} of {count}: several photos were picked together.
+  "scan.reading": "Looking for the sheet's edges…",
+  "scan.photoOf": "Photo {n} of {count}",
+  "scan.photoFailed": "This photo couldn't be read. Try again.",
+  "scan.photoHeic": "This browser can't open HEIC photos. Choose a JPEG, or take the photo with Camera.",
+  // {reason}: why the photo {name} can't be used (one of the messages about pictures).
+  "scan.photoNamed": "“{name}”: {reason}",
+  // The corner editor.
+  "scan.cornersTitle": "Adjust the corners",
+  "scan.cornersFound": "Check that the corners sit on the sheet's corners.",
+  "scan.cornersNotFound": "I couldn't find the edges: move them yourself.",
+  "scan.cornersCrossed": "The corners cross: put them back on the sheet's corners.",
+  "scan.cornersHelp": "Drag each corner onto a corner of the sheet, or move the selected one with the arrow keys (Shift: longer steps).",
+  "scan.photoLabel": "The photo, with the sheet's corners",
+  "scan.cornerTopLeft": "Top-left corner",
+  "scan.cornerTopRight": "Top-right corner",
+  "scan.cornerBottomRight": "Bottom-right corner",
+  "scan.cornerBottomLeft": "Bottom-left corner",
+  // {corner}: one of the four above; {x} and {y}: per cent of the photo's width and height.
+  "scan.cornerAt": "{corner}, {x}% from the left, {y}% from the top",
+  "scan.wholePhoto": "Whole photo",
+  "scan.foundEdges": "Edges found",
+  "scan.mode": "Mode",
+  "scan.mode.document": "Document",
+  "scan.mode.grey": "Grey",
+  "scan.mode.bw": "Black and white",
+  "scan.mode.original": "Original",
+  "scan.modeHint.document": "White paper, darker ink, colours kept.",
+  "scan.modeHint.grey": "The same in shades of grey: a lighter file.",
+  "scan.modeHint.bw": "Only black and white: the lightest file, for text.",
+  "scan.modeHint.original": "Only straightened, as in the photo: for photos and ID cards.",
+  "scan.shape": "Page size",
+  "scan.shape.a4": "A4",
+  "scan.shape.photo": "Photo's proportions",
+  "scan.discard": "Discard photo",
+  "scan.addPage": "Add page",
+  "scan.replacePage": "Replace page {n}",
+  "scan.making": "Making the page…",
+  "scan.makeFailed": "The page couldn't be made. Try again, or move the corners.",
+  // The tray: the pages made so far.
+  "scan.pagesOne": "1 page",
+  "scan.pages": "{count} pages",
+  "scan.pageN": "Page {n}",
+  "scan.moveUp": "Move page {n} up",
+  "scan.moveDown": "Move page {n} down",
+  "scan.retake": "Retake page {n}",
+  "scan.delete": "Delete page {n}",
+  // Said to screen readers after each change of the tray.
+  "scan.added": "Page {n} added.",
+  "scan.replaced": "Page {n} replaced.",
+  "scan.deleted": "Page {n} deleted.",
+  "scan.moved": "Page moved to position {n}.",
+  "scan.another": "Another page",
+  "scan.fromGallery": "From the gallery",
+  "scan.morePictures": "Add pictures",
+  "scan.notKept": "These pages can't be kept on this device: if the app closes, they're lost.",
+  // Where Done puts the pages ({name}: the open document's file name).
+  "scan.goesNew": "They'll become a new PDF.",
+  "scan.goesStart": "They'll go at the start of “{name}”.",
+  "scan.goesEnd": "They'll go at the end of “{name}”.",
+  "scan.goesAfter": "They'll go in “{name}”, after page {n}.",
+  "scan.finish": "Done",
+  "scan.finishingNew": "Making the PDF…",
+  "scan.finishingInsert": "Adding the pages…",
+  "scan.insertFailed": "The pages weren't added. Try again.",
+  // Leaving the scan with pages in the tray.
+  "scan.cancelTitle": "Leave the scan?",
+  "scan.cancelBodyOne": "The page you scanned will be lost.",
+  "scan.cancelBody": "The {count} pages you scanned will be lost.",
+  "scan.cancelConfirm": "Leave anyway",
+  // The new PDF's name ({date}: 2026-10-17).
+  "scan.fileName": "Scan {date}.pdf",
+  // -- r4: Organizer
+  // The page organizer (viewer/Thumbnails.tsx, ui/organizer): the thumbnails of the desktop panel
+  // and the phone's full-screen "Organize" sheet. A place between pages is {where}: "at the
+  // start", "after page 3".
+  "org.title": "Organize",
+  // What the list of thumbnails says to screen readers (its description).
+  "org.hintList": "Enter shows the page. Space selects it, Shift with the arrows selects more. Alt+↑ and Alt+↓ move the selected pages, Delete deletes them. You can also drag them.",
+  "org.hintGrid": "Tap a page to see it. Touch and hold it to move it or select it.",
+  "org.select": "Select",
+  "org.selectTip": "Choose pages to rotate, duplicate, extract, move or delete",
+  "org.selectAll": "All",
+  "org.selectNone": "None",
+  "org.done": "Done",
+  "org.selectedOne": "1 page selected",
+  "org.selected": "{count} pages selected",
+  "org.noneSelected": "Tap the pages you want.",
+  "org.deselect": "Deselect",
+  // The action bar of the selected pages (its name for screen readers, then its buttons; the
+  // short ones are the labels under the icons on phones).
+  "org.actions": "Selected pages",
+  "org.rotateRight": "Rotate right",
+  "org.rotateRightShort": "Right",
+  "org.rotateLeft": "Rotate left",
+  "org.rotateLeftShort": "Left",
+  "org.duplicate": "Duplicate",
+  "org.extract": "Extract",
+  "org.extractTip": "Download these pages as a new PDF",
+  "org.move": "Move to…",
+  "org.moveShort": "Move",
+  "org.delete": "Delete",
+  // The "+" between pages and at the end, and its menu.
+  "org.atStart": "at the start",
+  "org.afterPage": "after page {page}",
+  "org.insertAt": "Add pages {where}",
+  "org.insertEnd": "Add pages at the end",
+  "org.add": "Add pages",
+  "org.blank": "Blank page",
+  "org.fromPdf": "From another PDF…",
+  "org.scan": "Photo or scan",
+  // Said to screen readers after a move or a rotation (they have no toast: they show at once).
+  "org.rotatedOne": "Page {page} rotated.",
+  "org.rotated": "{count} pages rotated.",
+  "org.movedOne": "Page moved: now it's page {page}.",
+  "org.moved": "{count} pages moved.",
+  // The drop overlay, with a PDF file over the thumbnails.
+  "org.dropInsert": "Drop the PDF to add its pages here",
+  // "Move to…"
+  "org.moveTitleOne": "Move page {page}",
+  "org.moveTitle": "Move {count} pages",
+  "org.moveBodyOne": "Choose where it goes.",
+  "org.moveBody": "Choose where they go. They stay in their order.",
+  "org.movePosition": "Position",
+  "org.moveBefore": "Before page {page}",
+  "org.moveEnd": "At the end",
+  "org.moveNoopOne": "It's already there.",
+  "org.moveNoop": "They're already there.",
+  "org.moveConfirm": "Move",
+  // "From another PDF…": the page picker ({max}: the size limit in MB).
+  "org.pdfTitle": "Add pages from another PDF",
+  "org.pdfIntro": "Choose the PDF to take the pages from.",
+  "org.pdfChoose": "Choose a PDF…",
+  "org.pdfChooseOther": "Choose another PDF…",
+  "org.pdfOpening": "Opening “{name}”…",
+  "org.pdfProtected": "“{name}” is protected: type its password.",
+  "org.pdfTooBig": "“{name}” is too big: at most {max} MB.",
+  "org.pdfDamaged": "“{name}” seems to be damaged, or it is not a PDF.",
+  "org.pdfNotPdf": "“{name}” is not a PDF.",
+  "org.pdfAll": "All",
+  "org.pdfPagesLabel": "Pages of “{name}”",
+  "org.pdfWhere": "They go {where}.",
+  "org.pdfAddOne": "Add 1 page",
+  "org.pdfAdd": "Add {count} pages",
+  "org.pdfNone": "Choose at least one page.",
+  // -- r4 fix: UIModel
+  "pageOps.wait": "Just a moment: the pages are changing.",
+  // -- r4 fix: ResumeFix
+  // Riprendi when what is kept is still there but can't be read now (a slow or failing read); the
+  // toast's button is resume.forget.
+  "resume.unreadable": "Couldn't resume “{name}”: its copy on this device can't be read right now. Try again, or forget it.",
+  "resume.scanUnreadable": "Couldn't resume the scan: its copy on this device can't be read right now. Try again, or forget it.",
+  // -- r4 fix: ScanUI
+  // A new scan while an unfinished one is kept on the device: continue it, or start over.
+  "scan.keptTitle": "You have an unfinished scan",
+  "scan.keptBodyOne": "There's 1 scanned page you haven't used yet. You can carry on from there, or start over: that page will be deleted.",
+  "scan.keptBody": "There are {count} scanned pages you haven't used yet. You can carry on from there, or start over: those pages will be deleted.",
+  "scan.keptContinue": "Continue the scan",
+  "scan.keptStartOver": "Start over",
+  // Said to screen readers after the choice.
+  "scan.keptContinued": "Scan resumed.",
+  "scan.keptStartedOver": "The earlier scan was deleted.",
+  "scan.keptUnreadable": "The earlier scan can't be read right now. Try again, or start over.",
+  // Without a camera (with a mouse): a HEIC photo this browser can't open.
+  "scan.photoHeicDesktop": "This browser can't open HEIC photos. Choose a JPEG or PNG.",
+  // Files dropped on the scan that aren't pictures.
+  "scan.dropNotPicture": "Only photos or pictures can be dropped here.",
+  // A resumed scan meant for a PDF that isn't open now.
+  "scan.orphanHint": "The PDF you were adding them to isn't open. You can make a new PDF of them, or choose “Later”: open that PDF again and continue this scan from “Photo or scan”.",
+  "scan.later": "Later",
+  "scan.finishNew": "Make a new PDF",
+  // A toast after closing the scan without losing it.
+  "scan.keptForLater": "The scan stays on this device: you'll find it on the home page.",
+  // Before the new PDF, when another document ({name}) is kept to resume.
+  "scan.orphanNewTitle": "Make a new PDF?",
+  "scan.orphanNewBody": "This device keeps only one document to resume: the new PDF will take the place of “{name}”.",
+  "scan.orphanNewConfirm": "Make the new PDF",
+  // Done with the PDF engine down (it crashed, or didn't start).
+  "scan.engineDown": "The PDF engine isn't working, so the pages can't be used now. They stay on this device: reload the page and resume the scan from the home page.",
+  "scan.engineDownNotKept": "The PDF engine isn't working, so the pages can't be used now, and this device can't keep them: if you reload the page, they're lost.",
+  // -- r4 fix2: ScanUI
+  // A resumed scan meant for a PDF that isn't open, when this device couldn't keep its pages (no “Later” then).
+  "scan.orphanHintNotKept": "The PDF you were adding them to isn't open, and this device can't keep the pages for later. Make a new PDF of them: if you leave, or the app closes, they're lost.",
+  // “Later” pressed, and then this device couldn't keep the pages.
+  "scan.laterFailed": "These pages can't be kept on this device, so they can't wait for later.",
+  // -- r4 fix3: ScanResume
+  // A scan kept for a document ({name}: its file name): the question before a new scan, the
+  // tray's hint when that document isn't open (with “Later”, and when the device can't keep the
+  // pages), and the home page's card.
+  "scan.keptBodyForOne": "There's 1 scanned page for “{name}” you haven't used yet. You can carry on from there, or start over: that page will be deleted.",
+  "scan.keptBodyFor": "There are {count} scanned pages for “{name}” you haven't used yet. You can carry on from there, or start over: those pages will be deleted.",
+  "scan.orphanHintFor": "These pages are for “{name}”, which isn't open. You can make a new PDF of them, or choose “Later”: open “{name}” again and continue this scan from “Photo or scan”.",
+  "scan.orphanHintForNotKept": "These pages are for “{name}”, which isn't open, and this device can't keep them for later. Make a new PDF of them: if you leave, or the app closes, they're lost.",
+  "resume.scanFor": "For “{name}” · {when}",
 } as const;
 
 export type MessageKey = keyof typeof en;

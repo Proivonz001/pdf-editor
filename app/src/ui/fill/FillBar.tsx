@@ -166,6 +166,14 @@ effect(() => {
 });
 
 /**
+ * Forget the field the focus was in last: its page index no longer holds (a page operation, or
+ * its undo or redo, moved the pages: ui/actions.ts, closePageWork).
+ */
+export function forgetLastField(): void {
+  lastField = null;
+}
+
+/**
  * Where "Next empty field" goes on from: the focused field, else the one the focus was in last
  * when its page is still about where the user is (the current page or the one beside it: they
  * may have scrolled on a little), else the start of the current page.

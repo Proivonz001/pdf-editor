@@ -1,8 +1,11 @@
-// The home page (no document open), styled by styles/home.css: a hero with the "Open a PDF"
-// button, the privacy promise, "Install the app" (a quiet secondary button, only where the app
-// can be installed and is not yet: openInstall) and the engine status (MuPDF loads about 10 MB the
-// first time), a small drawing of a line being edited, three feature cards, "How it works" and a
-// footer with the source link. Also the "opening…" card shown while a file is being read.
+// The home page (no document open), styled by styles/home.css: a hero with "Riprendi da dove
+// eri" first when this device kept a document or an unfinished scan (ui/resume/ResumeCard.tsx,
+// nothing otherwise), the "Open a PDF" button and "Scan a document" beside it (the scan flow for a
+// new PDF, ui/scan; styled by styles/scan.css), the privacy promise, "Install the app" (a quiet
+// secondary button, only where the app can be installed and is not yet: openInstall) and the
+// engine status (MuPDF loads about 10 MB the first time), a small drawing of a line being edited,
+// three feature cards, "How it works" and a footer with the source link. Also the "opening…" card
+// shown while a file is being read.
 // The hero comes first in the DOM, so on phones the button is on screen without scrolling.
 // Right after a document is closed, the page heading takes the focus (see takeHomeFocus).
 import type { ComponentChildren } from "preact";
@@ -10,12 +13,15 @@ import { useLayoutEffect, useRef } from "preact/hooks";
 import { t } from "../i18n";
 import { SOURCE_URL } from "../links";
 import { canOfferInstall } from "../platform/install";
-import { engineStatus, opening } from "../state";
+import { engineStatus, opening, scanFlow } from "../state";
 import { openInstall, takeHomeFocus } from "./actions";
 import { openFilePicker } from "./filePicker";
 import { rescueFocus } from "./focus";
-import { IconCheck, IconClose, IconDevices, IconFont, IconInstall, IconLock, IconOpen, IconShield } from "./icons";
+import {
+  IconCheck, IconClose, IconDevices, IconFont, IconInstall, IconLock, IconOpen, IconPageScan, IconShield,
+} from "./icons";
 import { isCoarse } from "./media";
+import { ResumeCard } from "./resume/ResumeCard";
 
 function EngineStatusLine() {
   const status = engineStatus.value;
@@ -82,6 +88,11 @@ function SampleIllustration() {
   );
 }
 
+/** "Scan a document": the scan flow, for a new PDF made from photos of the sheets. */
+function openScan() {
+  if (!scanFlow.peek()) scanFlow.value = { kind: "new" };
+}
+
 /**
  * "Install the app" under the privacy line: only while there is something to offer (not in the
  * installed app, not where the browser cannot install it). Hook-free (the tests call it).
@@ -132,6 +143,7 @@ export function EmptyState() {
       <div class="home-inner">
         <section class="home-hero" aria-labelledby="home-title">
           <div class="home-hero-text">
+            <ResumeCard />
             <div class="home-intro">
               <h1 id="home-title" class="home-title" tabIndex={-1} ref={title}>
                 {t("home.titleLead")}{" "}
@@ -150,6 +162,16 @@ export function EmptyState() {
                 >
                   <IconOpen />
                   <span>{t("empty.open")}</span>
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-big home-scan"
+                  aria-haspopup="dialog"
+                  disabled={engineStatus.value === "error"}
+                  onClick={openScan}
+                >
+                  <IconPageScan />
+                  <span>{t("scan.homeEntry")}</span>
                 </button>
                 {!isCoarse.value && <p class="home-drop-hint">{t("empty.dropHint")}</p>}
               </div>

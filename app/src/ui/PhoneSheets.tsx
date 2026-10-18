@@ -1,11 +1,13 @@
-// Phone bottom sheets, driven by the `sheet` signal: "pages" (the thumbnail grid; picking a page
-// closes it), "more" (open another PDF, share, download with options, details, zoom, the
+// Phone bottom sheets, driven by the `sheet` signal: "pages" (full screen, "Organizza": the page
+// organizer of ui/organizer, its thumbnail grid; picking a page outside "Seleziona" closes it),
+// "more" (open another PDF, share, download with options, details, zoom, the
 // signatures saved on this device when there are any, "Install the app" where it can be installed
 // and is not yet, language, update, close document, then the privacy note and the source link)
 // and "details" (what the desktop's details panel says, live,
 // without the shortcuts). On phones they stand in for the desktop's thumbnails panel, zoom
 // controls, More menu, the chevron of the Download button and the details panel. Styled by
-// styles/phone.css (.sheet-pages, .sheet-more) and styles/details.css (.sheet-details).
+// styles/phone.css (.sheet-more), styles/organizer.css (.sheet-organize) and styles/details.css
+// (.sheet-details).
 //
 // Open, Share, Download with options, Saved signatures, Install the app and Close document close
 // the sheet first: they lead somewhere else (the file picker, the share sheet, the download
@@ -23,7 +25,6 @@ import { updateInstalled, updateReady } from "../platform/pwa";
 import { fitMode, savedSignatures, sheet, zoom } from "../state";
 import { MAX_ZOOM, MIN_ZOOM } from "../viewer/layout";
 import type { OpenDoc } from "../viewer/model";
-import { PageThumbnails } from "../viewer/Thumbnails";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
 import { closeDocument, openDownloadOptions, openInstall, share, updateApp } from "./actions";
 import { DetailsContent } from "./DetailsPanel";
@@ -34,6 +35,7 @@ import {
   IconShare, IconShield, IconSignature, IconUpdate, IconZoom,
 } from "./icons";
 import { canSharePdf, shortcuts } from "./media";
+import { SheetOrganizer } from "./organizer/Organizer";
 import { Sheet } from "./Sheet";
 
 function closeSheet() {
@@ -246,16 +248,17 @@ export function PhoneSheets({ doc }: { doc: OpenDoc }) {
 
   const kind = sheet.value;
   if (kind === "pages") {
+    // Full screen ("Organizza", styles/organizer.css): the page organizer (ui/organizer).
     return (
       <Sheet
         key="pages"
-        title={t("pages.title")}
+        title={t("org.title")}
         detail={pageCount(doc.pages.length)}
-        class="sheet-pages"
+        class="sheet-organize"
         initialFocus='[aria-current="page"]'
         onClose={closeSheet}
       >
-        <PageThumbnails doc={doc} variant="grid" onPick={closeSheet} />
+        <SheetOrganizer doc={doc} onPick={closeSheet} />
       </Sheet>
     );
   }

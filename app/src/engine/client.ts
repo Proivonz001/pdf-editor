@@ -1,6 +1,7 @@
 // Main-thread side of the engine: starts the worker and turns messages into promises.
 import type {
-  FieldValue, ImageTarget, LineEditOptions, Matrix, Op, RequestOf, ResponseMessage, ResultMap, SaveOptions, TextStyle,
+  FieldValue, ImageTarget, LineEditOptions, Matrix, Op, PagePicture, PagesEdit, RequestOf, ResponseMessage, ResultMap, SaveOptions,
+  TextStyle,
 } from "./protocol";
 // The URL of the worker chunk: Vite bundles worker.ts as a worker entry for this import.
 import workerPath from "./worker.ts?worker&url";
@@ -25,6 +26,25 @@ function startWorker(): [Worker, string] {
   const workerUrl = new URL(workerPath, import.meta.url).href;
   const blobUrl = URL.createObjectURL(new Blob([`import ${JSON.stringify(workerUrl)};`], { type: "text/javascript" }));
   return [new Worker(blobUrl, { type: "module" }), blobUrl];
+}
+
+/**
+ * The buffers of the ArrayBuffers and byte arrays inside `value` (plain objects and arrays), each
+ * once (a buffer listed twice makes postMessage fail): what a request transfers.
+ */
+function buffersIn(value: unknown): ArrayBuffer[] {
+  const found = new Set<ArrayBuffer>(), seen = new Set<object>();
+  const visit = (v: unknown) => {
+    if (v instanceof ArrayBuffer) found.add(v);
+    else if (ArrayBuffer.isView(v)) {
+      if (v.buffer instanceof ArrayBuffer) found.add(v.buffer);
+    } else if (v && typeof v === "object" && !seen.has(v)) {
+      seen.add(v);
+      for (const x of Object.values(v)) visit(x);
+    }
+  };
+  visit(value);
+  return [...found];
 }
 
 export class EngineClient {
@@ -135,6 +155,34 @@ export class EngineClient {
   }
   close() {
     return this.call<"close">({ op: "close" });
+  }
+  /** One page operation. A "pictures" operation's bytes are transferred: the caller's ArrayBuffers become empty. */
+  editPages(edit: PagesEdit) {
+    return this.call<"editPages">({ op: "editPages", edit }, edit.kind === "pictures" ? buffersIn(edit.pictures) : []);
+  }
+  /** The bytes are transferred to the worker: the caller's ArrayBuffer becomes empty. */
+  openSource(bytes: ArrayBuffer, password?: string) {
+    return this.call<"openSource">({ op: "openSource", bytes, password }, [bytes]);
+  }
+  renderSource(source: number, pageIndex: number, scale: number) {
+    return this.call<"renderSource">({ op: "renderSource", source, pageIndex, scale });
+  }
+  closeSource(source: number) {
+    return this.call<"closeSource">({ op: "closeSource", source });
+  }
+  extractPages(pages: number[], options: SaveOptions = { format: "pdf", password: { mode: "none" } }) {
+    return this.call<"extractPages">({ op: "extractPages", pages, options });
+  }
+  /** The pictures' bytes are transferred: the caller's ArrayBuffers become empty. */
+  newFromPictures(pictures: PagePicture[]) {
+    return this.call<"newFromPictures">({ op: "newFromPictures", pictures }, buffersIn(pictures));
+  }
+  exportSession() {
+    return this.call<"exportSession">({ op: "exportSession" });
+  }
+  /** The original and the log's byte arrays are transferred: the caller's buffers become empty. */
+  resumeSession(original: ArrayBuffer, log: unknown, password?: string) {
+    return this.call<"resumeSession">({ op: "resumeSession", original, log, password }, buffersIn([original, log]));
   }
   terminate() {
     this.worker.terminate();

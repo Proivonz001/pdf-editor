@@ -45,6 +45,21 @@
 // by rect and URI, each with the characters it decorates: no resource names, no offsets), and
 // every replay applies it as logged, failing like an image edit when the page does not have what
 // it says.
+//
+// Pages (release 4, ARCHITECTURE.md "Pages, scans and Riprendi"): a page operation (pages.ts:
+// move, delete, blank page, copies, rotation, pages of another PDF, pictures as pages) is one more
+// kind of logged edit, plain data too: the indices as they were when it was made, the size of a
+// blank page, the pages of another PDF as a private unencrypted file of the chosen pages alone
+// (made at the insert from the copy taken when that PDF was opened beside the document:
+// openSource, insertPart; marked when that PDF needed a password, and then Riprendi keeps
+// nothing) and the pictures as addImage keeps them. The edits before and after it keep the
+// indices of their own time, which replaying in log order makes right: nothing is renumbered. A
+// step that changed the pages answers with the new layout (HistoryState.layout: each page's index
+// before the step, worked out from the operation itself: layoutFrom). The session also writes a
+// few pages out on their own (extractPages, through the save path), builds a new document from
+// pictures (newFromPictures: a document made here, which Riprendi keeps even with no edits, since
+// it exists nowhere else), and hands out or takes back the original and the log for "Riprendi"
+// (exportSession, resumeSession).
 import type * as MuPDF from "mupdf";
 import {
   captureGlyphs,
@@ -92,17 +107,35 @@ import {
   protectAdded,
   rewriteAdded,
 } from "./newcontent";
+import {
+  MAX_NEW_PAGES,
+  MAX_TITLE_CHARS,
+  PagesError,
+  deletePages,
+  duplicatePages,
+  insertBlankPages,
+  insertPages,
+  keepPages,
+  movePages,
+  pageObjectNumbers,
+  rotatePages,
+  type PagesOutcome,
+} from "./pages";
 import { checkPdfA, convertToPdfA, countSignatures, dropPdfaClaim, pdfaClaim } from "./pdfa";
-import { MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_TEXT_CHARS, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE, passwordProblem } from "./protocol";
+import {
+  MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_SOURCE_BYTES, MAX_TEXT_CHARS, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE, passwordProblem,
+} from "./protocol";
 import type {
   AddImageResult,
   AddTextResult,
   AddedText,
+  DecorationKind,
   DecorationReport,
   DocInfo,
   EditResult,
   EditSegment,
   FieldEditResult,
+  FieldType,
   FieldValue,
   FieldWidget,
   FormInfo,
@@ -116,11 +149,18 @@ import type {
   Matrix,
   OpenResult,
   PageInfo,
+  PageLayout,
+  PagePicture,
+  PagesEdit,
+  PagesResult,
   PdfaReport,
   Rect,
+  ResumeResult,
   SaveOptions,
   SaveResult,
   SegmentSource,
+  SessionExport,
+  SourceResult,
   TextStyle,
 } from "./protocol";
 
@@ -187,6 +227,31 @@ const encryptedSaveOptions = (password: string) =>
 /** The default of save(): a normal PDF without password, what the app has always written. */
 const PLAIN_PDF: SaveOptions = { format: "pdf", password: { mode: "none" } };
 
+/**
+ * Most pixels a picture that becomes a page of its own may have (PagePicture): MuPDF decodes a
+ * picture whole to draw it, and an A4 sheet at 600 dpi is about 35 million. A scan is far less
+ * (A4 in black and white at 300 dpi: under 9 million).
+ */
+export const MAX_PAGE_PICTURE_PIXELS = 40_000_000;
+
+/**
+ * The format of the log exportSession hands out (SessionLog.version): resumeSession refuses any
+ * other, so an app that logs edits differently one day can tell an old log from its own.
+ */
+export const LOG_VERSION = 1;
+
+/** What exportSession gives as SessionExport.log: the edits, as plain data a structured clone keeps. */
+export interface SessionLog {
+  version: typeof LOG_VERSION;
+  edits: LoggedEdit[];
+  /**
+   * The original was made on this device (newFromPictures), as SessionExport.madeHere says: the
+   * log carries it, so a resume of the log keeps the document as one made here. Absent (or
+   * false) for a file from the device: a log written before the flag existed reads as one.
+   */
+  madeHere?: boolean;
+}
+
 /** The document after the first `editCount` edits of the log, serialized. */
 interface Checkpoint {
   editCount: number;
@@ -220,8 +285,8 @@ export interface RenderPixels {
   scale: number;
 }
 
-/** One applied edit, as replayed by undo. Plain data, so it can be stored later. */
-export type LoggedEdit = TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit;
+/** One applied edit, as replayed by undo. Plain data, so it can be stored ("Riprendi": exportSession). */
+export type LoggedEdit = TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit | PageOpEdit;
 
 /** One whole line of text replaced (deleted when `replacement` is empty). */
 export interface TextEdit {
@@ -320,15 +385,81 @@ export interface AddImageEdit {
   alt: string | null;
 }
 
-/** The pages an edit changes, ascending: what undo and redo report as changedPages. */
+/**
+ * A page operation (pages.ts; PagesEdit as it was asked, with what it was asked of worked out,
+ * so that every replay does exactly the same): its page indices are the document's when it was
+ * made. A blank page has its size (the neighbour's, when none was asked); "insert" holds the
+ * chosen pages of the other PDF as a private unencrypted file of their own (insertPart: nothing
+ * of the pages not chosen; a replay needs no password) and their indices in it, in the chosen
+ * order; `protectedSource` when that PDF needed a password to open (exportSession then keeps
+ * nothing while the edit is in the log); "pictures" holds each picture as addImage keeps one,
+ * with the page's size in points and its description.
+ */
+export type PageOpEdit = { kind: "pages" } & (
+  | { op: "move"; order: number[] }
+  | { op: "delete"; pages: number[] }
+  | { op: "blank"; at: number; size: [number, number] }
+  | { op: "duplicate"; pages: number[]; at: number }
+  | { op: "rotate"; pages: number[]; by: 90 | 180 | 270 }
+  | { op: "insert"; at: number; source: Uint8Array; pages: number[]; title: string | null; protectedSource?: true }
+  | { op: "pictures"; at: number; pictures: PicturePage[] }
+);
+
+/** A logged insert of pages of another PDF. */
+type InsertEdit = Extract<PageOpEdit, { op: "insert" }>;
+
+/**
+ * A picture that is a page of its own (a photo, a scanned sheet: PagePicture): the picture
+ * (images.checkPicture, a private copy), the page's size in points (its pixels at its dpi) and the
+ * description the picture gets on a tagged page (a Figure's /Alt).
+ */
+export interface PicturePage {
+  picture: Picture;
+  size: [number, number];
+  alt: string | null;
+}
+
+/**
+ * The pages an edit changes, ascending: what undo and redo report as changedPages. For a page
+ * operation, the pages it turned or made, as indices of the pages after it (a move or a delete
+ * changes how no page looks; HistoryState.layout says where the pages went).
+ */
 export function pagesOf(e: LoggedEdit): number[] {
   switch (e.kind) {
     case "field":
       return [...e.pages];
     case "addImage":
       return [...new Set(e.targets.map((t) => t.pageIndex))].sort((a, b) => a - b);
-    default:
+    case "pages":
+      return pagesMade(e);
+    case "text":
+    case "image":
+    case "addText":
+    case "editAdded":
+    case "mixed":
       return [e.pageIndex];
+    default: {
+      const unknown: never = e;
+      throw new Error(`Unknown edit ${JSON.stringify(unknown)}`);
+    }
+  }
+}
+
+/** The pages a page operation turned or made, ascending, as indices of the pages after it (pagesOf). */
+function pagesMade(e: PageOpEdit): number[] {
+  switch (e.op) {
+    case "move":
+    case "delete":
+      return [];
+    case "rotate":
+      return [...e.pages].sort((a, b) => a - b);
+    case "blank":
+      return [e.at];
+    case "duplicate":
+    case "insert":
+      return e.pages.map((_, k) => e.at + k);
+    case "pictures":
+      return e.pictures.map((_, k) => e.at + k);
   }
 }
 
@@ -401,6 +532,18 @@ export class EngineSession {
    * the session refuses "keep" and the user chooses (DocInfo.canKeepPassword is false).
    */
   private ownerPasswordOnly = false;
+  /**
+   * The document was encrypted when it was opened (DocInfo.encrypted). Read again it would say
+   * no after the first snapshot (written unencrypted), so the page layouts and a resume keep this.
+   */
+  private encrypted = false;
+  /**
+   * The document was made on this device (newFromPictures; resumeSession of such a document, as
+   * its log says), so it exists nowhere else until the user downloads it, and Riprendi keeps it
+   * even with no edits (exportSession). A download does not end it: the session cannot tell
+   * whether the file was kept, and an undo after it makes a state that exists only here again.
+   */
+  private madeHere = false;
   private log: LoggedEdit[] = [];
   private redoStack: LoggedEdit[] = [];
   /** Ascending editCount. After undo some lie beyond the log: redo reaches them again. */
@@ -408,6 +551,10 @@ export class EngineSession {
   private broken = false;
   /** The pictures the app embedded in each document, the working one and those being rebuilt (sharePicture; never changed in place). */
   private pictures = new WeakMap<MuPDF.PDFDocument, readonly EmbeddedPicture[]>();
+  /** The other PDF open beside the document (openSource), at most one. */
+  private source: OpenSource | null = null;
+  /** The number the last openSource gave its PDF (SourceResult.source). */
+  private sources = 0;
 
   constructor(private readonly mupdf: MuPDFModule) {}
 
@@ -461,6 +608,7 @@ export class EngineSession {
       this.password = password ?? "";
       this.neededPassword = neededPassword;
       this.ownerPasswordOnly = ownerPasswordOnly;
+      this.encrypted = info.encrypted;
       return { ok: true, ...info };
     } catch (err) {
       if (doc) this.dispose(doc);
@@ -468,14 +616,17 @@ export class EngineSession {
     }
   }
 
-  /** Closes the document and forgets its history. Safe to call when nothing is open. */
+  /** Closes the document and forgets its history, and closes the other PDF (openSource). Safe to call when nothing is open. */
   close(): null {
     if (this.doc) this.dispose(this.doc);
+    this.dropSource();
     this.doc = null;
     this.original = null;
     this.password = "";
     this.neededPassword = false;
     this.ownerPasswordOnly = false;
+    this.encrypted = false;
+    this.madeHere = false;
     this.log = [];
     this.redoStack = [];
     this.checkpoints = [];
@@ -490,19 +641,10 @@ export class EngineSession {
     const encrypted = neededPassword || !encryptObj.isNull();
     encryptObj.destroy(); // (destroying the shared PDFObject.Null is a no-op)
     trailer.destroy();
-    const pageCount = doc.countPages();
-    const pages: PageInfo[] = [];
-    for (let index = 0; index < pageCount; index++) {
-      const page = doc.loadPage(index);
-      try {
-        pages.push({ index, bounds: toRect(page.getBounds()) });
-      } finally {
-        page.destroy();
-      }
-    }
+    const pages = pageInfos(doc);
     const title = doc.getMetaData("info:Title")?.trim();
     return {
-      pageCount,
+      pageCount: pages.length,
       pages,
       encrypted,
       needsPassword: neededPassword,
@@ -519,7 +661,11 @@ export class EngineSession {
 
   /** Renders a page at `scale` pixels per point, lowered if needed to stay within the canvas limits. */
   render(pageIndex: number, scale: number): RenderPixels {
-    const doc = this.requireDoc();
+    return this.renderPage(this.requireDoc(), pageIndex, scale);
+  }
+
+  /** Renders page `pageIndex` of `doc` (the document, or the other PDF) as render() does. */
+  private renderPage(doc: MuPDF.PDFDocument, pageIndex: number, scale: number): RenderPixels {
     this.checkPage(doc, pageIndex);
     if (!(scale > 0) || !Number.isFinite(scale)) throw new SessionError(`Invalid scale ${scale}`, "bad-request");
     const page = doc.loadPage(pageIndex);
@@ -1005,37 +1151,267 @@ export class EngineSession {
     return { ...this.history(pagesOf(edit)), placed };
   }
 
-  /** Undoes the last edit: re-opens the nearest checkpoint (or the original) and replays from there. */
+  /**
+   * Undoes the last edit: re-opens the nearest checkpoint (or the original) and replays from
+   * there. Undoing a page operation gives the layout it goes back to (undoneFrom: the pages it had
+   * made come with no `from`, those it had deleted are back without one too), and as changedPages
+   * the pages it had turned.
+   */
   undo(): HistoryState {
-    this.requireDoc();
+    const doc = this.requireDoc();
     const last = this.log[this.log.length - 1];
     if (!last) return this.history([]);
+    const before = last.kind === "pages" ? pageNumbers(doc) : null;
     const fresh = this.rebuild(this.log.length - 1);
     this.replaceDoc(fresh);
     this.log.pop();
     this.redoStack.push(last);
-    return this.history(pagesOf(last));
+    if (last.kind !== "pages" || !before) return this.history(pagesOf(last));
+    const count = fresh.countPages(); // the pages before the operation, again
+    return this.history(last.op === "rotate" ? pagesOf(last) : [], this.layoutAfter(undoneFrom(layoutFrom(last, count), count), before));
   }
 
-  /** Re-applies the last undone edit. */
+  /** Re-applies the last undone edit (a page operation: with the layout it makes, as when it was new). */
   redo(): HistoryState {
     const doc = this.requireDoc();
     const next = this.redoStack[this.redoStack.length - 1];
     if (!next) return this.history([]);
+    const before = next.kind === "pages" ? pageNumbers(doc) : null;
+    const count = doc.countPages();
+    let reopen: boolean;
     try {
-      this.apply(doc, next);
+      reopen = this.apply(doc, next);
     } catch (err) {
       throw this.recover(`Could not redo the edit: ${errorMessage(err)}`);
     }
     this.redoStack.pop();
     this.log.push(next);
     this.checkpoint(doc);
-    return this.history(pagesOf(next));
+    if (reopen) this.carryOnReopened(doc);
+    if (next.kind !== "pages" || !before) return this.history(pagesOf(next));
+    return this.history(pagesOf(next), this.layoutAfter(layoutFrom(next, count), before));
   }
 
   /** The edits currently applied, oldest first (a copy). */
   edits(): LoggedEdit[] {
     return this.log.map(copyEdit);
+  }
+
+  // ------------------------------------------------------------------ pages (release 4)
+
+  /**
+   * One page operation (pages.ts), one edit. Page indices are the document's now; everything is
+   * checked as untrusted, and refused ("bad-request") with nothing done:
+   * - "move": `order` a permutation of every page (one that leaves every page where it is is an
+   *   edit all the same: the UI counts one);
+   * - "delete": pages each once, never every page;
+   * - "blank": `at` in 0..pageCount; `size` two numbers of points within MIN_IMAGE_SIDE..
+   *   MAX_IMAGE_SIDE, by default the size of the page before it as seen (of the first page at 0);
+   * - "duplicate", "rotate" (by 90, 180 or 270): pages each once; `at` as for "blank";
+   * - "insert": `source` the other PDF open now (openSource), its pages "all" or listed each
+   *   once; `title` null or a string (made one line; blank is null) of at most MAX_TITLE_CHARS;
+   *   the edit logs those pages alone (insertPart);
+   * - "pictures": 1 to MAX_NEW_PAGES pictures (picturePages: files as addImage takes them, the
+   *   size they say they have, a page side within the limits at their dpi, a description).
+   * A page tree MuPDF cannot read is "not-editable". The result's layout gives the pages now
+   * (`from`: where each was, worked out from the operation: layoutFrom; the form and the
+   * signatures counted again), the report what else changed (for an insert, the links and
+   * buttons' actions of the chosen pages that led to pages not chosen count as removed),
+   * changedPages the pages turned or made. The pictures' bytes are copied unless `transfer` is set
+   * (as for addImage). After an insert that brought layers the working document is opened again:
+   * MuPDF reads a document's layers once, the first time it draws one, and would draw the new
+   * ones as visible until then (pages.ts).
+   */
+  editPages(edit: PagesEdit, { transfer = false } = {}): PagesResult {
+    const doc = this.requireDoc();
+    const { logged, linksCut } = this.planPages(doc, edit, transfer);
+    const before = pageNumbers(doc);
+    const count = doc.countPages();
+    const outcome = this.commit(doc, logged, () => this.applyPages(doc, logged), "Could not change the pages");
+    if (outcome.layers) this.carryOnReopened(doc);
+    const layout = this.layoutAfter(layoutFrom(logged, count), before);
+    const report = { ...outcome.report, linksRemoved: outcome.report.linksRemoved + linksCut };
+    return { ...this.history(pagesOf(logged), layout), layout, report };
+  }
+
+  /**
+   * Opens another PDF read-only beside the document, for the page picker of "Da un altro PDF" and
+   * the "insert" page operation (SourceResult: its number, pages and title); the one open before
+   * is closed (one at a time: open, close, newFromPictures and resumeSession close it too). More
+   * than MAX_SOURCE_BYTES is "too-big"; a password works as for open(); a file that is not a PDF,
+   * or has no pages, is "damaged". What is kept of it, while it is open, is a private copy
+   * written unencrypted, its password fields given a frame-only look first (forms.hidePasswords):
+   * the pages shown are the pages an insert copies, an insert logs its chosen pages from it
+   * (insertPart), and replaying the insert needs no password. Whether it needed one is kept too:
+   * the insert says so in the log (exportSession). `bytes` is only read (MuPDF copies it), never
+   * kept: the caller may reuse it.
+   */
+  openSource(bytes: ArrayBuffer | Uint8Array, password?: string): SourceResult {
+    this.dropSource();
+    if (!(bytes instanceof ArrayBuffer) && !(bytes instanceof Uint8Array)) throw new SessionError("No PDF given", "bad-request");
+    if (password !== undefined && typeof password !== "string") throw new SessionError("A password is a string", "bad-request");
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (view.byteLength > MAX_SOURCE_BYTES) return { ok: false, reason: "too-big" };
+    let doc: MuPDF.PDFDocument | null = null;
+    try {
+      const opened = this.mupdf.Document.openDocument(view, "application/pdf"); // (MuPDF reads a copy of its own)
+      doc = opened.asPDF();
+      if (!doc) {
+        opened.destroy();
+        return { ok: false, reason: "damaged", message: "Not a PDF document" };
+      }
+      const neededPassword = doc.needsPassword();
+      if (neededPassword) {
+        const reason = !password ? "password-required" : doc.authenticatePassword(password) ? null : "wrong-password";
+        if (reason) {
+          this.dispose(doc);
+          return { ok: false, reason };
+        }
+      }
+      hidePasswords(this.mupdf, doc);
+      const pages = pageInfos(doc);
+      if (!pages.length) {
+        this.dispose(doc);
+        return { ok: false, reason: "damaged", message: "The document has no pages" };
+      }
+      const copy = new Uint8Array(writeBytes(doc, "encrypt=none"));
+      const title = doc.getMetaData("info:Title")?.trim() || null;
+      const id = ++this.sources;
+      this.source = { id, doc, bytes: copy, neededPassword };
+      return { ok: true, source: id, pageCount: pages.length, pages, title };
+    } catch (err) {
+      if (doc) this.dispose(doc);
+      return { ok: false, reason: "damaged", message: errorMessage(err) };
+    }
+  }
+
+  /**
+   * Renders a page of the other PDF (openSource) as render() renders the document's, whatever
+   * state the document is in (even "broken"). "bad-request" when `source` is not the one open.
+   */
+  renderSource(source: number, pageIndex: number, scale: number): RenderPixels {
+    return this.renderPage(this.sourceNamed(source).doc, pageIndex, scale);
+  }
+
+  /**
+   * Closes the other PDF when `source` is the one open; another number (an earlier one, closed
+   * already when a later one was opened) leaves it as it is.
+   */
+  closeSource(source: number): null {
+    if (typeof source !== "number") throw new SessionError("Which PDF to close is a number", "bad-request");
+    if (this.source?.id === source) this.dropSource();
+    return null;
+  }
+
+  /**
+   * A new PDF with only `pages` of the document as it is now (indices, each once; in the
+   * document's order whatever their order here: "bad-request" otherwise), written exactly as
+   * save() writes the whole document with `options` (fallback fonts subset, the PDF/A conversion
+   * when asked, the password), from a scratch copy whose other pages are deleted cleanly
+   * (pages.keepPages): nothing of them, nor of what the user wrote there, is in the file. The
+   * document does not change. A normal PDF of a part never claims PDF/A (nothing checked it);
+   * "pdfa-2b" converts the part itself, so only its own pages can block it.
+   */
+  extractPages(pages: number[], options: SaveOptions = PLAIN_PDF): SaveResult {
+    if (!this.doc) throw new SessionError("No document is open", "no-document");
+    // (A broken session writes the last good state rebuilt from the log, whose pages keepPages checks.)
+    const keep = this.broken ? pages : pageList(pages, this.doc.countPages());
+    return this.write(options, keep);
+  }
+
+  /**
+   * Makes a new PDF with one page per picture (PagePicture, checked as editPages checks
+   * "pictures", "bad-request" before anything is done: the document stays), each picture over the
+   * whole of its page as the app's own picture (an added picture: it can be moved, replaced or
+   * deleted like a signature), and opens it as the document in place of the one open, as open()
+   * does: that generated file is the original, the log is empty. The document is one made here
+   * (madeHere): until the user downloads it, it exists only in this session, and Riprendi keeps
+   * it even with no edits (exportSession). The pictures' bytes are copied unless `transfer` is
+   * set (as for addImage).
+   */
+  newFromPictures(pictures: PagePicture[], { transfer = false } = {}): OpenResult {
+    const checked = this.picturePages(pictures, transfer, null);
+    this.close();
+    const doc = new this.mupdf.PDFDocument();
+    let bytes: ArrayBuffer;
+    try {
+      this.placePictures(doc, 0, checked);
+      bytes = writeBytes(doc, SAVE_OPTIONS);
+    } catch (err) {
+      return { ok: false, reason: "damaged", message: errorMessage(err) };
+    } finally {
+      this.dispose(doc);
+    }
+    const opened = this.open(bytes, undefined, { transfer: true });
+    if (opened.ok) this.madeHere = true;
+    return opened;
+  }
+
+  /**
+   * What "Riprendi" keeps of the open document (SessionExport): the original as it was opened and
+   * the log (SessionLog: the edits as plain data, byte arrays included, which a structured clone
+   * and IndexedDB keep as they are; and whether the document was made here), every byte array a
+   * copy of its own (the worker transfers them all). Null when nothing must be kept: no document;
+   * no edit on a file from the device (the user has that file; a document made here, madeHere, is
+   * kept with none, since it exists nowhere else: a scan the tab is killed with before any edit,
+   * the camera open again for one more page, is not lost); a document that needed a password to
+   * open (the original stays encrypted, but the edits, what the user wrote, would sit on the
+   * device unencrypted); or a log that holds pages of another PDF that needed a password
+   * (PageOpEdit protectedSource: they sit in the log unencrypted), for as long as that insert is
+   * in the log (undone, it is not). The redo stack is not kept.
+   */
+  exportSession(): SessionExport | null {
+    if (!this.doc || !this.original || this.neededPassword) return null;
+    if (this.log.length === 0 && !this.madeHere) return null;
+    if (this.log.some((e) => e.kind === "pages" && e.op === "insert" && e.protectedSource)) return null;
+    const log: SessionLog = { version: LOG_VERSION, edits: this.log.map(copyEdit) };
+    const out: SessionExport = { original: this.original.slice().buffer, log, editCount: this.log.length };
+    if (this.madeHere) {
+      log.madeHere = true; // (what resumeSession reads back)
+      out.madeHere = true;
+    }
+    return out;
+  }
+
+  /**
+   * "Riprendi": opens `original` (exportSession's) as open() does, in place of the document open,
+   * then applies the edits of `log` one by one as redo applies them, checkpoints taken as for new
+   * edits, so undo works as it did; a document made here (the log's madeHere) stays one. A log
+   * that is not exportSession's (another version, an entry of an unknown kind or shape, a flag
+   * that is not a boolean) is refused ("bad-request") before anything is done. An edit that no
+   * longer applies (the app changed since it was made) stops there: the document goes back to
+   * the edits before it, which stay (`applied`), and `failedAt` is its index (null when all
+   * applied). The DocInfo is the document's after the edits (pages, form, signatures), with
+   * `encrypted` as at open. `original` and the log's byte arrays are copied, unless `transfer` is
+   * set (as for open()).
+   */
+  resumeSession(original: ArrayBuffer | Uint8Array, log: unknown, password?: string, { transfer = false } = {}): ResumeResult {
+    if (!(original instanceof ArrayBuffer) && !(original instanceof Uint8Array)) throw new SessionError("No document given", "bad-request");
+    if (password !== undefined && typeof password !== "string") throw new SessionError("A password is a string", "bad-request");
+    const { edits, madeHere } = logFrom(log, transfer);
+    const opened = this.open(original, password, { transfer });
+    if (!opened.ok) return opened;
+    this.madeHere = madeHere;
+    let failedAt: number | null = null;
+    for (let k = 0; k < edits.length; k++) {
+      const doc = this.doc!;
+      try {
+        const reopen = this.apply(doc, edits[k]);
+        this.log.push(edits[k]);
+        this.checkpoint(doc);
+        if (reopen) this.carryOnReopened(doc);
+      } catch {
+        failedAt = k;
+        try {
+          this.replaceDoc(this.rebuild(this.log.length));
+        } catch (err) {
+          this.close();
+          return { ok: false, reason: "damaged", message: `The edits could not be applied again: ${errorMessage(err)}` };
+        }
+        break;
+      }
+    }
+    return { ok: true, ...this.currentInfo(), history: this.history([]), applied: this.log.length, failedAt };
   }
 
   // ------------------------------------------------------------------ saving
@@ -1056,13 +1432,19 @@ export class EngineSession {
    */
   save(options: SaveOptions = PLAIN_PDF): SaveResult {
     if (!this.doc) throw new SessionError("No document is open", "no-document");
+    return this.write(options, null);
+  }
+
+  /** save() of the whole document (`keep` null), or of only the pages `keep` (extractPages). */
+  private write(options: SaveOptions, keep: number[] | null): SaveResult {
     const password = this.savePassword(options);
     const scratch = this.scratchCopy();
     try {
+      if (keep) fromPages(() => keepPages(this.mupdf, scratch, keep));
       subsetFallbackFonts(this.mupdf, scratch);
       if (options.format === "pdf") {
-        // An edited PDF/A saved as a normal PDF: nothing re-checked it, so it stops claiming PDF/A.
-        if (this.log.length > 0) dropPdfaClaim(this.mupdf, scratch);
+        // An edited PDF/A (or a part of one) saved as a normal PDF: nothing re-checked it, so it stops claiming PDF/A.
+        if (this.log.length > 0 || keep) dropPdfaClaim(this.mupdf, scratch);
         return { bytes: writeBytes(scratch, password === null ? SAVE_OPTIONS : encryptedSaveOptions(password)), pdfa: null };
       }
       const report = convertToPdfA(this.mupdf, scratch);
@@ -1162,13 +1544,47 @@ export class EngineSession {
 
   // ------------------------------------------------------------------ internals
 
-  private history(changedPages: number[]): HistoryState {
-    return {
+  /** The history now; `layout` for a step that changed the pages themselves (a page operation, its undo or redo). */
+  private history(changedPages: number[], layout?: PageLayout): HistoryState {
+    const state: HistoryState = {
       editCount: this.log.length,
       canUndo: this.log.length > 0,
       canRedo: this.redoStack.length > 0,
       changedPages,
     };
+    if (layout) state.layout = layout;
+    return state;
+  }
+
+  /**
+   * The pages of the working document after a step that changed them (PageLayout), `from` as the
+   * step itself says (layoutFrom, undoneFrom): never by comparing the page objects of the
+   * document before and after, which may have reached their states by different paths (an undo
+   * compares the working document with one rebuilt from a checkpoint or the original, and a
+   * picture embedded again after a snapshot, which forgets it was embedded, numbers every later
+   * object differently). Only should `from` not fit the pages there are (a bug: pages.ts made
+   * another number of pages than the operation says), the pages are matched by their objects'
+   * numbers (`before`: pages.pageObjectNumbers before the step), so the UI still gets a layout of
+   * the right length. The form and the signatures are counted again.
+   */
+  private layoutAfter(from: (number | null)[], before: number[]): PageLayout {
+    const doc = this.doc!;
+    const pages = pageInfos(doc);
+    if (from.length !== pages.length) {
+      const where = new Map<number, number[]>();
+      before.forEach((num, index) => {
+        const list = where.get(num);
+        if (list) list.push(index);
+        else where.set(num, [index]);
+      });
+      from = pageNumbers(doc).map((num) => where.get(num)?.shift() ?? null);
+    }
+    return { pages, from, form: readForm(this.mupdf, doc), signatures: countSignatures(doc) };
+  }
+
+  /** The document's DocInfo as it is now (after page operations), with `encrypted` as it was at open. */
+  private currentInfo(): DocInfo {
+    return { ...this.describe(this.doc!, this.neededPassword, this.password, this.ownerPasswordOnly), encrypted: this.encrypted };
   }
 
   private requireDoc(): MuPDF.PDFDocument {
@@ -1264,7 +1680,7 @@ export class EngineSession {
    * (recover, "edit-failed"); if not, the edit is logged, the redo stack cleared and a checkpoint
    * taken when due (after which `doc` is no longer the working document: continueOn). A refusal
    * of newcontent.ts (the page's content cannot take an addition, nothing of a text can be drawn)
-   * keeps its own code after the rollback.
+   * or of pages.ts (a page tree it cannot read) keeps its own code after the rollback.
    */
   private commit<T>(doc: MuPDF.PDFDocument, edit: LoggedEdit, run: () => T, failure: string): T {
     let result: T;
@@ -1272,7 +1688,8 @@ export class EngineSession {
       result = run();
     } catch (err) {
       const recovered = this.recover(`${failure}: ${errorMessage(err)}`);
-      if (recovered.code === "edit-failed" && err instanceof ContentError) throw new SessionError(err.message, err.code);
+      if (recovered.code === "edit-failed" && (err instanceof ContentError || err instanceof PagesError))
+        throw new SessionError(err.message, err.code);
       throw recovered;
     }
     formChanged(doc);
@@ -1285,10 +1702,13 @@ export class EngineSession {
   }
 
   /**
-   * Applies a logged edit again (redo, rebuild), and tells forms.ts the document changed. Throws
-   * when the document no longer fits it (the caller then drops the document).
+   * Applies a logged edit again (redo, rebuild, resumeSession), and tells forms.ts the document
+   * changed. Throws when the document no longer fits it (the caller then drops the document).
+   * Returns true when the document must be opened again before it draws anything: an insert that
+   * brought layers (pages.ts; carryOnReopened, reopenedCopy).
    */
-  private apply(doc: MuPDF.PDFDocument, edit: LoggedEdit) {
+  private apply(doc: MuPDF.PDFDocument, edit: LoggedEdit): boolean {
+    let reopen = false;
     switch (edit.kind) {
       case "text":
         this.applyText(doc, edit, "replay");
@@ -1313,12 +1733,196 @@ export class EngineSession {
       case "addImage":
         this.applyAddImage(doc, edit, false);
         break;
+      case "pages":
+        reopen = (this.applyPages(doc, edit).layers ?? 0) > 0;
+        break;
       default: {
         const unknown: never = edit;
         throw new Error(`Unknown edit ${JSON.stringify(unknown)}`);
       }
     }
     formChanged(doc);
+    return reopen;
+  }
+
+  /**
+   * Makes a page operation (pages.ts), new or replayed alike: what it needs was worked out before
+   * it was logged (planPages), so every run does the same. "insert" opens the logged file of the
+   * other PDF's chosen pages each time (insertPart; never the copy open for the page picker, which
+   * drawing may have changed: MuPDF makes missing appearances as it draws) and closes it again.
+   */
+  private applyPages(doc: MuPDF.PDFDocument, e: PageOpEdit): PagesOutcome {
+    switch (e.op) {
+      case "move":
+        return movePages(this.mupdf, doc, e.order);
+      case "delete":
+        return deletePages(this.mupdf, doc, e.pages);
+      case "blank":
+        return insertBlankPages(this.mupdf, doc, e.at, [e.size]);
+      case "duplicate":
+        return duplicatePages(this.mupdf, doc, e.pages, e.at);
+      case "rotate":
+        return rotatePages(this.mupdf, doc, e.pages, e.by);
+      case "insert": {
+        const source = this.openSnapshot(e.source);
+        try {
+          if (source.needsPassword()) throw new Error("The copy of the other PDF needs a password");
+          return insertPages(this.mupdf, doc, source, e.pages, e.at, e.title);
+        } finally {
+          this.dispose(source);
+        }
+      }
+      case "pictures":
+        return this.placePictures(doc, e.at, e.pictures);
+    }
+  }
+
+  /**
+   * New pages at `at`, one per picture (PicturePage), each the picture's size, the picture over
+   * the whole of it as the app's own picture (newcontent.addImage: a /PEImage block; on a tagged
+   * page a Figure with the picture's description), its copy shared (sharePicture).
+   */
+  private placePictures(doc: MuPDF.PDFDocument, at: number, pictures: PicturePage[]): PagesOutcome {
+    const outcome = insertBlankPages(this.mupdf, doc, at, pictures.map((p) => p.size));
+    pictures.forEach((p, k) => {
+      const pageIndex = at + k;
+      // The bounds as MuPDF reads them back (float32), so the picture covers exactly the page.
+      const [x0, y0, x1, y1] = this.boundsOf(doc, pageIndex);
+      const targets: ImageTarget[] = [{ pageIndex, matrix: [x1 - x0, 0, 0, y1 - y0, x0, y0] }];
+      this.sharePicture(doc, [pageIndex], p.picture, () => addPicture(this.mupdf, doc, p.picture, targets, p.alt, { locate: false }));
+    });
+    return outcome;
+  }
+
+  /**
+   * A page operation from the main thread (PagesEdit), checked and worked out (editPages says
+   * how): the plain data the log keeps and every replay makes again; for an insert, the links
+   * insertPart cut as well (the report counts them).
+   */
+  private planPages(doc: MuPDF.PDFDocument, edit: unknown, transfer: boolean): { logged: PageOpEdit; linksCut: number } {
+    if (!edit || typeof edit !== "object") throw new SessionError("A page operation is an object", "bad-request");
+    const e = edit as Record<string, unknown>;
+    const count = doc.countPages();
+    const plain = (logged: PageOpEdit) => ({ logged, linksCut: 0 });
+    switch (e.kind) {
+      case "move": {
+        const order = pageList(e.order, count);
+        if (order.length !== count) throw new SessionError("A move lists every page once", "bad-request");
+        return plain({ kind: "pages", op: "move", order });
+      }
+      case "delete": {
+        const pages = pageList(e.pages, count);
+        if (pages.length >= count) throw new SessionError("A document keeps at least one page", "bad-request");
+        return plain({ kind: "pages", op: "delete", pages });
+      }
+      case "blank": {
+        const at = insertionPoint(e.at, count);
+        return plain({ kind: "pages", op: "blank", at, size: e.size === undefined ? this.neighbourSize(doc, at) : pageSize(e.size) });
+      }
+      case "duplicate":
+        return plain({ kind: "pages", op: "duplicate", pages: pageList(e.pages, count), at: insertionPoint(e.at, count) });
+      case "rotate": {
+        const pages = pageList(e.pages, count);
+        if (e.by !== 90 && e.by !== 180 && e.by !== 270) throw new SessionError(`Cannot turn pages by ${String(e.by)} degrees`, "bad-request");
+        return plain({ kind: "pages", op: "rotate", pages, by: e.by });
+      }
+      case "insert": {
+        const at = insertionPoint(e.at, count);
+        const source = this.sourceNamed(e.source);
+        const total = source.doc.countPages();
+        const chosen = e.pages === "all" ? Array.from({ length: total }, (_, i) => i) : pageList(e.pages, total);
+        const title = titleFrom(e.title);
+        const part = this.insertPart(source, chosen, title !== null);
+        const logged: InsertEdit = { kind: "pages", op: "insert", at, source: part.bytes, pages: part.pages, title };
+        if (source.neededPassword) logged.protectedSource = true;
+        return { logged, linksCut: part.linksCut };
+      }
+      case "pictures":
+        return plain({ kind: "pages", op: "pictures", at: insertionPoint(e.at, count), pictures: this.picturePages(e.pictures, transfer, languageOf(doc)) });
+      default:
+        throw new SessionError(`Unknown page operation ${String(e.kind)}`, "bad-request");
+    }
+  }
+
+  /**
+   * What an insert logs of the other PDF: its `chosen` pages as a file of their own, made from
+   * the private copy openSource took (never the picker's document) on a scratch copy: the other
+   * pages deleted cleanly (pages.keepPages, which cuts what led to them), what an insert never
+   * reads dropped (insertReads), written unencrypted and garbage collected. So the log in the
+   * worker's memory, every Riprendi export and what the device keeps of it hold the pages the
+   * user added and nothing of the others (nor the file's attachments, scripts, metadata or tags).
+   * `pages`: the chosen pages' indices in it (it keeps them in the file's order), in the chosen
+   * order. `linksCut`: the links and buttons' actions of the chosen pages that led to pages not
+   * chosen, which keepPages removed (its count less the bookmarks it cut: an insert from the whole
+   * file counts those links, not the bookmarks it leaves out). `bookmarks` false (no title): the
+   * file's bookmarks go too, the insert brings none. MuPDF failing here is "edit-failed", with
+   * nothing done.
+   */
+  private insertPart(source: OpenSource, chosen: number[], bookmarks: boolean): { bytes: Uint8Array; pages: number[]; linksCut: number } {
+    const sorted = [...chosen].sort((a, b) => a - b);
+    const rank = new Map(sorted.map((p, k) => [p, k]));
+    let scratch: MuPDF.PDFDocument | null = null;
+    try {
+      scratch = this.openSnapshot(source.bytes);
+      insertReads(scratch, bookmarks);
+      const kept = fromPages(() => keepPages(this.mupdf, scratch!, sorted));
+      const linksCut = Math.max(0, kept.report.linksRemoved - (kept.bookmarksRemoved ?? 0));
+      return { bytes: new Uint8Array(writeBytes(scratch, SOURCE_PART_OPTIONS)), pages: chosen.map((p) => rank.get(p)!), linksCut };
+    } catch (err) {
+      throw err instanceof SessionError ? err : new SessionError(`Could not take the pages of the other PDF: ${errorMessage(err)}`, "edit-failed");
+    } finally {
+      if (scratch) this.dispose(scratch);
+    }
+  }
+
+  /**
+   * Pictures that become pages of their own (PagePicture, from the main thread), checked as
+   * untrusted ("bad-request" otherwise): 1 to MAX_NEW_PAGES of them; each a file addImage takes
+   * (checkPicture: at most MAX_IMAGE_BYTES, its bytes copied unless `transfer`), `width` ×
+   * `height` whole pixels that are its size as seen (within a pixel: it covers its page without
+   * being stretched), at most MAX_PAGE_PICTURE_PIXELS, at a `dpi` that gives each page side
+   * MIN_IMAGE_SIDE..MAX_IMAGE_SIDE points; `alt` at most MAX_ALT_CHARS, by default "Pagina
+   * scansionata", or "Scanned page" when the document's language (`lang`, its /Lang) is not Italian.
+   */
+  private picturePages(list: unknown, transfer: boolean, lang: string | null): PicturePage[] {
+    if (!Array.isArray(list) || list.length === 0) throw new SessionError("No pictures given", "bad-request");
+    if (list.length > MAX_NEW_PAGES) throw new SessionError(`At most ${MAX_NEW_PAGES} pictures at a time`, "bad-request");
+    return list.map((p: unknown, k) => {
+      const o = (p && typeof p === "object" ? p : {}) as Partial<Record<keyof PagePicture, unknown>>;
+      const { width, height, dpi } = o;
+      const which = `Picture ${k + 1}`;
+      if (!isCount(width) || !isCount(height) || width < 1 || height < 1 || width * height > MAX_PAGE_PICTURE_PIXELS)
+        throw new SessionError(`${which}: a size of 1 to ${MAX_PAGE_PICTURE_PIXELS} pixels is two whole numbers`, "bad-request");
+      if (typeof dpi !== "number" || !Number.isFinite(dpi) || dpi <= 0) throw new SessionError(`${which}: no resolution`, "bad-request");
+      const size: [number, number] = [(width / dpi) * 72, (height / dpi) * 72];
+      if (!size.every((side) => side >= MIN_IMAGE_SIDE && side <= MAX_IMAGE_SIDE))
+        throw new SessionError(`${which}: a page side would be outside ${MIN_IMAGE_SIDE}..${MAX_IMAGE_SIDE} pt`, "bad-request");
+      const alt = altFrom(o.alt ?? null) ?? scannedPage(lang);
+      const picture = this.checkPicture(o.bytes as ArrayBuffer, transfer);
+      if (Math.abs(picture.width - width) > 1 || Math.abs(picture.height - height) > 1)
+        throw new SessionError(`${which} is ${picture.width} × ${picture.height} pixels, not ${width} × ${height}`, "bad-request");
+      return { picture, size, alt };
+    });
+  }
+
+  /** A blank page's size by default: the page before `at` as seen (the first page at 0), within the limits of a page side. */
+  private neighbourSize(doc: MuPDF.PDFDocument, at: number): [number, number] {
+    const [x0, y0, x1, y1] = this.boundsOf(doc, Math.max(0, at - 1));
+    const side = (v: number) => Math.min(MAX_IMAGE_SIDE, Math.max(MIN_IMAGE_SIDE, v));
+    return [side(x1 - x0), side(y1 - y0)];
+  }
+
+  /** The other PDF open now, when `source` is its number ("bad-request" otherwise). */
+  private sourceNamed(source: unknown): OpenSource {
+    if (!this.source || this.source.id !== source) throw new SessionError("The other PDF is not open", "bad-request");
+    return this.source;
+  }
+
+  /** Closes the other PDF, if one is open. */
+  private dropSource() {
+    if (!this.source) return;
+    this.dispose(this.source.doc);
+    this.source = null;
   }
 
   /**
@@ -1487,15 +2091,61 @@ export class EngineSession {
    */
   private rebuild(count: number): MuPDF.PDFDocument {
     const base = this.checkpoints.findLast((c) => c.editCount <= count);
-    const doc = base ? this.openSnapshot(base.bytes) : this.openOriginal();
+    let doc = base ? this.openSnapshot(base.bytes) : this.openOriginal();
     try {
       if (base) restoreFallbackFonts(doc, base.fonts);
       this.pictures.set(doc, base ? base.pictures : []);
-      for (const edit of this.log.slice(base ? base.editCount : 0, count)) this.apply(doc, edit);
+      // (After an insert that brought layers, the replay goes on with the document opened again, as the edit did.)
+      for (const edit of this.log.slice(base ? base.editCount : 0, count)) if (this.apply(doc, edit)) doc = this.reopenedCopy(doc);
       return doc;
     } catch (err) {
       this.dispose(doc);
       throw err;
+    }
+  }
+
+  /**
+   * `doc` (a document being rebuilt) written out and opened again, with its fallback fonts and
+   * pictures, `doc` destroyed: MuPDF reads the layers of the copy afresh (apply). Throws, leaving
+   * `doc` as it is, when that fails.
+   */
+  private reopenedCopy(doc: MuPDF.PDFDocument): MuPDF.PDFDocument {
+    const fonts = fallbackFontState(doc), pictures = this.pictures.get(doc) ?? [];
+    const snapshot = doc.saveToBuffer(SNAPSHOT_OPTIONS);
+    let fresh: MuPDF.PDFDocument;
+    try {
+      fresh = this.openSnapshot(snapshot);
+    } finally {
+      snapshot.destroy();
+    }
+    try {
+      restoreFallbackFonts(fresh, fonts);
+    } catch (err) {
+      this.dispose(fresh);
+      throw err;
+    }
+    this.pictures.set(fresh, pictures);
+    this.dispose(doc);
+    return fresh;
+  }
+
+  /**
+   * Carries on with the working document `doc` written out and opened again (continueOn), so that
+   * MuPDF reads its layers afresh (after an insert that brought some: apply). Nothing when `doc`
+   * is no longer the working document (a checkpoint has just done it); when the snapshot fails,
+   * the session goes on with `doc`, its new layers drawn as visible until the next checkpoint.
+   */
+  private carryOnReopened(doc: MuPDF.PDFDocument) {
+    if (doc !== this.doc || this.broken) return;
+    let snapshot: MuPDF.Buffer | null = null;
+    try {
+      const fonts = fallbackFontState(doc);
+      snapshot = doc.saveToBuffer(SNAPSHOT_OPTIONS);
+      this.continueOn(doc, snapshot, fonts);
+    } catch {
+      // (as continueOn: the session goes on with doc)
+    } finally {
+      snapshot?.destroy();
     }
   }
 
@@ -1679,6 +2329,452 @@ function copyEdit(e: LoggedEdit): LoggedEdit {
         default:
           return { ...e, expect };
       }
+    }
+    case "pages":
+      switch (e.op) {
+        case "move":
+          return { ...e, order: [...e.order] };
+        case "delete":
+        case "rotate":
+        case "duplicate":
+          return { ...e, pages: [...e.pages] };
+        case "blank":
+          return { ...e, size: [e.size[0], e.size[1]] };
+        case "insert":
+          return { ...e, source: e.source.slice(), pages: [...e.pages] };
+        case "pictures":
+          return { ...e, pictures: e.pictures.map((p) => ({ picture: copyPicture(p.picture), size: [p.size[0], p.size[1]], alt: p.alt })) };
+      }
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Release 4: pages, the other PDF, pictures as pages
+
+/** The other PDF open beside the document (openSource). */
+interface OpenSource {
+  /** Its number (SourceResult.source). */
+  id: number;
+  /** Open for the page picker's renders. */
+  doc: MuPDF.PDFDocument;
+  /** The private unencrypted copy an insert takes its chosen pages from (insertPart). */
+  bytes: Uint8Array;
+  /** Opening it needed a password: an insert from it says so in the log (PageOpEdit protectedSource). */
+  neededPassword: boolean;
+}
+
+/**
+ * How insertPart writes the chosen pages of the other PDF: unencrypted (a replay needs no
+ * password) and garbage collected, so nothing of the pages it deleted, nor what only they used,
+ * is in the file.
+ */
+const SOURCE_PART_OPTIONS = "encrypt=none,garbage=compact";
+
+/** What the catalog of the other PDF keeps for insertPart: what pages.insertPages reads of it. */
+const INSERT_READS = new Set(["Type", "Pages", "AcroForm", "Outlines", "OCProperties", "Names", "Dests", "Version"]);
+
+/**
+ * Drops from a scratch copy of the other PDF what an insert never copies, before insertPart
+ * writes its chosen pages: the catalog's other entries (attachments and scripts in /Names but its
+ * destinations, the structure tree, since added pages come in untagged, page labels, metadata,
+ * document actions, threads, permissions...), the form's XFA, the document information, the
+ * pages' own /Metadata, /PieceInfo, /Thumb and beads, and the bookmarks when there is no title to
+ * put them under (`bookmarks` false).
+ *
+ * Two MuPDF traps. Every edit makes MuPDF drop its page map, so a findPage after one walks the
+ * page tree again: the pages are all found first, in one pass, and edited after (finding each
+ * page after editing the one before took time with the square of the pages: an insert of one
+ * page of 4000 took 1.3 s, now 45 ms). And the first edit of a document opened from a file
+ * moves the trailer into a new xref section as a copy: a trailer taken before it is the old one,
+ * which no longer counts (a delete there leaves /Info in the file). So /Info goes last, from the
+ * trailer as it is then.
+ */
+function insertReads(doc: MuPDF.PDFDocument, bookmarks: boolean) {
+  const pages = Array.from({ length: doc.countPages() }, (_, i) => doc.findPage(i));
+  const root = doc.getTrailer().get("Root");
+  if (root.isDictionary()) {
+    const keys: string[] = [];
+    root.forEach((_v, k) => keys.push(String(k)));
+    for (const k of keys) if (!INSERT_READS.has(k) || (k === "Outlines" && !bookmarks)) root.delete(k);
+    const names = root.get("Names");
+    if (names.isDictionary()) {
+      const kinds: string[] = [];
+      names.forEach((_v, k) => kinds.push(String(k)));
+      for (const k of kinds) if (k !== "Dests") names.delete(k);
+    }
+    const acro = root.get("AcroForm");
+    if (acro.isDictionary()) acro.delete("XFA");
+  }
+  for (const page of pages) if (page.isDictionary()) for (const k of ["Metadata", "PieceInfo", "Thumb", "B"]) page.delete(k);
+  const trailer = doc.getTrailer(); // (after the edits: see above)
+  try {
+    trailer.delete("Info");
+  } finally {
+    trailer.destroy();
+  }
+}
+
+/**
+ * Where each page after a page operation was before it (PageLayout.from), from the operation
+ * alone, `count` being how many pages there were before it: a move gives its permutation, a
+ * delete the pages that stay, new pages (a blank page, copies, another PDF's pages, pictures)
+ * null where they went and the pages after them shifted, a rotation every page where it was. The
+ * same whatever path the document took to the state the operation started from (undo, redo, a
+ * checkpoint, a save in between), as the layout must be (layoutAfter).
+ */
+export function layoutFrom(e: PageOpEdit, count: number): (number | null)[] {
+  const range = (from: number, to: number) => Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
+  const added = (at: number, n: number) => [...range(0, at), ...Array<null>(n).fill(null), ...range(at, count)];
+  switch (e.op) {
+    case "move":
+      return [...e.order];
+    case "rotate":
+      return range(0, count);
+    case "delete": {
+      const gone = new Set(e.pages);
+      return range(0, count).filter((i) => !gone.has(i));
+    }
+    case "blank":
+      return added(e.at, 1);
+    case "duplicate":
+    case "insert":
+      return added(e.at, e.pages.length);
+    case "pictures":
+      return added(e.at, e.pictures.length);
+  }
+}
+
+/**
+ * Undoing a step whose layout had `from` (layoutFrom) with `count` pages before it: where each of
+ * those pages was just before the undo (null for a page the step had deleted, which the undo
+ * brings back).
+ */
+export function undoneFrom(from: (number | null)[], count: number): (number | null)[] {
+  const out = Array<number | null>(count).fill(null);
+  from.forEach((was, now) => {
+    if (was !== null && was >= 0 && was < count) out[was] = now;
+  });
+  return out;
+}
+
+/** Each page's bounds (page space), every page loaded once. */
+function pageInfos(doc: MuPDF.PDFDocument): PageInfo[] {
+  const pages: PageInfo[] = [];
+  const count = doc.countPages();
+  for (let index = 0; index < count; index++) {
+    const page = doc.loadPage(index);
+    try {
+      pages.push({ index, bounds: toRect(page.getBounds()) });
+    } finally {
+      page.destroy();
+    }
+  }
+  return pages;
+}
+
+/** The page objects' numbers in page order (pages.pageObjectNumbers); "not-editable" when the page tree cannot be read. */
+function pageNumbers(doc: MuPDF.PDFDocument): number[] {
+  try {
+    return pageObjectNumbers(doc);
+  } catch (err) {
+    throw new SessionError(`The pages cannot be read: ${errorMessage(err)}`, "not-editable");
+  }
+}
+
+/** Runs a call of pages.ts, its refusals (PagesError) given as the session's. */
+function fromPages<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (err) {
+    throw err instanceof PagesError ? new SessionError(err.message, err.code) : err;
+  }
+}
+
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
+
+/** Page indices from the main thread, checked as untrusted ("bad-request" otherwise): a list of whole numbers in 0..count-1, each once, not empty. */
+function pageList(pages: unknown, count: number): number[] {
+  if (!Array.isArray(pages) || pages.length === 0) throw new SessionError("No pages given", "bad-request");
+  const seen = new Set<number>();
+  for (const p of pages as unknown[]) {
+    if (!isCount(p) || p < 0 || p >= count) throw new SessionError(`No page ${String(p)}`, "bad-request");
+    if (seen.has(p)) throw new SessionError(`Page ${p + 1} is given twice`, "bad-request");
+    seen.add(p);
+  }
+  return [...(pages as number[])];
+}
+
+/** Where new pages go, from the main thread: 0..count (count: at the end), "bad-request" otherwise. */
+function insertionPoint(at: unknown, count: number): number {
+  if (!isCount(at) || at < 0 || at > count) throw new SessionError(`Cannot insert pages at ${String(at)}`, "bad-request");
+  return at;
+}
+
+/** A page size from the main thread: two numbers of points within MIN_IMAGE_SIDE..MAX_IMAGE_SIDE ("bad-request" otherwise). */
+function pageSize(size: unknown): [number, number] {
+  if (!Array.isArray(size) || size.length !== 2 || !size.every((v) => typeof v === "number" && v >= MIN_IMAGE_SIDE && v <= MAX_IMAGE_SIDE))
+    throw new SessionError(`A page side is ${MIN_IMAGE_SIDE} to ${MAX_IMAGE_SIDE} points`, "bad-request");
+  return [size[0], size[1]];
+}
+
+/**
+ * A bookmark title from the main thread, checked as untrusted: null, or a string made one line
+ * (line breaks and tabs become spaces, characters that draw nothing go, trimmed) of at most
+ * MAX_TITLE_CHARS characters ("bad-request" otherwise); blank is null.
+ */
+function titleFrom(title: unknown): string | null {
+  if (title === null) return null;
+  if (typeof title !== "string") throw new SessionError("A bookmark title is a string or null", "bad-request");
+  const line = normalizeLineText(title).replace(UNDRAWN, "").trim();
+  if ([...line].length > MAX_TITLE_CHARS) throw new SessionError(`A bookmark title holds at most ${MAX_TITLE_CHARS} characters`, "bad-request");
+  return line || null;
+}
+
+/** The document's language (/Lang of its catalog), or null. */
+function languageOf(doc: MuPDF.PDFDocument): string | null {
+  const root = doc.getTrailer().get("Root");
+  const lang = root.isDictionary() ? root.get("Lang") : null;
+  return lang?.isString() ? lang.asString() : null;
+}
+
+/** What a picture made a page says on a tagged page by default: Italian unless the document says another language. */
+function scannedPage(lang: string | null): string {
+  const tag = lang?.trim() ?? "";
+  return !tag || /^it(?![a-z])/i.test(tag) ? "Pagina scansionata" : "Scanned page";
+}
+
+// ---------------------------------------------------------------------------------------------
+// Riprendi: a log stored on the device, read back (resumeSession)
+
+/**
+ * The edits of a stored log (exportSession's SessionLog), checked as untrusted: the version, and
+ * every entry's kind and shape (the types of its values, the ops and kinds the app knows), each
+ * entry made again from what it should hold, nothing else; and whether the document was made here
+ * (a boolean, absent for no). Anything else is "bad-request". Whether the edits still fit the
+ * document is up to their replay. Byte arrays are copied unless `transfer` (the caller hands them
+ * over).
+ */
+function logFrom(log: unknown, transfer: boolean): { edits: LoggedEdit[]; madeHere: boolean } {
+  const o = record(log, "The log");
+  if (o.version !== LOG_VERSION) throw new SessionError(`Unknown log version ${String(o.version)}`, "bad-request");
+  if (!Array.isArray(o.edits)) throw new SessionError("The log has no list of edits", "bad-request");
+  if (o.madeHere !== undefined && typeof o.madeHere !== "boolean") throw new SessionError("madeHere is true, false or absent", "bad-request");
+  const r = new LogReader(transfer);
+  const edits = o.edits.map((e: unknown, k) => {
+    try {
+      return r.edit(e);
+    } catch (err) {
+      throw err instanceof SessionError ? new SessionError(`Edit ${k + 1} of the log: ${err.message}`, "bad-request") : err;
+    }
+  });
+  return { edits, madeHere: o.madeHere === true };
+}
+
+/** An object with string keys, or "bad-request". */
+function record(v: unknown, what: string): Record<string, unknown> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw new SessionError(`${what} is not an object`, "bad-request");
+  return v as Record<string, unknown>;
+}
+
+const DECORATION_KINDS: readonly DecorationKind[] = ["underline", "strike", "overline", "background", "border"];
+const FIELD_TYPES: readonly FieldType[] = ["text", "checkbox", "radio", "combo", "list", "button", "signature"];
+
+/** Reads the entries of a stored log (logFrom), value by value. */
+class LogReader {
+  constructor(private readonly transfer: boolean) {}
+
+  private bad(message: string): never {
+    throw new SessionError(message, "bad-request");
+  }
+
+  private index(v: unknown, what: string): number {
+    return isCount(v) && v >= 0 ? v : this.bad(`${what} is not an index`);
+  }
+
+  private indices(v: unknown, what: string): number[] {
+    if (!Array.isArray(v)) this.bad(`${what} is not a list`);
+    return (v as unknown[]).map((x) => this.index(x, what));
+  }
+
+  private text(v: unknown, what: string): string {
+    return typeof v === "string" ? v : this.bad(`${what} is not a string`);
+  }
+
+  private numbers(v: unknown, n: number, what: string): number[] {
+    if (!Array.isArray(v) || v.length !== n || !v.every((x) => typeof x === "number" && Number.isFinite(x))) this.bad(`${what} is not ${n} numbers`);
+    return [...(v as number[])];
+  }
+
+  private bytes(v: unknown, what: string): Uint8Array {
+    if (!(v instanceof Uint8Array)) this.bad(`${what} is not bytes`);
+    const b = v as Uint8Array;
+    return this.transfer ? b : b.slice();
+  }
+
+  private picture(v: unknown): Picture {
+    const o = record(v, "A picture");
+    const orientation = o.orientation;
+    if (!isCount(orientation) || orientation < 1 || orientation > 8) this.bad("A picture's orientation is 1 to 8");
+    const [width, height] = this.numbers([o.width, o.height], 2, "A picture's size");
+    if (!(width > 0 && height > 0)) this.bad("A picture has no size");
+    return { bytes: this.bytes(o.bytes, "A picture"), orientation: orientation as number, width, height };
+  }
+
+  private range(v: unknown): [number, number] {
+    if (!Array.isArray(v) || v.length !== 2) this.bad("A range is two indices");
+    const [a, b] = this.indices(v, "A range");
+    return [a, b];
+  }
+
+  private plan(v: unknown): DecorationPlan {
+    const o = record(v, "A decoration plan");
+    if (!Array.isArray(o.shapes) || !Array.isArray(o.links)) this.bad("A decoration plan lists shapes and links");
+    return {
+      shapes: (o.shapes as unknown[]).map((x) => {
+        const s = record(x, "A shape");
+        if (!DECORATION_KINDS.includes(s.kind as DecorationKind)) this.bad(`Unknown shape ${String(s.kind)}`);
+        if (s.paint !== "fill" && s.paint !== "stroke") this.bad("A shape is filled or stroked");
+        return { kind: s.kind as DecorationKind, paint: s.paint, bbox: this.numbers(s.bbox, 4, "A shape's box") as Rect, range: this.range(s.range) };
+      }),
+      links: (o.links as unknown[]).map((x) => {
+        const l = record(x, "A link");
+        return { bounds: this.numbers(l.bounds, 4, "A link's box") as Rect, uri: this.text(l.uri, "A link's address"), range: this.range(l.range) };
+      }),
+    };
+  }
+
+  private textEdit(o: Record<string, unknown>): TextEdit {
+    const out: TextEdit = {
+      kind: "text",
+      pageIndex: this.index(o.pageIndex, "The page"),
+      find: this.text(o.find, "The text found"),
+      occurrence: this.index(o.occurrence, "The occurrence"),
+      replacement: this.text(o.replacement, "The replacement"),
+    };
+    if (o.decorations !== undefined) out.decorations = this.plan(o.decorations);
+    return out;
+  }
+
+  private addedEdit(o: Record<string, unknown>): AddedTextEdit {
+    const out: AddedTextEdit = { kind: "editAdded", pageIndex: this.index(o.pageIndex, "The page"), id: this.index(o.id, "The text's id") };
+    if (o.text !== undefined) out.text = this.text(o.text, "The text");
+    if (o.origin !== undefined) out.origin = this.numbers(o.origin, 2, "The origin") as [number, number];
+    if (o.style !== undefined) out.style = styleFrom(o.style);
+    if (o.absorb !== undefined) out.absorb = this.indices(o.absorb, "The texts absorbed");
+    return out;
+  }
+
+  private fieldValue(v: unknown): FieldValue {
+    const o = record(v, "A field value");
+    switch (o.kind) {
+      case "text":
+        return { kind: "text", text: this.text(o.text, "A field's text") };
+      case "state":
+        return { kind: "state", state: this.text(o.state, "A field's state") };
+      case "choice":
+        if (!Array.isArray(o.values)) this.bad("A choice lists values");
+        return { kind: "choice", values: (o.values as unknown[]).map((x) => this.text(x, "A choice")) };
+      default:
+        return this.bad(`Unknown field value ${String(o.kind)}`);
+    }
+  }
+
+  private alt(v: unknown): string | null {
+    return v === null ? null : this.text(v, "A description");
+  }
+
+  private pagesEdit(o: Record<string, unknown>): PageOpEdit {
+    const at = () => this.index(o.at, "Where pages go");
+    const pages = () => this.indices(o.pages, "The pages");
+    switch (o.op) {
+      case "move":
+        return { kind: "pages", op: "move", order: this.indices(o.order, "The order") };
+      case "delete":
+        return { kind: "pages", op: "delete", pages: pages() };
+      case "blank":
+        return { kind: "pages", op: "blank", at: at(), size: this.numbers(o.size, 2, "A page size") as [number, number] };
+      case "duplicate":
+        return { kind: "pages", op: "duplicate", pages: pages(), at: at() };
+      case "rotate":
+        if (o.by !== 90 && o.by !== 180 && o.by !== 270) this.bad("Pages turn by 90, 180 or 270 degrees");
+        return { kind: "pages", op: "rotate", pages: pages(), by: o.by as 90 | 180 | 270 };
+      case "insert": {
+        const out: InsertEdit = {
+          kind: "pages", op: "insert", at: at(), source: this.bytes(o.source, "The other PDF"), pages: pages(),
+          title: o.title === null ? null : this.text(o.title, "A bookmark title"),
+        };
+        if (o.protectedSource !== undefined && o.protectedSource !== true) this.bad("protectedSource is true or absent");
+        if (o.protectedSource === true) out.protectedSource = true;
+        return out;
+      }
+      case "pictures":
+        if (!Array.isArray(o.pictures)) this.bad("No pictures");
+        return {
+          kind: "pages", op: "pictures", at: at(),
+          pictures: (o.pictures as unknown[]).map((x) => {
+            const p = record(x, "A picture page");
+            return { picture: this.picture(p.picture), size: this.numbers(p.size, 2, "A page size") as [number, number], alt: this.alt(p.alt) };
+          }),
+        };
+      default:
+        return this.bad(`Unknown page operation ${String(o.op)}`);
+    }
+  }
+
+  /** One entry of the log. */
+  edit(v: unknown): LoggedEdit {
+    const o = record(v, "An edit");
+    const pageIndex = () => this.index(o.pageIndex, "The page");
+    switch (o.kind) {
+      case "text":
+        return this.textEdit(o);
+      case "image": {
+        const base = { kind: "image" as const, pageIndex: pageIndex(), imageIndex: this.index(o.imageIndex, "The image"), expect: this.numbers(o.expect, 6, "Where the image is") as Matrix };
+        switch (o.op) {
+          case "transform":
+            return { ...base, op: "transform", matrix: this.numbers(o.matrix, 6, "Where the image goes") as Matrix };
+          case "delete":
+            return { ...base, op: "delete" };
+          case "replace":
+            return { ...base, op: "replace", picture: this.picture(o.picture) };
+          default:
+            return this.bad(`Unknown image edit ${String(o.op)}`);
+        }
+      }
+      case "field": {
+        if (!FIELD_TYPES.includes(o.type as FieldType)) this.bad(`Unknown field type ${String(o.type)}`);
+        return {
+          kind: "field", name: this.text(o.name, "The field's name"), type: o.type as FieldType, value: this.fieldValue(o.value),
+          pageIndex: pageIndex(), pages: this.indices(o.pages, "The field's pages"),
+        };
+      }
+      case "addText":
+        return {
+          kind: "addText", pageIndex: pageIndex(), origin: this.numbers(o.origin, 2, "The origin") as [number, number],
+          text: this.text(o.text, "The text"), style: styleFrom(o.style), id: this.index(o.id, "The text's id"),
+        };
+      case "editAdded":
+        return this.addedEdit(o);
+      case "mixed": {
+        if (!Array.isArray(o.edits) || o.edits.length === 0) this.bad("A line edit in parts lists its parts");
+        const edits = (o.edits as unknown[]).map((x) => {
+          const part = record(x, "A part of a line edit");
+          return part.kind === "text" ? this.textEdit(part) : part.kind === "editAdded" ? this.addedEdit(part) : this.bad(`Unknown part ${String(part.kind)}`);
+        });
+        return { kind: "mixed", pageIndex: pageIndex(), edits };
+      }
+      case "addImage": {
+        if (!Array.isArray(o.targets) || o.targets.length === 0) this.bad("A picture has no targets");
+        const targets = (o.targets as unknown[]).map((x) => {
+          const t = record(x, "A target");
+          return { pageIndex: this.index(t.pageIndex, "A target's page"), matrix: this.numbers(t.matrix, 6, "A target") as Matrix };
+        });
+        return { kind: "addImage", pageIndex: pageIndex(), picture: this.picture(o.picture), targets, alt: this.alt(o.alt) };
+      }
+      case "pages":
+        return this.pagesEdit(o);
+      default:
+        return this.bad(`Unknown edit ${String(o.kind)}`);
     }
   }
 }

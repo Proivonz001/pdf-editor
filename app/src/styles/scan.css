@@ -1,0 +1,576 @@
+/* "Foto e scansione" (ui/scan/ScanFlow.tsx, CornerEditor.tsx, Tray.tsx), and its entry on the
+   home page (ui/EmptyState.tsx, .home-scan). Colours only from tokens.css.
+
+   A modal <dialog> (.dialog.scan, on the dialog rules of overlays.css) with its own header (the
+   title, a close button) and a body for the step: the pickers, a photo being read, the corner
+   editor with the mode and the page shape, the tray. About 760 px wide on desktop; the whole
+   screen below 640 px (inside the safe areas), where the photo takes the room the controls leave
+   and the step's buttons stay at the bottom, over the scrolling content.
+
+   The photo is white paper or a dark desk: the corners, the sides and the magnifier must read on
+   both, so the handles are white discs with an ink rim (as the signature's crop handles), and
+   what lies outside the sheet is dimmed with the backdrop colour. */
+
+/* --- The modal ---------------------------------------------------------------------------- */
+
+.dialog.scan {
+  width: min(760px, calc(100vw - 32px));
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.scan-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 0 24px;
+}
+
+.scan-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.btn.scan-close {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+@media (hover: hover) {
+  .btn.scan-close:hover:not(:disabled, [aria-disabled="true"]) {
+    color: var(--text);
+  }
+}
+
+.scan-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px 24px 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scan-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.scan-step-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+/* The step's heading takes the focus when the step changes (for screen readers): no ring. */
+.scan-step-title {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.scan-step-title:focus {
+  outline: none;
+}
+
+.scan-hint,
+.scan-lead {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.scan-lead {
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+
+.scan-hint.is-warn {
+  padding: 6px 10px;
+  border: 1px solid var(--hint-line);
+  border-radius: var(--radius);
+  background: var(--hint-bg);
+  color: var(--hint-text);
+}
+
+.scan-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+
+.scan-note.is-warn {
+  border-color: var(--hint-line);
+  background: var(--hint-bg);
+  color: var(--hint-text);
+}
+
+.scan-alert {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger-text) 28%, transparent);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.btn.scan-small {
+  height: 32px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+
+@media (pointer: coarse) {
+  .btn.scan-small {
+    height: 40px;
+  }
+}
+
+.scan-actions {
+  margin-top: auto;
+}
+
+/* --- Start, reading ------------------------------------------------------------------------- */
+
+.scan-start {
+  gap: 20px;
+}
+
+.scan-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.scan-start-actions .btn {
+  flex: 1 1 200px;
+}
+
+.scan-reading {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+}
+
+/* --- The corner editor -------------------------------------------------------------------- */
+
+/* The space the photo fits in (CornerEditor measures it, without its padding, which leaves room
+   for the handles on the photo's edges): on desktop what the window leaves once the controls
+   around it are counted (about 400 px), so the buttons stay in view. */
+.scan-area {
+  display: grid;
+  place-items: center;
+  height: clamp(200px, calc(100vh - 400px), 520px);
+  height: clamp(200px, calc(100dvh - 400px), 520px);
+  min-height: 0;
+  padding: 14px;
+}
+
+@media (pointer: coarse) {
+  .scan-area {
+    padding: 22px;
+  }
+}
+
+.scan-frame {
+  position: relative;
+  touch-action: none; /* the corners are dragged, the photo does not scroll or zoom */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.scan-frame.is-disabled {
+  opacity: 0.7;
+}
+
+.scan-photo,
+.scan-quad {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.scan-photo {
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.scan-quad {
+  overflow: visible;
+  pointer-events: none;
+}
+
+.scan-quad-shade {
+  fill: color-mix(in srgb, var(--backdrop) 75%, transparent);
+}
+
+.scan-quad-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+/* A corner: an invisible target (28 px, 44 px on touch) round a white disc with an ink rim. */
+.scan-handle {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  touch-action: none;
+  cursor: move;
+}
+
+.scan-handle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.scan-handle:focus-visible {
+  outline: none;
+}
+
+.scan-handle:focus-visible::after {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.scan-frame.is-disabled .scan-handle {
+  cursor: default;
+}
+
+@media (pointer: coarse) {
+  .scan-handle {
+    width: var(--tap);
+    height: var(--tap);
+    margin: -22px 0 0 -22px;
+  }
+
+  .scan-handle::after {
+    width: 22px;
+    height: 22px;
+    margin: -11px 0 0 -11px;
+  }
+}
+
+/* The magnifier, in the photo's top corner away from the corner being moved. */
+.scan-loupe {
+  position: absolute;
+  top: 8px;
+  width: 112px;
+  height: 112px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+
+.scan-loupe.is-left {
+  left: 8px;
+}
+
+.scan-loupe.is-right {
+  right: 8px;
+}
+
+/* --- Mode and page shape: radio buttons as chips -------------------------------------------- */
+
+.scan-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px 20px;
+}
+
+@media (min-width: 640px) {
+  .scan-options {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  }
+}
+
+.scan-choice {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scan-legend {
+  padding: 0;
+  margin-bottom: 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.scan-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scan-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  font-size: var(--fs-md);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* The radio covers its chip: still focusable, tapped anywhere on the chip, and invisible. */
+.scan-chip-radio {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.scan-chip:has(.scan-chip-radio:checked) {
+  border-color: var(--accent);
+  background: var(--active-bg);
+  color: var(--active-fg);
+  font-weight: 600;
+}
+
+.scan-chip:has(.scan-chip-radio:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .scan-chip:hover:not(:has(.scan-chip-radio:checked)) {
+    background: var(--surface-2);
+  }
+}
+
+@media (pointer: coarse) {
+  .scan-chip {
+    min-height: var(--tap);
+  }
+}
+
+/* --- The tray ----------------------------------------------------------------------------- */
+
+.scan-tray {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.scan-page {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 8px 8px 12px;
+}
+
+.scan-page + .scan-page {
+  border-top: 1px solid var(--line);
+}
+
+/* The preview is a page: white in both themes, as the PDF pages are. */
+.scan-thumb {
+  display: block;
+  height: 56px;
+  aspect-ratio: var(--ar);
+  max-width: 64px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: #fff;
+}
+
+.scan-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.scan-page-name {
+  overflow: hidden;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.scan-page-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.btn.scan-page-btn.is-danger {
+  color: var(--danger-text);
+}
+
+/* --- Phones: the whole screen --------------------------------------------------------------- */
+
+@media (max-width: 639.98px) {
+  .dialog.scan {
+    --btn: var(--tap);
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  }
+
+  .scan-head {
+    min-height: 52px;
+    padding: 4px 4px 4px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .scan-title {
+    font-size: var(--fs-lg);
+  }
+
+  .scan-body {
+    gap: 12px;
+    padding: 12px 16px 0; /* 16 px from the edges: away from Android's back gesture */
+  }
+
+  .scan-step {
+    flex: 1 0 auto;
+  }
+
+  /* The corner editor fills what the controls leave, and the content does not scroll then. */
+  .scan-corners {
+    flex: 1 1 0;
+    min-height: 0;
+  }
+
+  .scan-corners .scan-area {
+    flex: 1 1 0;
+    height: auto;
+    min-height: 200px;
+  }
+
+  .scan-actions {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    flex-wrap: nowrap;
+    margin: auto -16px 0;
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom, 0px));
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .scan-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* The tray's buttons: the two pickers on a row (one across, with a mouse), Fine under them across. */
+  .scan-tray-step .scan-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .scan-tray-step .scan-finish,
+  .scan-tray-step .scan-actions > .btn:first-child:nth-last-child(2) {
+    grid-column: 1 / -1;
+  }
+}
+
+/* --- The home page's entry ------------------------------------------------------------------- */
+
+@media (max-width: 519.98px) {
+  .home-scan {
+    flex: 1 1 100%;
+  }
+}
+
+/* --- Forced colours (Windows contrast themes) ----------------------------------------------- */
+
+/* The photo keeps its own pixels: the handles, the sides and the magnifier keep theirs too, in
+   the system's highlight colour, and a chosen chip gets an outline (fills are dropped there). */
+@media (forced-colors: active) {
+  .scan-frame {
+    forced-color-adjust: none;
+  }
+
+  .scan-quad-line {
+    stroke: Highlight;
+  }
+
+  .scan-handle::after {
+    border-color: Highlight;
+  }
+
+  .scan-handle:focus-visible::after {
+    outline-color: Highlight;
+  }
+
+  .scan-chip:has(.scan-chip-radio:checked) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .scan-thumb {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+}

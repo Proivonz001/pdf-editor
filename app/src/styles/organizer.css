@@ -1,0 +1,441 @@
+/* The page organizer around the thumbnails (viewer/Thumbnails.tsx, ui/organizer): the "+"
+   between pages and at the end, the drop marker and the dragged pages' label, a PDF file dragged
+   over the thumbnails, the "+" menu, the action bar (desktop panel and phone sheet), the phone's
+   full-screen "Organizza" sheet with its bars and toasts, and the two dialogs ("Da un altro
+   PDF…" with its page picker, "Sposta in posizione…" uses the plain dialog styles). The
+   thumbnails themselves are in pages.css. Colours only from tokens.css; hover tints only where
+   there is real hover. Imported before phone.css. */
+
+/* --- The "+" between pages ------------------------------------------------------------------
+   One button, placed by the list on the line between two thumbnails (where the mouse is, or
+   right before the thumbnail with the focus). Invisible until the mouse is over the list, or
+   it has the keyboard focus (it is the next tab stop after the thumbnails). */
+
+.thumbs-insert {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s var(--ease), background-color 0.12s, color 0.12s;
+}
+
+.thumbs-insert .icon {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.2;
+}
+
+.thumbs-insert.is-shown,
+.thumbs-insert:focus-visible,
+.thumbs-insert[aria-expanded="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: hover) {
+  .thumbs-insert:hover {
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+}
+
+.thumbs-insert:active {
+  background: var(--accent-hover);
+  color: var(--on-accent);
+}
+
+/* --- The "+" at the end ---------------------------------------------------------------------- */
+
+.thumbs-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: var(--btn);
+  margin: 8px 0 0;
+  padding: 8px;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+
+/* The panel's column is narrow: the "+" over its words. */
+.thumbs-list .thumbs-add {
+  flex-direction: column;
+  min-height: 72px;
+}
+
+@media (hover: hover) {
+  .thumbs-add:hover {
+    border-color: var(--accent);
+    background: var(--active-bg);
+    color: var(--active-fg);
+  }
+}
+
+.thumbs-add:active,
+.thumbs-add[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--active-bg);
+  color: var(--active-fg);
+}
+
+/* --- Dragging -------------------------------------------------------------------------------
+   The marker: a short ink bar on the line where the pages will go (across the list's column, or
+   down between two grid tiles). The label follows the pointer ("Pagina 3", "3 pagine"), clear of
+   the finger. */
+
+.thumbs-marker {
+  position: absolute;
+  z-index: 3;
+  width: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+  pointer-events: none;
+}
+
+.thumbs-ghost {
+  position: fixed;
+  z-index: 80;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+}
+
+/* A PDF file dragged over the thumbnails: they rise above the drop overlay (overlays.css,
+   z-index 50), framed, so the marker shows where its pages will go. */
+.thumbs.is-file-over {
+  z-index: 51;
+  background: var(--surface);
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+/* --- The "+" menu (the app's .menu, placed in the window by InsertMenu.tsx) ----------------- */
+
+.menu.org-menu {
+  position: fixed;
+  top: 0;
+  right: auto;
+  left: 0;
+  z-index: 75;
+  min-width: 200px;
+  transform-origin: top left;
+}
+
+/* --- Action bar ------------------------------------------------------------------------------ */
+
+.org-bar {
+  flex: none;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+
+.org-action.is-danger {
+  color: var(--danger-text);
+}
+
+/* Desktop panel (168 px): the count and Deseleziona, then the icons in rows of three. */
+.org-bar-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px max(8px, env(safe-area-inset-bottom, 0px));
+}
+
+.org-bar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.org-bar-count {
+  min-width: 0;
+  padding-left: 4px;
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.org-bar-clear.btn {
+  flex: none;
+  color: var(--muted);
+}
+
+.org-bar-panel .org-bar-actions {
+  display: grid;
+  grid-template-columns: repeat(3, var(--btn));
+  justify-content: center;
+  gap: 4px 8px;
+}
+
+/* Phone sheet: one row of icons over short labels. */
+.org-bar-sheet {
+  padding: 4px;
+}
+
+.org-bar-sheet .org-bar-actions {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+}
+
+.org-action.btn.has-label {
+  flex-direction: column;
+  gap: 4px;
+  height: auto;
+  min-height: 56px;
+  padding: 6px 2px;
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: normal;
+  text-align: center;
+}
+
+.org-action-label {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* --- The phone's "Organizza" sheet ----------------------------------------------------------
+   Full screen (a page organizer needs the room), under the sheet's own header: the bar with
+   Undo, Redo, the hint and "Seleziona" (or the selection's count, "Tutte" and "Fine"), the grid,
+   and in "Seleziona" the action bar. The toasts float over the bottom of the grid. */
+
+.sheet.sheet-organize {
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+}
+
+.sheet-organize .sheet-panel {
+  height: 100%;
+  max-height: none;
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.sheet-organize .sheet-handle {
+  display: none;
+}
+
+.sheet-organize .sheet-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.org-sheet-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.org-sheet-history {
+  flex: none;
+  display: flex;
+}
+
+.org-sheet-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+}
+
+.org-sheet-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0 0 0 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.org-sheet-bar .btn {
+  flex: none;
+}
+
+.org-sheet-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.org-sheet-body > .thumbs {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.org-toasts {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+
+/* --- "Da un altro PDF…": the page picker ------------------------------------------------------ */
+
+.dialog:has(.org-pdf-dialog) {
+  width: min(600px, calc(100vw - 32px));
+}
+
+.org-pdf-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.org-pdf-name {
+  color: var(--text);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.org-pdf {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.org-pdf .dl-check.org-pdf-all {
+  padding-left: 0;
+}
+
+.org-pdf-pages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 8px;
+  max-height: min(52vh, 440px);
+  margin: 0 -4px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A page: its thumbnail over its check box; the whole tile is the label. */
+.org-pdf-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.12s, background-color 0.12s;
+}
+
+.org-pdf-page.is-chosen {
+  border-color: var(--accent);
+  background: linear-gradient(var(--active-bg), var(--active-bg)) var(--surface);
+}
+
+@media (hover: hover) {
+  .org-pdf-page:hover:not(.is-chosen) {
+    background: var(--surface-2);
+  }
+}
+
+/* Never taller than 130 px: a tall page gets narrower. White in both themes, like every page. */
+.org-pdf-thumb {
+  position: relative;
+  display: block;
+  width: min(96px, 100%, calc(130px * var(--ar)));
+  aspect-ratio: var(--ar);
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--line), 0 1px 2px color-mix(in srgb, var(--backdrop) 30%, transparent);
+}
+
+.org-pdf-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.16s var(--ease);
+}
+
+.org-pdf-thumb.is-ready .org-pdf-canvas {
+  opacity: 1;
+}
+
+.org-pdf-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.org-pdf-check .dl-checkbox {
+  margin: 0;
+}
+
+/* Forced colours: the selected tiles and the marker keep a visible shape. */
+@media (forced-colors: active) {
+  .org-pdf-page.is-chosen {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .thumbs-marker,
+  .thumbs-ghost {
+    forced-color-adjust: none;
+  }
+}
