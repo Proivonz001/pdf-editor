@@ -337,7 +337,7 @@ function askedNow(now: OpenDoc, ask: PagesAsk): Asked | null {
  * when the button is pressed is written first and becomes the last edit, an edit on its way lands
  * first; then nothing is undone (the toast says why), rather than what was just written.
  */
-function undoAction(d: OpenDoc, id: number | null) {
+export function undoAction(d: OpenDoc, id: number | null) {
   return {
     label: t("pageOps.undo"),
     run: () => {

@@ -258,6 +258,8 @@ export interface HistoryState {
    * operation, or the undo or redo of one. The UI then rebuilds its page list from it.
    */
   layout?: PageLayout;
+  /** Release 5: how many of the applied edits are Bianchetto or Oscura (the download is then named "-oscurato"). */
+  redactions?: number;
 }
 
 export interface EditResult extends HistoryState {
@@ -630,7 +632,19 @@ export type Request =
   /** What "Riprendi" keeps of the open document; null when it must not be kept (see SessionExport). */
   | { op: "exportSession" }
   /** Open `original` again and apply `log` (from exportSession), as the document (made here when the log says so: SessionExport.madeHere). */
-  | { op: "resumeSession"; original: ArrayBuffer; log: unknown; password?: string };
+  | { op: "resumeSession"; original: ArrayBuffer; log: unknown; password?: string }
+  // Release 5: Cerca, Bianchetto, Oscura (see the section below).
+  /**
+   * One step of a search: the pages from `from` (up to `to`, exclusive; default the last page),
+   * for at most about `budgetMs` (5..200, default 20) and at most `maxHits` hits. Nothing is kept
+   * between steps but a cache of page texts: the client drives the steps and cancels by not
+   * asking for the next one. `query` at most MAX_SEARCH_CHARS characters.
+   */
+  | { op: "search"; query: string; options?: SearchOptions; from: number; to?: number; budgetMs?: number; maxHits?: number }
+  /** What redact(areas, mode) would remove or leave, without changing anything. */
+  | { op: "redactPreview"; areas: RedactArea[]; mode: RedactMode }
+  /** Bianchetto or Oscura over `areas` (one or more pages): one undoable edit. */
+  | { op: "redact"; areas: RedactArea[]; mode: RedactMode };
 
 export interface ResultMap {
   open: OpenResult;
@@ -662,6 +676,9 @@ export interface ResultMap {
   newFromPictures: OpenResult;
   exportSession: SessionExport | null;
   resumeSession: ResumeResult;
+  search: SearchStep;
+  redactPreview: RedactPreview;
+  redact: RedactResult;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -828,3 +845,106 @@ export type ResponseMessage =
   | { type: "init-error"; error: string }
   | { id: number; ok: true; result: unknown }
   | { id: number; ok: false; error: string; code?: string };
+
+// ---------------------------------------------------------------------------------------------
+// Release 5: Cerca (search), Bianchetto (white-out) and Oscura (redaction).
+
+/** A quadrilateral in page space: ul, ur, ll, lr corners (draw ul→ur→lr→ll), as MuPDF gives them. */
+export type Quad = [number, number, number, number, number, number, number, number];
+
+/**
+ * How a search matches. By default (all false) case, accents, apostrophe and quote variants,
+ * dashes and runs of spaces are ignored ("Universita" finds "Università", "perche'" finds
+ * "perché"), and a word hyphenated at a line end is found whole.
+ */
+export interface SearchOptions {
+  caseSensitive?: boolean;
+  wholeWord?: boolean;
+  /** Accents count: "e" does not find "è". */
+  matchDiacritics?: boolean;
+}
+
+/**
+ * One match: where it is (one quad per line run; `rect` their bounds, to scroll to), whether it
+ * is in the page's text or in a visible form field's appearance (`field`: its full name), and a
+ * little of the text around it for a result list.
+ */
+export interface SearchHit {
+  pageIndex: number;
+  quads: Quad[];
+  rect: Rect;
+  in: "page" | "field";
+  field?: string;
+  before: string;
+  match: string;
+  after: string;
+}
+
+/** A search step: its hits in page order; `next` the page to go on from (null: `to` reached). */
+export interface SearchStep {
+  hits: SearchHit[];
+  next: number | null;
+  /** maxHits was reached on the last page read: there may be more on it. */
+  truncated: boolean;
+}
+
+/** Longest search query, in characters. */
+export const MAX_SEARCH_CHARS = 200;
+
+/** "whiteout": Bianchetto (text and drawings removed, the area left white; pictures only covered). "redact": Oscura (text, drawings and picture pixels removed, a black box). */
+export type RedactMode = "whiteout" | "redact";
+
+/** Areas of one page, in page space. */
+export interface RedactArea {
+  pageIndex: number;
+  rects: Rect[];
+}
+
+/**
+ * Why a redaction is refused (nothing is changed): "separation", a picture in printing colours
+ * (Separation/DeviceN) the engine cannot clear; "shared", the page shares what it draws with
+ * other pages in a way the app cannot clean safely; "too-big", a picture too large to clear on
+ * this device; "locked", the page's content cannot be changed safely.
+ */
+export type RedactRefusal = "separation" | "shared" | "too-big" | "locked";
+
+/** What a redaction removes, leaves or warns about, per page (preview) or in total (report). */
+export interface RedactFacts {
+  /** The text that goes (a short excerpt, for "Toglie: «…»"); "" when none. */
+  text: string;
+  /** Pictures cleared under the area (Oscura), or only covered (Bianchetto). */
+  pictures: number;
+  /** Form fields removed whole (Oscura), by full name; with Bianchetto: fields left on top. */
+  fields: string[];
+  /** Links and other annotations removed (Oscura) or left on top (Bianchetto). */
+  links: number;
+  annotations: number;
+  /** Bianchetto: links wholly inside the area, which go (Oscura counts them in `links`). */
+  linksRemoved?: number;
+  /** A drawing or pattern only partly under the area: the part under it stays, covered. */
+  crossing: boolean;
+}
+
+export interface RedactPreview {
+  pages: (RedactFacts & { pageIndex: number })[];
+  /** Files attached to the PDF (Oscura does not touch them: they may hold the same data). */
+  attachments: number;
+  /** Set when redact() would refuse; nothing else is meaningful then. */
+  refused: { reason: RedactRefusal; pageIndex: number } | null;
+}
+
+export interface RedactReport extends RedactFacts {
+  /** About how many bytes the cleared pictures add to a download (0 when none). */
+  growth: number;
+  attachments: number;
+  /** A field removed here also has widgets on other pages: its value stays there. */
+  fieldsElsewhere: string[];
+}
+
+/**
+ * The edit's result. `layout` (HistoryState) is present when the form or the signature count
+ * changed (fields removed): its `from` is the identity, its `form` and `signatures` the new ones.
+ */
+export interface RedactResult extends HistoryState {
+  report: RedactReport;
+}

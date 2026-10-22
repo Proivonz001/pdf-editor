@@ -332,14 +332,20 @@ export function isPdfFile(file: File) {
   return file.type === "application/pdf" || /\.pdf$/i.test(file.name);
 }
 
+/** An applied edit is a Bianchetto or an Oscura (release 5): the download says so in its name and toast. */
+const redacted = () => (history.peek().redactions ?? 0) > 0;
+
 /**
  * "report.pdf" → "report-edited.pdf" (IT: "report-modificato.pdf"); as PDF/A
- * "report-edited-PDFA.pdf" (a source already called "…-PDFA" does not get it twice).
+ * "report-edited-PDFA.pdf" (a source already called "…-PDFA" does not get it twice). With an
+ * area whited out or redacted, "report-redacted.pdf" (IT: "report-oscurato.pdf"), so the copy to
+ * share is told apart from the original.
  */
 export function outputName(fileName: string, format: SaveFormat = "pdf") {
   const base = fileName.replace(/\.pdf$/i, "") || "document";
-  if (format === "pdf") return `${base}${t("download.suffix")}.pdf`;
-  return `${base.replace(/-PDFA$/i, "") || "document"}${t("download.suffix")}-PDFA.pdf`;
+  const suffix = t(redacted() ? "download.suffixRedacted" : "download.suffix");
+  if (format === "pdf") return `${base}${suffix}.pdf`;
+  return `${base.replace(/-PDFA$/i, "") || "document"}${suffix}-PDFA.pdf`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2419,6 +2425,8 @@ function downloadBlob(blob: Blob, name: string) {
 }
 
 function doneMessage(choice: DownloadChoice, name: string): string {
+  // What matters most once parts are redacted: they are gone from this file only, so share this one.
+  if (redacted()) return t("download.doneRedacted", { name });
   if (choice.format === "pdfa-2b") return t("download.donePdfa", { name });
   if (choice.password.mode !== "none") return t("download.doneProtected", { name });
   return t("download.done", { name });
@@ -2501,7 +2509,7 @@ async function deliver(d: OpenDoc, choice: DownloadChoice, purpose: SavePurpose)
  * normally instead (downloaded as the name the user chose), and the toast says so.
  */
 async function writeDownload(d: OpenDoc, choice: DownloadChoice): Promise<"blocked" | void> {
-  return writeFile(d, outputName(d.fileName, choice.format), () => buildPdf(choice), (name) => doneMessage(choice, name), true);
+  return writeFile(d, () => outputName(d.fileName, choice.format), () => buildPdf(choice), (name) => doneMessage(choice, name), true);
 }
 
 /**
@@ -2522,18 +2530,25 @@ export async function downloadBytes(
  * writeDownload's work, for any file: `build` makes the bytes in the engine's queue ("blocked":
  * the engine refused the PDF/A; null: it failed, and the user was told), `done` names the toast
  * for the name the file got. `own`: the file is the document itself, so its edits then count as
- * downloaded (markSaved), and the first download may offer to install the app.
+ * downloaded (markSaved), and the first download may offer to install the app. `name` may be
+ * worked out from the history (outputName's "-oscurato"): then it is worked out again when the
+ * bytes are made, after the undos and edits asked before, and a plain download takes that name;
+ * when the save dialog had to suggest a name saying "-oscurato" that no longer holds (the
+ * redaction was undone meanwhile), nothing is written under it and the user is told.
  */
 async function writeFile(
-  d: OpenDoc, name: string, build: () => Promise<ArrayBuffer | "blocked" | null>, done: (name: string) => string,
-  own: boolean,
+  d: OpenDoc, name: string | (() => string), build: () => Promise<ArrayBuffer | "blocked" | null>,
+  done: (name: string) => string, own: boolean,
 ): Promise<"blocked" | void> {
+  const nameNow = typeof name === "string" ? () => name : name;
+  const suggested = nameNow();
+  const claimed = redacted(); // what a name worked out from the history says
   const picker = (window as unknown as { showSaveFilePicker?: SaveFilePicker }).showSaveFilePicker;
   let handle: FileSystemFileHandle | null = null;
   if (picker) {
     try {
       handle = await picker({
-        suggestedName: name,
+        suggestedName: suggested,
         types: [{ description: "PDF", accept: { "application/pdf": [".pdf"] } }],
       });
     } catch (e) {
@@ -2553,6 +2568,11 @@ async function writeFile(
   let delivered = false;
   const outcome = await exclusive("save", async () => {
     if (doc.peek() !== d) return;
+    const named = nameNow();
+    if (handle && named !== suggested && claimed && !redacted()) {
+      showToast("warn", t("download.changedMeanwhile")); // its name says "-oscurato": not for unredacted bytes
+      return;
+    }
     const key = saveKey();
     const bytes = await build();
     if (bytes === "blocked") return "blocked";
@@ -2563,7 +2583,7 @@ async function writeFile(
       showToast("info", done(handle.name), undefined, own ? installHint() : undefined);
       return;
     }
-    const downloadName = handle?.name || name;
+    const downloadName = handle?.name || named;
     try {
       downloadBlob(new Blob([bytes], { type: "application/pdf" }), downloadName);
     } catch (e) {
@@ -2573,7 +2593,7 @@ async function writeFile(
     }
     if (own) markSaved(key);
     if (handle) showToast("warn", t("download.savedInstead", { name: downloadName }));
-    else showToast("info", done(name), undefined, own ? installHint() : undefined);
+    else showToast("info", done(named), undefined, own ? installHint() : undefined);
   });
   if (handle && !delivered) await removeIfEmpty(handle);
   return outcome;

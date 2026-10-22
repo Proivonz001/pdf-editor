@@ -1,7 +1,11 @@
 // Keyboard shortcuts: Ctrl/Cmd + Z (undo), Ctrl+Shift+Z / Ctrl+Y (redo), Ctrl + + / − / 0
-// (zoom in, out, fit width), Ctrl+O (open), Ctrl+S (download), and Escape, one step at a time:
-// in Modifica it closes the text writer of Aggiungi testo (nothing written), else deselects the
-// selected image, else goes from Aggiungi testo back to Cambia, else leaves Modifica (the line
+// (zoom in, out, fit width), Ctrl+O (open), Ctrl+S (download), Cerca's Ctrl+F (open the search, or
+// give its field the focus again; also from a text field, as Ctrl+O, never the browser's own find
+// while a document is open), F3 and Ctrl+G (the next result; with Shift the previous one; they
+// open the search when it is closed; Enter and Esc are the search bar's own), and Escape, one step
+// at a time: in Modifica it closes the text writer of Aggiungi testo (nothing written), else
+// deselects the selected image, else drops the area waiting in Bianchetto or Oscura, else goes from
+// Aggiungi testo, Bianchetto or Oscura back to Cambia, else leaves Modifica (the line
 // editor, the writer's field and the image frame handle their own Escape first; the frame also its
 // arrows, with Shift or Alt, + / −, comma and full stop, and Delete); in Compila e firma it closes
 // the text writer (nothing written), else cancels the signature waiting to be placed (back to
@@ -21,6 +25,8 @@ import {
 } from "./actions";
 import { openFilePicker } from "./filePicker";
 import { viewerScroller } from "./focus";
+import { cancelPendingRedact } from "./redact/pending";
+import { goToResult, openSearch, searchOpen } from "./search/state";
 
 function isTypingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
@@ -35,7 +41,9 @@ function escapeStep(): boolean {
     if (editingLine.peek()) return false; // the line editor's own
     if (openWriter.peek()) cancelWriter(); // as in Compila e firma: from the writer's context bar
     else if (selected) void selectImage(selected.pageIndex, null);
-    else if (editTool.peek() === "addText") void setEditTool("change");
+    else if (editTool.peek() !== "change") {
+      if (!cancelPendingRedact()) void setEditTool("change"); // Bianchetto and Oscura: the waiting area first
+    }
     else void setTool(null);
     return true;
   }
@@ -59,6 +67,12 @@ function writeOnEnter(target: EventTarget | null): boolean {
   return true;
 }
 
+/** F3, Ctrl+G (with Shift: `dir` -1): the next result when the search is open, else open it. */
+function nextResult(dir: 1 | -1): void {
+  if (searchOpen.peek()) goToResult(dir);
+  else openSearch();
+}
+
 /** A modal is open: a dialog, a sheet, or the scan flow (its own signal). */
 function modalOpen(): boolean {
   return !!(dialog.peek() || sheet.peek() || scanFlow.peek());
@@ -74,10 +88,28 @@ function onKeyDown(e: KeyboardEvent) {
     if (!e.defaultPrevented && !e.repeat && !modalOpen() && writeOnEnter(e.target)) e.preventDefault();
     return;
   }
+  if (e.key === "F3" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (modalOpen() || !doc.peek()) return;
+    e.preventDefault();
+    nextResult(e.shiftKey ? -1 : 1);
+    return;
+  }
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   if (modalOpen()) return;
   const key = e.key.toLowerCase();
   const hasDoc = doc.peek() !== null;
+
+  // Cerca: ours while a document is open, from a text field too.
+  if (hasDoc && key === "f" && !e.shiftKey) {
+    e.preventDefault();
+    openSearch();
+    return;
+  }
+  if (hasDoc && key === "g") {
+    e.preventDefault();
+    nextResult(e.shiftKey ? -1 : 1);
+    return;
+  }
 
   // Zoom: always ours while a document is open (never the browser's page zoom).
   if (hasDoc && (key === "+" || key === "=" || key === "-" || key === "_" || key === "0")) {

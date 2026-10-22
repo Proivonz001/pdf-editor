@@ -467,3 +467,56 @@ export const IconArrowDown = () => (
     <path d="m6.5 13 5.5 5.5 5.5-5.5" />
   </Svg>
 );
+
+// -- r5: SearchUI
+
+/** A magnifier over lines of text: Cerca (not the plain magnifier of the phone's Zoom row, IconZoom). */
+export const IconSearch = () => (
+  <Svg>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="m20 20-4.6-4.6" />
+    <path d="M7.8 9h5.4M7.8 12h3.4" />
+  </Svg>
+);
+
+/** A chevron up: the previous search result. */
+export const IconPreviousResult = () => (
+  <Svg>
+    <path d="m6 15 6-6 6 6" />
+  </Svg>
+);
+
+/** A chevron down: the next search result. */
+export const IconNextResult = () => (
+  <Svg>
+    <path d="m6 9 6 6 6-6" />
+  </Svg>
+);
+
+/** Two sliders: the search options. */
+export const IconSearchOptions = () => (
+  <Svg>
+    <path d="M4 8h9M17 8h3M4 16h3M11 16h9" />
+    <circle cx="15" cy="8" r="2" />
+    <circle cx="9" cy="16" r="2" />
+  </Svg>
+);
+
+// Release 5: Modifica's Bianchetto and Oscura (ui/EditBar.tsx).
+
+/** An eraser on a line: Bianchetto (white-out). */
+export const IconWhiteout = () => (
+  <Svg>
+    <path d="M14.6 4.4a1.5 1.5 0 0 1 2.1 0l2.9 2.9a1.5 1.5 0 0 1 0 2.1L11 18H7.4l-3-3a1.5 1.5 0 0 1 0-2.1z" />
+    <path d="m9.5 9.5 5 5" />
+    <path d="M12 19.5h7.5" />
+  </Svg>
+);
+
+/** Lines of text with a black bar over the middle one: Oscura (redact). */
+export const IconRedact = () => (
+  <Svg>
+    <path d="M4 6h16M4 18h10" />
+    <rect x="4" y="9.5" width="16" height="5" rx="1" fill="currentColor" />
+  </Svg>
+);

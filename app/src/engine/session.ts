@@ -60,6 +60,15 @@
 // pictures (newFromPictures: a document made here, which Riprendi keeps even with no edits, since
 // it exists nowhere else), and hands out or takes back the original and the log for "Riprendi"
 // (exportSession, resumeSession).
+//
+// Cerca, Bianchetto and Oscura (release 5, ARCHITECTURE.md "Cerca, Bianchetto and Oscura"): a
+// redaction over areas of one or more pages (redact.ts) is one more kind of logged edit, plain data
+// (the mode and the areas in page space, as checked), applied exactly again by every replay, never
+// through protectAdded; a refusal (RedactRefusal) changes and logs nothing. When it removed form
+// widgets, its step answers with a layout of the same pages (`from` the identity) carrying the form
+// and the signatures counted again, as do its undo and redo. The search is stateless steps the
+// client drives (search.ts), over a cache of page texts that follows the history: a step's
+// changedPages leave it, a page operation's layout moves it, a new document empties it.
 import type * as MuPDF from "mupdf";
 import {
   captureGlyphs,
@@ -125,6 +134,9 @@ import { checkPdfA, convertToPdfA, countSignatures, dropPdfaClaim, pdfaClaim } f
 import {
   MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_SOURCE_BYTES, MAX_TEXT_CHARS, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE, passwordProblem,
 } from "./protocol";
+import { RedactError, previewRedaction, redactAreas } from "./redact";
+import { MAX_REDACT_RECTS, clampAreas } from "./redactGeometry";
+import { normalizeQuery, readPageText, searchPageText, type PageText } from "./search";
 import type {
   AddImageResult,
   AddTextResult,
@@ -155,9 +167,16 @@ import type {
   PagesResult,
   PdfaReport,
   Rect,
+  RedactArea,
+  RedactMode,
+  RedactPreview,
+  RedactResult,
   ResumeResult,
   SaveOptions,
   SaveResult,
+  SearchHit,
+  SearchOptions,
+  SearchStep,
   SegmentSource,
   SessionExport,
   SourceResult,
@@ -214,7 +233,7 @@ const SNAPSHOT_OPTIONS = "encrypt=none,compress-images=yes";
  * How a download is written (rule 4): garbage collected and compressed, unencrypted. PDF/A uses
  * exactly this too: MuPDF leaves the XMP metadata stream uncompressed, as PDF/A wants.
  */
-const SAVE_OPTIONS = "garbage=compact,compress=yes,encrypt=none";
+export const SAVE_OPTIONS = "garbage=compact,compress=yes,encrypt=none";
 
 /**
  * ...or protected with a password: AES-256, with the same password as user and owner password,
@@ -239,6 +258,17 @@ export const MAX_PAGE_PICTURE_PIXELS = 40_000_000;
  * other, so an app that logs edits differently one day can tell an old log from its own.
  */
 export const LOG_VERSION = 1;
+
+/** A search step's time budget (SearchStep): by default, and the limits it is clamped to, in ms. */
+const SEARCH_BUDGET_MS = 20, MIN_SEARCH_BUDGET_MS = 5, MAX_SEARCH_BUDGET_MS = 200;
+/** Most hits one search step returns. */
+export const MAX_SEARCH_HITS = 10_000;
+/**
+ * Most memory the cached page texts may take together (search.PageText.bytes): 600 dense pages
+ * take about 23 MB, and reading a page again takes 7 to 9 ms. Past it a page read is not kept
+ * (pageText), so a longer document keeps the pages read first and a search reads only the rest.
+ */
+const MAX_SEARCH_CACHE_BYTES = 32 * 1024 * 1024;
 
 /** What exportSession gives as SessionExport.log: the edits, as plain data a structured clone keeps. */
 export interface SessionLog {
@@ -286,7 +316,7 @@ export interface RenderPixels {
 }
 
 /** One applied edit, as replayed by undo. Plain data, so it can be stored ("Riprendi": exportSession). */
-export type LoggedEdit = TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit | PageOpEdit;
+export type LoggedEdit = TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit | PageOpEdit | RedactEdit;
 
 /** One whole line of text replaced (deleted when `replacement` is empty). */
 export interface TextEdit {
@@ -420,6 +450,17 @@ export interface PicturePage {
 }
 
 /**
+ * Bianchetto ("whiteout") or Oscura ("redact") over areas of one or more pages (redact.ts), one
+ * edit: the areas in page space as checked (areasFrom: one entry per page, in page order, the rects
+ * in the order given), which every replay applies exactly again (redactAreas is deterministic).
+ */
+export interface RedactEdit {
+  kind: "redact";
+  mode: RedactMode;
+  areas: RedactArea[];
+}
+
+/**
  * The pages an edit changes, ascending: what undo and redo report as changedPages. For a page
  * operation, the pages it turned or made, as indices of the pages after it (a move or a delete
  * changes how no page looks; HistoryState.layout says where the pages went).
@@ -432,6 +473,8 @@ export function pagesOf(e: LoggedEdit): number[] {
       return [...new Set(e.targets.map((t) => t.pageIndex))].sort((a, b) => a - b);
     case "pages":
       return pagesMade(e);
+    case "redact":
+      return [...new Set(e.areas.map((a) => a.pageIndex))].sort((a, b) => a - b);
     case "text":
     case "image":
     case "addText":
@@ -477,7 +520,8 @@ export type SessionErrorCode =
   /**
    * The line has characters the engine cannot rewrite safely (LineInfo.editable is false), the
    * image is locked (ImageInfo.movable is false), the form field is locked (FieldWidget.locked),
-   * or the page's content cannot take new text or a new picture safely (newcontent.ts).
+   * or the page's content cannot take new text or a new picture safely (newcontent.ts). Also a
+   * redaction refused (redact.ts), its message naming the RedactRefusal: nothing changed.
    */
   | "not-editable"
   /** An edit failed and the document could not be restored: only close and open still work. */
@@ -555,6 +599,14 @@ export class EngineSession {
   private source: OpenSource | null = null;
   /** The number the last openSource gave its PDF (SourceResult.source). */
   private sources = 0;
+  /**
+   * Cerca's page texts (search.readPageText) by page index, read once and kept while the page does
+   * not change (history: the step's changedPages leave, a layout moves the others; close empties
+   * it), at most MAX_SEARCH_CACHE_BYTES together.
+   */
+  private texts = new Map<number, PageText>();
+  /** The redactions (log entries, the same objects at every replay) that removed form widgets: their steps answer with formLayout. */
+  private formEdits = new WeakSet<LoggedEdit>();
 
   constructor(private readonly mupdf: MuPDFModule) {}
 
@@ -631,6 +683,7 @@ export class EngineSession {
     this.redoStack = [];
     this.checkpoints = [];
     this.broken = false;
+    this.texts.clear();
     return null;
   }
 
@@ -1155,7 +1208,8 @@ export class EngineSession {
    * Undoes the last edit: re-opens the nearest checkpoint (or the original) and replays from
    * there. Undoing a page operation gives the layout it goes back to (undoneFrom: the pages it had
    * made come with no `from`, those it had deleted are back without one too), and as changedPages
-   * the pages it had turned.
+   * the pages it had turned. Undoing (or redoing) a redaction that removed form widgets gives the
+   * pages' layout with the form counted again (formLayout).
    */
   undo(): HistoryState {
     const doc = this.requireDoc();
@@ -1166,7 +1220,7 @@ export class EngineSession {
     this.replaceDoc(fresh);
     this.log.pop();
     this.redoStack.push(last);
-    if (last.kind !== "pages" || !before) return this.history(pagesOf(last));
+    if (last.kind !== "pages" || !before) return this.history(pagesOf(last), this.formLayout(last));
     const count = fresh.countPages(); // the pages before the operation, again
     return this.history(last.op === "rotate" ? pagesOf(last) : [], this.layoutAfter(undoneFrom(layoutFrom(last, count), count), before));
   }
@@ -1188,7 +1242,7 @@ export class EngineSession {
     this.log.push(next);
     this.checkpoint(doc);
     if (reopen) this.carryOnReopened(doc);
-    if (next.kind !== "pages" || !before) return this.history(pagesOf(next));
+    if (next.kind !== "pages" || !before) return this.history(pagesOf(next), this.formLayout(next));
     return this.history(pagesOf(next), this.layoutAfter(layoutFrom(next, count), before));
   }
 
@@ -1414,6 +1468,76 @@ export class EngineSession {
     return { ok: true, ...this.currentInfo(), history: this.history([]), applied: this.log.length, failedAt };
   }
 
+  // ------------------------------------------------------------------ Cerca, Bianchetto, Oscura (release 5)
+
+  /**
+   * One step of a search (search.ts; nothing is kept between steps but the page texts): the pages
+   * from `from` up to `to` (exclusive, default the page count), at least one, then more while the
+   * step has taken less than `budgetMs` (clamped to 5..200, default 20) and found fewer than
+   * `maxHits` (1..MAX_SEARCH_HITS, default and at most that). `next`: the page after the last one
+   * read (null when that is `to`); `truncated`: the last page read holds more hits than the step
+   * had room for. The query is trimmed and cut at MAX_SEARCH_CHARS (search.normalizeQuery): one
+   * left empty finds nothing (next null). Refused ("bad-request"): a query that is not a string,
+   * `from` outside 0..pageCount, `to` outside from..pageCount, a budget or a limit that is not a
+   * number of the kind it should be, options that are not booleans.
+   */
+  search(query: string, from: number, { options, to, budgetMs, maxHits }: { options?: SearchOptions; to?: number; budgetMs?: number; maxHits?: number } = {}): SearchStep {
+    const doc = this.requireDoc();
+    if (typeof query !== "string") throw new SessionError("A search query is a string", "bad-request");
+    const count = doc.countPages();
+    if (!isCount(from) || from < 0 || from > count) throw new SessionError(`Cannot search from page ${String(from)}`, "bad-request");
+    const end = to ?? count;
+    if (!isCount(end) || end < from || end > count) throw new SessionError(`Cannot search up to page ${String(to)}`, "bad-request");
+    if (budgetMs !== undefined && (typeof budgetMs !== "number" || Number.isNaN(budgetMs))) throw new SessionError("A search budget is a number of ms", "bad-request");
+    const budget = Math.min(MAX_SEARCH_BUDGET_MS, Math.max(MIN_SEARCH_BUDGET_MS, budgetMs ?? SEARCH_BUDGET_MS));
+    if (maxHits !== undefined && (!isCount(maxHits) || maxHits < 1)) throw new SessionError("A search finds at least one hit", "bad-request");
+    const limit = Math.min(MAX_SEARCH_HITS, maxHits ?? MAX_SEARCH_HITS);
+    const how = searchOptionsFrom(options);
+    const q = normalizeQuery(query);
+    const hits: SearchHit[] = [];
+    if (!q) return { hits, next: null, truncated: false };
+    const started = performance.now();
+    let p = from, truncated = false;
+    while (p < end) {
+      const room = limit - hits.length;
+      const found = searchPageText(this.pageText(doc, p++), q, how, room + 1); // (one more: is there more on the page?)
+      truncated = found.length > room;
+      hits.push(...found.slice(0, room));
+      if (hits.length >= limit || performance.now() - started >= budget) break;
+    }
+    return { hits, next: p < end ? p : null, truncated };
+  }
+
+  /**
+   * What redact(`areas`, `mode`) would remove, leave or refuse (redact.previewRedaction), with
+   * nothing changed or logged. The arguments are checked as redact() checks them.
+   */
+  redactPreview(areas: RedactArea[], mode: RedactMode): RedactPreview {
+    const doc = this.requireDoc();
+    const checked = this.redactAreasFrom(doc, areas), how = modeFrom(mode);
+    return fromRedact(() => previewRedaction(this.mupdf, doc, checked, how));
+  }
+
+  /**
+   * Bianchetto ("whiteout") or Oscura ("redact") over `areas` (one or more pages, page space), one
+   * edit (redact.redactAreas, which says what goes and what stays): undo, redo, checkpoints and
+   * Riprendi replay it exactly. Checked as untrusted, "bad-request" with nothing done: the mode, a
+   * list of areas (not empty) each on a page of the document with a list of rects of four finite
+   * numbers, at most MAX_REDACT_RECTS on a page; areas wholly off their pages. A refusal (a
+   * picture in printing colours or too large under the area, resources shared in a way that cannot
+   * be cleaned for sure, content that cannot take the box) is "not-editable", its message naming
+   * the RedactRefusal, with nothing changed or logged. changedPages: the areas' pages. When
+   * widgets went (Oscura over form fields), the result has a layout of the same pages (formLayout:
+   * the form and the signatures counted again); `redactions` counts the redactions applied.
+   */
+  redact(areas: RedactArea[], mode: RedactMode): RedactResult {
+    const doc = this.requireDoc();
+    const edit: RedactEdit = { kind: "redact", mode: modeFrom(mode), areas: this.redactAreasFrom(doc, areas) };
+    const failure = edit.mode === "redact" ? "Could not black out the area" : "Could not white out the area";
+    const { report } = this.commit(doc, edit, () => this.applyRedact(doc, edit), failure);
+    return { ...this.history(pagesOf(edit), this.formLayout(edit)), report };
+  }
+
   // ------------------------------------------------------------------ saving
 
   /**
@@ -1544,8 +1668,13 @@ export class EngineSession {
 
   // ------------------------------------------------------------------ internals
 
-  /** The history now; `layout` for a step that changed the pages themselves (a page operation, its undo or redo). */
+  /**
+   * The history now; `layout` for a step that changed the pages themselves (a page operation, its
+   * undo or redo) or the form (formLayout). Every step that changed the document says so here, so
+   * this is also where the cached page texts follow it (forgetTexts).
+   */
   private history(changedPages: number[], layout?: PageLayout): HistoryState {
+    this.forgetTexts(changedPages, layout);
     const state: HistoryState = {
       editCount: this.log.length,
       canUndo: this.log.length > 0,
@@ -1553,7 +1682,61 @@ export class EngineSession {
       changedPages,
     };
     if (layout) state.layout = layout;
+    const redactions = this.log.filter((e) => e.kind === "redact").length;
+    if (redactions) state.redactions = redactions;
     return state;
+  }
+
+  /**
+   * After a step: a page operation's layout moves the cached page texts to their pages' new
+   * indices (the pages it made, with no `from`, have none), then the pages the step changed (their
+   * new indices) lose theirs.
+   */
+  private forgetTexts(changedPages: number[], layout?: PageLayout) {
+    if (layout) {
+      const moved = new Map<number, PageText>();
+      layout.from.forEach((was, now) => {
+        const text = was === null ? undefined : this.texts.get(was);
+        if (!text) return;
+        text.pageIndex = now;
+        moved.set(now, text);
+      });
+      this.texts = moved;
+    }
+    for (const p of changedPages) this.texts.delete(p);
+  }
+
+  /**
+   * Page `pageIndex`'s text for searching, from the cache or read now, and kept while the cache
+   * stays within MAX_SEARCH_CACHE_BYTES. Never by evicting older texts: a search reads the pages
+   * in order and the next one starts from the same page, so each read would evict the very page
+   * the next search needs first, and over the cap no search would find any page cached.
+   */
+  private pageText(doc: MuPDF.PDFDocument, pageIndex: number): PageText {
+    const kept = this.texts.get(pageIndex);
+    if (kept) return kept;
+    const text = readPageText(this.mupdf, doc, pageIndex);
+    let total = text.bytes;
+    for (const t of this.texts.values()) total += t.bytes;
+    if (total <= MAX_SEARCH_CACHE_BYTES) this.texts.set(pageIndex, text);
+    return text;
+  }
+
+  /**
+   * The layout of a step of a redaction that removed form widgets (formEdits: new, undone or
+   * redone): the same pages (`from` the identity), with the form and the signatures counted again.
+   * Undefined for any other step.
+   */
+  private formLayout(edit: LoggedEdit): PageLayout | undefined {
+    if (!this.formEdits.has(edit)) return undefined;
+    return this.layoutAfter(Array.from({ length: this.doc!.countPages() }, (_, i) => i), []);
+  }
+
+  /** A redaction (redact.redactAreas), new or replayed alike; notes the edit when it removed widgets (formLayout). */
+  private applyRedact(doc: MuPDF.PDFDocument, edit: RedactEdit) {
+    const r = redactAreas(this.mupdf, doc, edit.areas, edit.mode);
+    if (r.formChanged) this.formEdits.add(edit);
+    return r;
   }
 
   /**
@@ -1596,6 +1779,18 @@ export class EngineSession {
   private checkPage(doc: MuPDF.PDFDocument, pageIndex: number) {
     if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= doc.countPages())
       throw new SessionError(`No page ${pageIndex}`, "bad-request");
+  }
+
+  /**
+   * A redaction's areas checked as untrusted (areasFrom), and on their pages as redact.ts reads
+   * them: "bad-request" when every rect lies wholly off its page (clampAreas leaves none), so such
+   * a request is answered here and never reaches commit.
+   */
+  private redactAreasFrom(doc: MuPDF.PDFDocument, areas: unknown): RedactArea[] {
+    const checked = areasFrom(areas, doc.countPages());
+    if (!checked.some((a) => clampAreas(a.rects, this.boundsOf(doc, a.pageIndex)).length))
+      throw new SessionError("The areas are outside the pages", "bad-request");
+    return checked;
   }
 
   /** The page's bounds (page space). */
@@ -1679,17 +1874,23 @@ export class EngineSession {
    * Applies a new edit through `run` and records it: if it fails the document is rolled back
    * (recover, "edit-failed"); if not, the edit is logged, the redo stack cleared and a checkpoint
    * taken when due (after which `doc` is no longer the working document: continueOn). A refusal
-   * of newcontent.ts (the page's content cannot take an addition, nothing of a text can be drawn)
-   * or of pages.ts (a page tree it cannot read) keeps its own code after the rollback.
+   * of newcontent.ts (the page's content cannot take an addition, nothing of a text can be drawn),
+   * of pages.ts (a page tree it cannot read) or of redact.ts (redactMessage) keeps its own code
+   * after the rollback. A refusal or bad request redact.ts found before it changed anything
+   * (`changed` false) needs no rollback: the working document stays as it is.
    */
   private commit<T>(doc: MuPDF.PDFDocument, edit: LoggedEdit, run: () => T, failure: string): T {
     let result: T;
     try {
       result = run();
     } catch (err) {
+      // (a rebuild costs time and memory, and a failed one would break the session over a refusal)
+      if (err instanceof RedactError && err.changed === false) throw new SessionError(redactMessage(err), err.code);
       const recovered = this.recover(`${failure}: ${errorMessage(err)}`);
       if (recovered.code === "edit-failed" && (err instanceof ContentError || err instanceof PagesError))
         throw new SessionError(err.message, err.code);
+      // (the one refusal redact.ts finds after the change: rolled back, its code kept)
+      if (recovered.code === "edit-failed" && err instanceof RedactError) throw new SessionError(redactMessage(err), err.code);
       throw recovered;
     }
     formChanged(doc);
@@ -1735,6 +1936,9 @@ export class EngineSession {
         break;
       case "pages":
         reopen = (this.applyPages(doc, edit).layers ?? 0) > 0;
+        break;
+      case "redact":
+        this.applyRedact(doc, edit);
         break;
       default: {
         const unknown: never = edit;
@@ -2330,6 +2534,8 @@ function copyEdit(e: LoggedEdit): LoggedEdit {
           return { ...e, expect };
       }
     }
+    case "redact":
+      return { ...e, areas: e.areas.map((a) => ({ pageIndex: a.pageIndex, rects: a.rects.map(copyRect) })) };
     case "pages":
       switch (e.op) {
         case "move":
@@ -2541,6 +2747,67 @@ function languageOf(doc: MuPDF.PDFDocument): string | null {
 function scannedPage(lang: string | null): string {
   const tag = lang?.trim() ?? "";
   return !tag || /^it(?![a-z])/i.test(tag) ? "Pagina scansionata" : "Scanned page";
+}
+
+// ---------------------------------------------------------------------------------------------
+// Release 5: Cerca, Bianchetto, Oscura
+
+/** A redaction's mode from the main thread: "whiteout" or "redact" ("bad-request" otherwise). */
+function modeFrom(mode: unknown): RedactMode {
+  if (mode !== "whiteout" && mode !== "redact") throw new SessionError(`Unknown redaction ${String(mode)}`, "bad-request");
+  return mode;
+}
+
+const isRect = (r: unknown): r is Rect => Array.isArray(r) && r.length === 4 && r.every((v) => typeof v === "number" && Number.isFinite(v));
+
+/**
+ * A redaction's areas from the main thread, checked as untrusted ("bad-request" otherwise): a list,
+ * not empty, of areas each on a page (0..count-1) with a list of rects of four finite numbers, at
+ * most MAX_REDACT_RECTS on a page, some rect in all. Made the plain data the log keeps: one entry
+ * per page, in page order, its rects copied in the order given (as redact.redactAreas merges them).
+ */
+function areasFrom(areas: unknown, count: number): RedactArea[] {
+  if (!Array.isArray(areas) || areas.length === 0) throw new SessionError("No area given", "bad-request");
+  const byPage = new Map<number, Rect[]>();
+  for (const a of areas as unknown[]) {
+    const { pageIndex, rects } = (a && typeof a === "object" ? a : {}) as Partial<Record<keyof RedactArea, unknown>>;
+    if (!isCount(pageIndex) || pageIndex < 0 || pageIndex >= count) throw new SessionError(`No page ${String(pageIndex)}`, "bad-request");
+    if (!Array.isArray(rects)) throw new SessionError("An area lists its rects", "bad-request");
+    const list = byPage.get(pageIndex) ?? [];
+    for (const r of rects as unknown[]) {
+      if (!isRect(r)) throw new SessionError("A rect is four finite numbers", "bad-request");
+      if (list.length >= MAX_REDACT_RECTS) throw new SessionError(`At most ${MAX_REDACT_RECTS} rects on a page`, "bad-request");
+      list.push([r[0], r[1], r[2], r[3]]);
+    }
+    byPage.set(pageIndex, list);
+  }
+  const out = [...byPage].filter(([, rects]) => rects.length).sort(([a], [b]) => a - b).map(([pageIndex, rects]) => ({ pageIndex, rects }));
+  if (!out.length) throw new SessionError("No area given", "bad-request");
+  return out;
+}
+
+/** Search options from the main thread: absent, or an object whose caseSensitive, wholeWord and matchDiacritics are booleans when given ("bad-request" otherwise). */
+function searchOptionsFrom(options: unknown): SearchOptions {
+  if (options === undefined) return {};
+  if (!options || typeof options !== "object" || Array.isArray(options)) throw new SessionError("Search options are an object", "bad-request");
+  const o = options as Record<string, unknown>;
+  for (const k of ["caseSensitive", "wholeWord", "matchDiacritics"])
+    if (o[k] !== undefined && typeof o[k] !== "boolean") throw new SessionError(`The search option ${k} is true or false`, "bad-request");
+  return { caseSensitive: o.caseSensitive === true, wholeWord: o.wholeWord === true, matchDiacritics: o.matchDiacritics === true };
+}
+
+/** A refusal's message names its reason (the UI reads it: ui/redact refusalOf) and the page; a bad request's is its own. */
+function redactMessage(err: RedactError): string {
+  return err.refusal ? `Refused (${err.refusal}) on page ${(err.pageIndex ?? 0) + 1}: ${err.message}` : err.message;
+}
+
+/** Runs a call of redact.ts, its refusals and bad requests (RedactError) given as the session's. */
+function fromRedact<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (err) {
+    throw err instanceof RedactError ? new SessionError(redactMessage(err), err.code) : err;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2773,6 +3040,16 @@ class LogReader {
       }
       case "pages":
         return this.pagesEdit(o);
+      case "redact": {
+        if (o.mode !== "whiteout" && o.mode !== "redact") this.bad(`Unknown redaction ${String(o.mode)}`);
+        if (!Array.isArray(o.areas)) this.bad("A redaction lists its areas");
+        const areas = (o.areas as unknown[]).map((x) => {
+          const a = record(x, "An area");
+          if (!Array.isArray(a.rects)) this.bad("An area lists its rects");
+          return { pageIndex: this.index(a.pageIndex, "An area's page"), rects: (a.rects as unknown[]).map((r) => this.numbers(r, 4, "A rect") as Rect) };
+        });
+        return { kind: "redact", mode: o.mode as RedactMode, areas };
+      }
       default:
         return this.bad(`Unknown edit ${String(o.kind)}`);
     }

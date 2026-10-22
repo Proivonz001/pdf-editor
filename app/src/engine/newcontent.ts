@@ -492,11 +492,12 @@ function tagNew(doc: Doc, pageIndex: number, type: "P" | "Figure", alt: string |
 const sameObject = (a: Obj, b: Obj) => a.isIndirect() && b.isIndirect() && a.asIndirect() === b.asIndirect();
 
 /**
- * Marked content `mcid` of the page leaves the structure tree (an added line deleted): its
- * ParentTree entry becomes null, and the element (the app's /P) leaves its parent, or, when it
- * holds other content too (a line edit tagged its replacement under it), keeps that content.
+ * Marked content `mcid` of the page leaves the structure tree (an added line deleted; redact.ts: one
+ * the redaction emptied): its ParentTree entry becomes null, and the element (the app's /P) leaves
+ * its parent, or, when it holds other content too (a line edit tagged its replacement under it),
+ * keeps that content.
  */
-function untag(doc: Doc, pageIndex: number, mcid: number) {
+export function untag(doc: Doc, pageIndex: number, mcid: number) {
   try {
     const parents = structParents(doc, doc.findPage(pageIndex));
     if (!parents || mcid >= parents.length) return;

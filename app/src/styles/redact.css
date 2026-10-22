@@ -1,0 +1,303 @@
+/* Release 5: Modifica's Bianchetto and Oscura (viewer/RedactLayer.tsx, ui/EditBar.tsx) and the
+   review of "Oscura tutti i risultati…" (ui/redact/RedactAllDialog.tsx).
+   On the page (white in both themes, like the other page marks): the tap catcher at the bottom,
+   the text lines above it (1: quiet until the pointer or the keyboard is on one), the rectangle
+   being dragged out (2), the waiting box (3) with the image frame's handles and grip (viewer.css),
+   and its context bar (4: .context-slot). A waiting box is told apart by its dashed outline, not by
+   colour alone: Oscura's is black at about 55 %, Bianchetto's white with a light hatch (white on
+   white would not show). */
+
+.redact-layer {
+  position: absolute;
+  inset: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* One finger scrolls, two zoom; a mouse drags a rectangle (RedactLayer). */
+.redact-catcher {
+  position: absolute;
+  inset: 0;
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+.redact-line {
+  position: absolute;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  font: inherit;
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (hover: hover) {
+  .redact-catcher,
+  .redact-line {
+    cursor: crosshair;
+  }
+
+  .redact-line:hover {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    outline: 1px dashed var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+.redact-line:focus-visible {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.redact-drawing,
+.redact-box {
+  position: absolute;
+  box-sizing: border-box;
+  outline: 2px dashed var(--accent);
+  outline-offset: 0;
+  box-shadow: 0 0 0 3px rgb(255 255 255 / 0.8);
+}
+
+.redact-drawing {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.redact-drawing.is-redact,
+.redact-box.is-redact {
+  background: rgb(0 0 0 / 0.55);
+}
+
+.redact-drawing.is-whiteout,
+.redact-box.is-whiteout {
+  background: repeating-linear-gradient(135deg, rgb(255 255 255 / 0.92) 0 6px, rgb(39 71 216 / 0.16) 6px 8px);
+}
+
+.redact-box {
+  z-index: 3;
+  cursor: move;
+}
+
+/* With a fine pointer the box itself drags; on touch screens one finger scrolls through it (its grip and corners move it). */
+@media (pointer: fine) {
+  .redact-box {
+    touch-action: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .redact-box {
+    cursor: default;
+  }
+
+  /* Touch: each corner target is 44 × 44 px, as on the image frame, also on a box as thin as a
+     line's: it reaches --reach-x / --reach-y px into the box (RedactLayer) and the rest out. */
+  .redact-box .image-handle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .redact-box .image-handle.is-nw { margin: calc(var(--reach-y, 22px) - 44px) 0 0 calc(var(--reach-x, 22px) - 44px); }
+  .redact-box .image-handle.is-ne { margin: calc(var(--reach-y, 22px) - 44px) 0 0 calc(-1 * var(--reach-x, 22px)); }
+  .redact-box .image-handle.is-se { margin: calc(-1 * var(--reach-y, 22px)) 0 0 calc(-1 * var(--reach-x, 22px)); }
+  .redact-box .image-handle.is-sw { margin: calc(-1 * var(--reach-y, 22px)) 0 0 calc(var(--reach-x, 22px) - 44px); }
+  .redact-box .image-handle.is-nw::before { left: calc(37px - var(--reach-x, 22px)); top: calc(37px - var(--reach-y, 22px)); }
+  .redact-box .image-handle.is-ne::before { right: calc(37px - var(--reach-x, 22px)); top: calc(37px - var(--reach-y, 22px)); }
+  .redact-box .image-handle.is-se::before { right: calc(37px - var(--reach-x, 22px)); bottom: calc(37px - var(--reach-y, 22px)); }
+  .redact-box .image-handle.is-sw::before { left: calc(37px - var(--reach-x, 22px)); bottom: calc(37px - var(--reach-y, 22px)); }
+
+  /* Below a small box the grip clears the corner targets (RedactLayer's GRIP_ROOM). */
+  .redact-box .image-grip.is-outside {
+    top: calc(100% + 66px);
+  }
+}
+
+.redact-box:focus-visible {
+  box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--accent);
+}
+
+.redact-box.is-pending {
+  cursor: progress;
+}
+
+.redact-box.is-pending > * {
+  display: none;
+}
+
+/* The context bar: what goes and the warnings (wrapping), then Annulla and Sbianca / Oscura. The
+   notes' live region is never display:none, even empty: one that shows only with its first words
+   is not reliably heard. */
+.context-bar.redact-bar {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  height: auto;
+  max-width: min(24rem, 100%);
+  white-space: normal;
+}
+
+.redact-note {
+  margin: 0;
+  padding: 4px 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.redact-note.is-removes {
+  font-weight: 600;
+}
+
+.redact-note.is-info {
+  color: var(--muted);
+}
+
+.redact-note.is-warn,
+.redact-note.is-refused {
+  border-radius: calc(var(--radius) - 3px);
+  background: var(--hint-bg);
+  color: var(--hint-text);
+}
+
+.redact-note.is-refused {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.btn.redact-use {
+  height: 26px;
+  padding: 0 10px;
+  color: inherit;
+  font-size: var(--fs-xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.redact-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-height: 28px;
+  white-space: nowrap;
+}
+
+@media (pointer: coarse) {
+  .redact-row {
+    min-height: 36px;
+  }
+
+  .btn.redact-use {
+    height: 36px;
+  }
+}
+
+/* Modifica's banner with five sub-tools: icons only below Compila e firma's width (shell.css). */
+@container tool-banner (max-width: 899.98px) {
+  .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
+    width: 32px;
+    padding: 0;
+  }
+
+  .edit-banner.is-edit .sub-tools.is-banner .sub-tool-label {
+    display: none;
+  }
+}
+
+/* Touch screens: those icons keep the full 44 px width (shell.css does the same below 640 px). */
+@media (pointer: coarse) {
+  @container tool-banner (max-width: 899.98px) {
+    .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
+      width: var(--tap);
+    }
+  }
+}
+
+/* --- "Oscura tutti i risultati…" ---------------------------------------------------------- */
+
+.redact-all-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: min(50vh, 28rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.redact-all-hit {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: var(--tap);
+  padding: 4px 2px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.redact-all-hit .dl-checkbox {
+  margin-top: 1px;
+}
+
+.redact-all-context {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.redact-all-match {
+  padding: 0 2px;
+  border-radius: 2px;
+  background: var(--hl);
+  color: inherit;
+  font-weight: 600;
+}
+
+.redact-all-where {
+  color: var(--muted);
+}
+
+/* The sheet: the list scrolls inside, the buttons stay in reach. */
+.sheet-redact-all .redact-all-list {
+  max-height: 40vh;
+}
+
+/* --- Forced colours: the marks on the page keep their colours (the page stays white) -------- */
+
+@media (forced-colors: active) {
+  .redact-layer {
+    forced-color-adjust: none;
+  }
+
+  .redact-box,
+  .redact-drawing {
+    box-shadow: none;
+    outline: 2px dashed var(--accent);
+  }
+
+  .redact-box:focus-visible {
+    outline: 4px double var(--accent);
+  }
+
+  .redact-all-match {
+    forced-color-adjust: none;
+    background: Mark;
+    color: MarkText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .redact-bar {
+    animation: none;
+  }
+}

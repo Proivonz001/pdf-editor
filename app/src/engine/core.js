@@ -115,8 +115,10 @@ export function releasePage(page, lines = [], glyphs = []) {
 const glyphStart = (ch) => ch.glyphOrigin;
 
 // MuPDF 1.27 gives every character of vertical text a line of its own. Join
-// consecutive ones that continue each other down the same column.
-function joinVerticalLines(lines) {
+// consecutive ones that continue each other down the same column. Exported for
+// search.ts, whose lighter walk gives lines of the same shape (bbox, wmode, dir,
+// text, chars with origin, glyphOrigin and size).
+export function joinVerticalLines(lines) {
 	const out = [];
 	for (const l of lines) {
 		const prev = out[out.length - 1];
@@ -1430,8 +1432,8 @@ function shrinkQuad(q, fx = 0.7, fy = 0.5) {
 }
 
 // App addition (decorations): the entries of the page's /Annots, in order (references as written,
-// or the dictionaries themselves when written directly in the array).
-function annotEntries(pageObj) {
+// or the dictionaries themselves when written directly in the array). Exported for redact.ts.
+export function annotEntries(pageObj) {
 	const annots = pageObj.get("Annots");
 	const out = [];
 	if (annots.isArray()) annots.forEach((entry) => out.push(entry));
@@ -1450,8 +1452,8 @@ function annotSubtype(entry) {
 }
 
 // App addition (decorations fix): under this /Subtype, which MuPDF does not know, the page's own
-// Redact annotations sit out the edit's redaction (replaceText).
-const PENDING_REDACT = "PdfEditPendingRedact";
+// Redact annotations sit out the edit's redaction (replaceText; redact.ts's too).
+export const PENDING_REDACT = "PdfEditPendingRedact";
 
 // App addition (decorations): the annotations that the redaction took out of /Annots (`before`,
 // annotEntries before it) go back in, each the original object, so that it keeps its /F, /Border,
@@ -1463,8 +1465,8 @@ const PENDING_REDACT = "PdfEditPendingRedact";
 // Popup (its /Parent and the FreeText's /Popup stay right: the objects are the same). The app's
 // own Redact is not in `before`. Widgets are not dropped (MuPDF 1.27; deleting one would also take
 // it out of /AcroForm /Fields, which core-fill.test.ts checks). Returns how many went back: the
-// links, and the other annotations.
-function restoreAnnots(doc, pageObj, before) {
+// links, and the other annotations. Exported for redact.ts (Bianchetto).
+export function restoreAnnots(doc, pageObj, before) {
 	let annots = pageObj.get("Annots");
 	const present = new Set();
 	if (annots.isArray()) annots.forEach((entry) => present.add(annotIdentity(entry)));

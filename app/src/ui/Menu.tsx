@@ -1,7 +1,8 @@
-// A small drop-down menu (the "More" button of the desktop top bar): menu button pattern with
-// arrow-key navigation (Home/End too; ArrowDown/ArrowUp on the button open it), Escape to
-// close (focus back on the button), Tab and click-outside to close. It opens under its button,
-// aligned to the button's right edge (styles/overlays.css).
+// A small drop-down menu (the "More" button of the desktop top bar, Cerca's options): menu button
+// pattern with arrow-key navigation (Home/End too; ArrowDown/ArrowUp on the button open it),
+// Escape to close (focus back on the button), Tab and click-outside to close. Rows are actions,
+// or check boxes (menuitemcheckbox) that leave the menu open as they are ticked. It opens under
+// its button, aligned to the button's right edge (styles/overlays.css).
 import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
 import { ToolButton } from "./Button";
@@ -18,6 +19,8 @@ export interface MenuItem {
   detail?: string;
   /** Draw a thin line above this item, to set it apart (e.g. Close document). */
   divider?: boolean;
+  /** A check box, ticked or not: choosing it leaves the menu open. Left out for an action. */
+  checked?: boolean;
 }
 
 export function MenuButton(props: { label: string; icon: ComponentChildren; items: MenuItem[]; badge?: boolean }) {
@@ -28,7 +31,7 @@ export function MenuButton(props: { label: string; icon: ComponentChildren; item
   const fromEnd = useRef(false);
   const id = useId();
 
-  const items = () => [...(menu.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]:not([disabled])") ?? [])];
+  const items = () => [...(menu.current?.querySelectorAll<HTMLButtonElement>("[role^=menuitem]:not([disabled])") ?? [])];
   const close = (refocus: boolean) => {
     setOpen(false);
     if (refocus) wrap.current?.querySelector<HTMLButtonElement>(".menu-trigger")?.focus();
@@ -97,13 +100,14 @@ export function MenuButton(props: { label: string; icon: ComponentChildren; item
               {item.divider && <div class="menu-divider" role="separator" />}
               <button
                 type="button"
-                role="menuitem"
+                role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+                aria-checked={item.checked}
                 class="menu-item"
                 tabIndex={-1}
                 disabled={item.disabled}
                 lang={item.lang}
                 onClick={() => {
-                  close(true);
+                  if (item.checked === undefined) close(true);
                   item.onSelect();
                 }}
               >

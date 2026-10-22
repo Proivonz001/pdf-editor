@@ -119,6 +119,10 @@
 //     1e-6, isolation 0.5 pt (containment 0.01 pt), holes within 0.5 pt of the rule and at most
 //     2 S wide, long words' underlines in a row 0.3 pt.
 //
+// Release 5: the boxes Bianchetto and Oscura draw (redact.ts, blocks marked /PERedact) are never a
+// line's decoration: a thin one at the foot of a line would otherwise read as its underline, and
+// follow the next edit of that line (redactBoxes).
+//
 // Links do not depend on the paths: on a page too complex for its shapes they still follow. A
 // link is found again by its rect and its URI as MuPDF reads it (one with no scheme, such as
 // "www.example.com", after the document's /URI /Base or "file://"), and its annotation in
@@ -598,6 +602,43 @@ function readContent(pageObj: Obj): Content {
   return out;
 }
 
+/**
+ * Release 5: the page-space bounds of the boxes Bianchetto and Oscura drew (redact.ts: a block
+ * /Artifact <</PERedact id>> BDC q g ... f Q EMC appended from the page's initial state, its
+ * path made of m and l), which the device pass paints as one fill each.
+ */
+function redactBoxes(content: Content, T: Matrix): Rect[] {
+  const out: Rect[] = [];
+  for (const bytes of content.bytes) {
+    if (!holdsRedactMark(bytes)) continue;
+    const s = latin1(bytes);
+    let marks = 0, inside = 0;
+    let points: Point[] = [];
+    for (const o of operations(s)) {
+      if (o.op === "BDC" || o.op === "BMC") {
+        marks++;
+        if (!inside && o.op === "BDC" && o.args[o.args.length - 1]?.dict?.PERedact !== undefined) inside = marks;
+      } else if (o.op === "EMC") {
+        if (inside && marks === inside) {
+          if (points.length) out.push(pointBounds(points.map(([x, y]) => applyTo(T, x, y))));
+          points = [];
+          inside = 0;
+        }
+        if (marks > 0) marks--;
+      } else if (inside && (o.op === "m" || o.op === "l") && isNumeric(o.args, 2)) points.push([o.args[0].num!, o.args[1].num!]);
+    }
+  }
+  return out;
+}
+
+const REDACT_MARK = Array.from("PERedact", (c) => c.charCodeAt(0));
+/** Whether content holds the bytes "PERedact", searched as bytes: a long content is made a string only when it does. */
+function holdsRedactMark(bytes: Uint8Array): boolean {
+  for (let i = bytes.indexOf(REDACT_MARK[0]); i >= 0; i = bytes.indexOf(REDACT_MARK[0], i + 1))
+    if (REDACT_MARK.every((c, k) => bytes[i + k] === c)) return true;
+  return false;
+}
+
 /** Points of a path operation (user space), control points included. */
 function pointsOf(o: PathOp): Point[] {
   const v = o.nums;
@@ -989,6 +1030,9 @@ function findShapes(
   // as often as it is drawn: MuPDF runs it each time.
   if (countPaints(content.bytes, page.getObject().getInheritable("Resources"), 2 * MAX_PATHS) > 2 * MAX_PATHS) return [];
   const pass = devicePass(mupdf, page, region, lineBox);
+  // Release 5: the app's Bianchetto and Oscura boxes are no line's decoration (a thin one under a line looks like an underline).
+  const boxes = redactBoxes(content, page.getTransform() as Matrix);
+  if (boxes.length) pass.drawn = pass.drawn.filter((d) => d.paint !== "fill" || !boxes.some((b) => nearRect(b, d.bbox, 0.05)));
 
   // The paint of each character's glyph (the first drawn at its origin).
   const glyphPaint = hit.chars.map((ch) => {

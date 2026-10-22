@@ -23,14 +23,12 @@ import { fullName } from "../src/engine/forms";
 import {
   PagesError, deletePages, duplicatePages, insertBlankPages, insertPages, keepPages, movePages, pageObjectNumbers, rotatePages,
 } from "../src/engine/pages";
-import { EngineSession } from "../src/engine/session";
+import { EngineSession, SAVE_OPTIONS } from "../src/engine/session";
 import { addStream, appEdited, formPdf, layersPdf, oldDestsPdf, openPdf, plainPdf, richPdf, saveBytes, smallPng } from "./helpers/richPdf";
 
 type Doc = mupdf.PDFDocument;
 type Obj = mupdf.PDFObject;
 
-/** How a download is written (session.ts SAVE_OPTIONS): garbage collected, compressed, unencrypted. */
-const SAVE_OPTIONS = "garbage=compact,compress=yes,encrypt=none";
 const fixture = (name: string) => new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 
 const RICH = richPdf();

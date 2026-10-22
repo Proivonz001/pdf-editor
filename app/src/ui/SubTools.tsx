@@ -96,16 +96,17 @@ export function ToolStrip({ label, items }: { label: string; items: readonly Sub
  * of the current page, is said and takes the focus): the path for the keyboard, screen readers
  * and switch access, on phones too, where a tap on the page cannot be aimed. In Compila e firma
  * for every sub-tool and for the signature waiting to be placed; in Modifica with Aggiungi testo.
- * The icon alone, named by aria-label, with its tooltip.
+ * The icon alone, named by aria-label, with its tooltip. `onClick` replaces placeAtCentre (Bianchetto
+ * and Oscura place their default box).
  */
-export function PlaceCentreButton() {
+export function PlaceCentreButton({ onClick = () => void placeAtCentre() }: { onClick?: () => void } = {}) {
   return (
     <button
       type="button"
       class="btn tool-banner-centre"
       aria-label={t("fill.placeCenter")}
       title={t(isCoarse.value ? "fill.placeCenterTipTouch" : "fill.placeCenterTip")}
-      onClick={() => void placeAtCentre()}
+      onClick={onClick}
     >
       <IconTarget />
     </button>

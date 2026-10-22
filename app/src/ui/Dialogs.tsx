@@ -3,8 +3,8 @@
 // download options and PDF/A questions (ui/DownloadOptions.tsx), and for Fill & sign: the
 // signature chooser and creator (ui/fill/SignatureSheet.tsx), "On every page…" for initials, and
 // "Some required fields are empty" before a download; "Install the app", with this browser's
-// steps (ui/InstallDialog.tsx); and for the page organizer, "From another PDF…" (its page picker)
-// and "Move to…" (ui/organizer).
+// steps (ui/InstallDialog.tsx); for the page organizer, "From another PDF…" (its page picker)
+// and "Move to…" (ui/organizer); and Cerca's "Oscura tutti i risultati…", its review (ui/redact).
 // Cancel is always the quiet secondary button; a confirm that throws edits away is red, and
 // it is Cancel that gets the focus, so Enter never loses work by accident.
 import { useId, useState } from "preact/hooks";
@@ -18,6 +18,7 @@ import { IconShare } from "./icons";
 import { InstallDialog } from "./InstallDialog";
 import { InsertFromPdfDialog } from "./organizer/InsertFromPdfDialog";
 import { MovePagesDialog } from "./organizer/MovePagesDialog";
+import { RedactAllDialog } from "./redact/RedactAllDialog";
 
 type Of<K extends DialogState["kind"]> = Extract<DialogState, { kind: K }>;
 
@@ -245,5 +246,6 @@ export function Dialogs() {
     case "install": return <InstallDialog key={key} state={d} />;
     case "insert-from-pdf": return <InsertFromPdfDialog key={key} state={d} />;
     case "move-pages": return <MovePagesDialog key={key} state={d} />;
+    case "redact-all": return <RedactAllDialog key={key} state={d} />;
   }
 }

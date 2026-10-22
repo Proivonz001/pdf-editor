@@ -1,16 +1,20 @@
 // Desktop tool rail (left, from 640 px, document open): the editing tools (Browse, Edit, Fill &
-// sign) and the view toggles (thumbnails, details panel). Each button shows its icon with a short
-// label under it ("Compila e firma" wraps to two lines); the tooltip says what it does. The tools
-// are exclusive and always go through setTool, so text still typed in the line editor or a writer
-// is written before leaving it. Browse stays on the rail (on phones no tool lit is browsing).
+// sign) and the view toggles (Cerca's find bar, thumbnails, details panel). Each button shows its
+// icon with a short label under it ("Compila e firma" wraps to two lines); the tooltip says what it
+// does. The tools are exclusive and always go through setTool, so text still typed in the line
+// editor or a writer is written before leaving it. Browse stays on the rail (on phones no tool lit
+// is browsing).
 // Details is there at every desktop width: it opens and closes the docked panel, one choice
 // remembered on this device (open by default from 1200 px, closed by default below: panels.ts).
+// Cerca opens the find bar at the top of the viewer, or closes it (Ctrl/⌘+F opens it too, or gives
+// its field the focus again: ui/search/state.ts).
 import type { ComponentChildren } from "preact";
 import { t } from "../i18n";
 import { editingStopped, tool } from "../state";
 import { setTool } from "./actions";
-import { IconDetails, IconEditText, IconPages, IconPointer, IconSign } from "./icons";
+import { IconDetails, IconEditText, IconPages, IconPointer, IconSearch, IconSign } from "./icons";
 import { detailsPanelOpen, pagesPanelOpen, toggleDetailsPanel, togglePagesPanel } from "./panels";
+import { searchKeys, searchOpen, searchShortcut, toggleSearch } from "./search/state";
 
 interface RailButtonProps {
   icon: ComponentChildren;
@@ -20,6 +24,8 @@ interface RailButtonProps {
   onClick: () => void;
   disabled?: boolean;
   controls?: string;
+  /** aria-keyshortcuts. */
+  keys?: string;
 }
 
 function RailButton(p: RailButtonProps) {
@@ -30,6 +36,7 @@ function RailButton(p: RailButtonProps) {
       title={p.tip}
       aria-pressed={p.pressed}
       aria-controls={p.controls}
+      aria-keyshortcuts={p.keys}
       disabled={p.disabled}
       onClick={p.onClick}
     >
@@ -44,6 +51,7 @@ export function ToolRail() {
   const stopped = editingStopped.value;
   const pagesOpen = pagesPanelOpen.value;
   const detailsOpen = detailsPanelOpen.value;
+  const searching = searchOpen.value;
 
   return (
     <nav class="rail" aria-label={t("tools.label")}>
@@ -76,6 +84,15 @@ export function ToolRail() {
       <span class="rail-sep" aria-hidden="true" />
       <div class="rail-group" role="group" aria-labelledby="rail-group-view">
         <span class="section-label rail-label" id="rail-group-view">{t("tools.groupView")}</span>
+        <RailButton
+          icon={<IconSearch />}
+          label={t("search.open")}
+          tip={t("search.openTip", { shortcut: searchShortcut })}
+          keys={searchKeys}
+          pressed={searching}
+          controls={searching ? "find-bar" : undefined}
+          onClick={toggleSearch}
+        />
         <RailButton
           icon={<IconPages />}
           label={t("tools.pages")}
