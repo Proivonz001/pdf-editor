@@ -472,19 +472,19 @@ describe("C5 the tools' bars", () => {
     const toolsOf = () => ofType(edit.EditBanner({ doc: d, elRef }), sub.SubTools)[0];
     let tools = toolsOf();
     expect(tools.props.label).toBe("Editing tools");
-    expect(tools.props.items.map((x: any) => [x.id, x.pressed])).toEqual([["change", true], ["addText", false], ["addImage", undefined]]);
+    expect(tools.props.items.map((x: any) => [x.id, x.pressed])).toEqual([["change", true], ["addText", false], ["addImage", undefined], ["whiteout", false], ["redact", false]]);
     expect(statusText(edit.EditBanner({ doc: d, elRef }))).toBe("Click a line to change it, or an image to move it.");
 
     tools.props.items[1].onChoose();
     await settle();
     expect(state.editTool.value).toBe("addText");
     tools = toolsOf();
-    expect(tools.props.items.map((x: any) => x.pressed)).toEqual([false, true, undefined]);
+    expect(tools.props.items.map((x: any) => x.pressed)).toEqual([false, true, undefined, false, false]);
     expect(statusText(edit.EditBanner({ doc: d, elRef }))).toBe("Click where you want to write, or on a text you wrote to change it.");
 
     // The buttons: aria-pressed on the toggles only, the name on the button with its tooltip.
     const button = (item: any) => sub.SubToolButton({ item, tabbable: item.pressed === true, onFocus: () => undefined });
-    expect(tools.props.items.map((x: any) => button(x).props["aria-pressed"])).toEqual([false, true, undefined]);
+    expect(tools.props.items.map((x: any) => button(x).props["aria-pressed"])).toEqual([false, true, undefined, false, false]);
     const addText = button(tools.props.items[1]);
     expect([addText.props["aria-label"], addText.props.title, addText.props.tabIndex]).toEqual(["Add text", "Write new text where you click", 0]);
     expect(ofType(addText, "span")[0].props.children).toBe("Add text");
@@ -536,7 +536,7 @@ describe("C5 the tools' bars", () => {
     await actions.setTool("edit");
     const strip = edit.EditStrip();
     expect(strip.props.label).toBe("Editing tools");
-    expect(strip.props.items.map((x: any) => [x.id, x.pressed])).toEqual([["change", true], ["addText", false], ["addImage", undefined]]);
+    expect(strip.props.items.map((x: any) => [x.id, x.pressed])).toEqual([["change", true], ["addText", false], ["addImage", undefined], ["whiteout", false], ["redact", false]]);
 
     expect([stripFor("edit"), stripFor("fill")]).toEqual([null, null]); // desktop: in the banner
     onPhone(() => {

@@ -16,6 +16,8 @@
 //   (with a mouse, or by touch: large tablets have the panel too), and the image's own shortcuts;
 // - Modifica with Aggiungi testo: the writer's size and colour while it is open, the selected
 //   picture the user added as above, or else short steps for writing; the shortcuts;
+// - Modifica with Bianchetto or Oscura: how to mark an area and apply it, what each one removes and
+//   what cannot be guaranteed (release 5); the box's shortcuts;
 // - Fill mode, nothing open: its steps, the legend of the field and text marks, the shortcuts;
 //   with a writer open: its size and colour; with a picture it added selected: as in Modifica;
 // - a form field with the focus (in Fill mode or browsing, D2): its label, type, whether it is
@@ -26,7 +28,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { DocInfo, FieldWidget, ImageInfo, LineDecorations, LineInfo } from "../engine/protocol";
 import { formatFontSize, formatMm, t } from "../i18n";
 import {
-  currentPage, dirty, editingDecorations, editingLine, editingStopped, focusedField, history, INK, openWriter,
+  currentPage, dirty, editingDecorations, editingLine, editingStopped, editTool, focusedField, history, INK, openWriter,
   pendingPlacement, selectedImage, tool, writerOn, type InkColor, type OpenWriter, type SelectedImage,
 } from "../state";
 import { fontDisplayName, isSubsetFont } from "../viewer/fontName";
@@ -261,6 +263,23 @@ function AddTextSteps() {
           {t("details.legendAdded")}
         </li>
       </ul>
+    </Section>
+  );
+}
+
+/** Modifica with Bianchetto or Oscura (`mode`): how to mark and apply an area, what goes, what cannot be guaranteed. */
+function RedactSteps({ mode }: { mode: "whiteout" | "redact" }) {
+  const touch = isCoarse.value;
+  const steps = [
+    touch ? t("details.redactStep1Touch") : t("details.redactStep1"),
+    t(mode === "redact" ? "details.redactStep2" : "details.whiteoutStep2"),
+    t("details.step3"),
+  ];
+  return (
+    <Section title={t(mode === "redact" ? "edit.redact" : "edit.whiteout")}>
+      <Steps steps={steps} />
+      <p class="dp-note">{t(mode === "redact" ? "details.redactWhat" : "details.whiteoutWhat")}</p>
+      <p class="dp-note">{t("details.redactLimits")}</p>
     </Section>
   );
 }
@@ -577,6 +596,17 @@ export function imageShortcuts(): [key: string, action: string][] {
   ];
 }
 
+/** The keys of the box waiting in Bianchetto or Oscura (viewer/RedactLayer.tsx). Alt is Option (⌥) on a Mac keyboard. */
+export function redactShortcuts(): [key: string, action: string][] {
+  return [
+    ["←↑→↓", t("shortcut.moveArea")],
+    ["Shift + ←↑→↓", t("shortcut.moveAreaFar")],
+    [`${isMac ? "⌥" : "Alt"} + ←↑→↓`, t("shortcut.stretchImage")],
+    [t("key.enter"), t("shortcut.applyArea")],
+    [t("key.esc"), t("shortcut.cancelArea")],
+  ];
+}
+
 /**
  * Modifica with Aggiungi testo, no writer open: the writer's Enter and Shift+Enter (Enter on the
  * page region opens one in the middle of what shows), and Esc goes back to Cambia. No Tab:
@@ -590,12 +620,13 @@ export function addTextShortcuts(): [key: string, action: string][] {
   ];
 }
 
-type ShortcutFocus = "edit" | "line" | "image" | "addText" | "fill" | "writer" | "pending" | "field";
+type ShortcutFocus = "edit" | "line" | "image" | "addText" | "redact" | "fill" | "writer" | "pending" | "field";
 
 function shortcutRows(focus: ShortcutFocus): [key: string, action: string][] {
   switch (focus) {
     case "image": return imageShortcuts();
     case "addText": return addTextShortcuts();
+    case "redact": return redactShortcuts();
     case "fill": return fillShortcuts("idle");
     case "writer": return fillShortcuts("writer");
     case "pending": return fillShortcuts("pending");
@@ -645,8 +676,18 @@ interface ToolDetailsProps {
 /**
  * Modifica. With Cambia: the open line, else the selected image, else the steps. With Aggiungi
  * testo: the open writer, else the selected picture the user added, else the steps for writing.
+ * With Bianchetto or Oscura: their steps.
  */
 function EditDetails({ line, image, selected, keys }: ToolDetailsProps & { line: LineInfo | null }) {
+  const sub = editTool.value;
+  if (sub === "whiteout" || sub === "redact") {
+    return (
+      <>
+        <RedactSteps mode={sub} />
+        {keys && <Shortcuts focus="redact" />}
+      </>
+    );
+  }
   if (writerOn.value) {
     const writer = openWriter.value;
     return (

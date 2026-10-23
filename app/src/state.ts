@@ -13,6 +13,7 @@ import { batch, computed, signal } from "@preact/signals";
 import { EngineClient, EngineError } from "./engine/client";
 import type {
   HistoryState, LineDecorations, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode, Rect,
+  SearchHit,
 } from "./engine/protocol";
 import { applyLayout, type OpenDoc, type PageModel } from "./viewer/model";
 
@@ -159,7 +160,8 @@ export function neverDownloaded(): boolean {
 /**
  * The history of a document just opened, as the engine has it: none (a file opened), or `state`
  * (Riprendi: `state.editCount` edits applied, which can be undone; which pages they changed is not
- * known, so no page is marked; they are not downloaded). `unsaved`: the document itself exists
+ * known, so no page is marked; they are not downloaded; its count of redactions is kept, for the
+ * "-oscurato" download). `unsaved`: the document itself exists
  * nowhere else yet (made from scans, or resumed as such): it counts as not downloaded until it
  * is, also once every edit is undone (neverDownloaded).
  */
@@ -174,7 +176,10 @@ export function startHistory(state?: HistoryState, unsaved = false) {
   }
   batch(() => {
     if (state) {
-      history.value = { editCount: state.editCount, canUndo: state.canUndo, canRedo: false, changedPages: [] };
+      history.value = {
+        editCount: state.editCount, canUndo: state.canUndo, canRedo: false, changedPages: [],
+        ...(state.redactions ? { redactions: state.redactions } : {}),
+      };
     }
     applied.value = ids;
     if (unsaved) savedKey.value = NEVER_SAVED;
@@ -279,12 +284,24 @@ export function isApplied(id: number): boolean {
 }
 
 /**
+ * The step `state` is a Bianchetto or an Oscura, its undo or its redo (the count of redactions
+ * changed: one step is one edit), and its layout leaves every page of `d` where and as it was. A
+ * page operation that leaves them so (a turn by 180°) is still one.
+ */
+function keepsPages(d: OpenDoc, state: HistoryState): boolean {
+  const layout = state.layout!;
+  return (state.redactions ?? 0) !== (history.peek().redactions ?? 0) && layout.pages.length === d.pages.length &&
+    layout.pages.every((p, k) => layout.from[k] === k && p.bounds.every((v, i) => Math.abs(v - d.pages[k].bounds[i]) < 1e-3));
+}
+
+/**
  * Record a history step returned by the engine and refresh the pages it changed. An edit that
  * changed no page (e.g. only spaces around the text) is not one: the engine did not log it;
  * unless it changed the pages themselves (`layout`: a delete changes no page that stays). With a
  * `layout`, the page list is rebuilt first (applyLayout: an undo or a redo brings back the
  * PageModels the pages had then), and the current page follows the page it showed (or its
- * nearest neighbour that stayed); the indices of `changedPages` are those of the new pages.
+ * nearest neighbour that stayed); the indices of `changedPages` are those of the new pages. A
+ * redaction's layout that leaves every page where it was (keepsPages) only counts the form again.
  * Returns the new edit's id (for "edit"), else null.
  */
 export function recordHistory(state: HistoryState, step: "edit" | "undo" | "redo"): number | null {
@@ -311,7 +328,11 @@ export function recordHistory(state: HistoryState, step: "edit" | "undo" | "redo
       id = redoStack.pop();
       if (id !== undefined) ids.push(id);
     }
-    if (layout && d) {
+    if (layout && d && keepsPages(d, state)) {
+      // A Bianchetto or an Oscura (its undo, its redo) that removed form fields: the form is
+      // counted again, and no page moved, so it is no page operation (the viewer stays where it is).
+      d.info = { ...d.info, form: layout.form, signatures: layout.signatures };
+    } else if (layout && d) {
       const known = id === undefined ? undefined : editLayouts.get(id);
       const before = d.pages.slice();
       const shown = before[Math.min(Math.max(0, currentPage.peek()), before.length - 1)];
@@ -407,11 +428,12 @@ export const fillMode = computed(() => tool.value === "fill");
 
 /**
  * What a tap does in Modifica: "change" (the default: open a line to change it, select an image
- * to move it) or "addText" (write a new text where the user taps, with the same writer as Testo
- * in Compila e firma). "Aggiungi immagine" is an action (the picture picker), never left on.
- * Back to "change" whenever the tool changes (setTool).
+ * to move it), "addText" (write a new text where the user taps, with the same writer as Testo
+ * in Compila e firma), "whiteout" (Bianchetto) or "redact" (Oscura): mark an area (drag, a tap,
+ * a line), then apply it (release 5). "Aggiungi immagine" is an action (the picture picker),
+ * never left on. Back to "change" whenever the tool changes (setTool).
  */
-export type EditTool = "change" | "addText";
+export type EditTool = "change" | "addText" | "whiteout" | "redact";
 export const editTool = signal<EditTool>("change");
 
 /**
@@ -818,7 +840,12 @@ export type DialogState =
    */
   | { kind: "insert-from-pdf"; at: number }
   /** Release 4: "Sposta in posizione…" for `pages` (the keyboard and screen-reader way to move pages). */
-  | { kind: "move-pages"; pages: number[] };
+  | { kind: "move-pages"; pages: number[] }
+  /**
+   * Release 5: "Oscura tutti i risultati…": review the search hits (by page, each with a check
+   * box) and redact the chosen ones as one edit (ui/redact).
+   */
+  | { kind: "redact-all"; hits: SearchHit[]; query: string };
 
 export const dialog = signal<DialogState | null>(null);
 

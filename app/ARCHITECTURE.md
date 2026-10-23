@@ -22,7 +22,8 @@ repository root keeps working; it replaces it once it does everything the old on
   fills form fields, `newcontent.ts` writes new text and new pictures on a page (see "Fill and
   sign"). `decorations.ts` makes a line's underline, strike-through, links and background follow
   an edit of its text (see "Decorations"). `pages.ts` moves, deletes, copies, turns and adds
-  pages (see "Pages, scans and Riprendi"). `pdfa.ts` converts a
+  pages (see "Pages, scans and Riprendi"). `search.ts` finds text and `redact.ts` removes what
+  lies under an area (see "Cerca, Bianchetto and Oscura"). `pdfa.ts` converts a
   copy to PDF/A and checks the result, with our own colour profile from `icc.ts` (see "PDF/A").
   `worker.ts` only turns messages into `EngineSession` calls. `protocol.ts` is the contract;
   `client.ts` is the main-thread side.
@@ -45,10 +46,11 @@ repository root keeps working; it replaces it once it does everything the old on
     content, `DetailsContent`) (`ui/TabBar.tsx`, `ui/Sheet.tsx`, `ui/PhoneSheets.tsx`).
 
   The tools (`tool` in `src/state.ts`, changed only through `setTool`, which first writes what
-  is still typed): Edit ("Modifica") has three sub-tools on its bar (`ui/EditBar.tsx`,
+  is still typed): Edit ("Modifica") has five sub-tools on its bar (`ui/EditBar.tsx`,
   `editTool`, `setEditTool`): Change ("Cambia", where it starts: a line to change, a picture to
-  move), Add text ("Aggiungi testo") and Add image ("Aggiungi immagine": the picker; the picture
-  lands in the middle of what shows, selected, back on Change). Fill & sign ("Compila e firma",
+  move), Add text ("Aggiungi testo"), Add image ("Aggiungi immagine": the picker; the picture
+  lands in the middle of what shows, selected, back on Change), and White-out and Redact
+  ("Bianchetto", "Oscura": an area to remove, see "Cerca, Bianchetto and Oscura"). Fill & sign ("Compila e firma",
   `ui/fill/FillBar.tsx`) has Text, Tick, Cross, Date, Sign and Initials, and no picture of its
   own. The two bars share one toolbar (`ui/SubTools.tsx`). The text writer and the boxes of the
   text the user wrote (`viewer/FillLayer.tsx`) serve Fill & sign and Add text alike: `writerOn`
@@ -627,6 +629,120 @@ applies the edits one by one as redo does, taking checkpoints as new edits do, s
 did. An edit that no longer applies (the app changed since) stops there: the document goes back to
 the edits before it, which stay, and `failedAt` says which one stopped. The redo stack and the
 checkpoints are not kept (checkpoints hold functions, and are made again).
+
+## Cerca, Bianchetto and Oscura
+
+Release 5 finds text in the document ("Cerca") and removes for good what lies under an area, in
+two ways: Bianchetto (white-out: text and drawings go, the area is left white, pictures are only
+covered) and Oscura (redaction: text, drawings and picture pixels go, a black box). Everything
+happens in the engine, on the device.
+
+**Cerca** (`search.ts`). MuPDF's own search cannot be used: it takes no options, respects accents
+("Universita" finds nothing in "Università"), equates no apostrophe, quote or dash variants, finds
+nothing in vertical text and does not look into form fields. So each page is read once with a light
+structured-text walk (the option and the vertical-text fix of `core.extractLines`) into a compact
+`PageText`: the characters in reading order, a separator between lines that says how the break
+reads (a space, nothing, a word hyphenated at the line end, a break in a script written without
+spaces) and, per character, where it starts and ends along its line in 16-bit steps of it; each
+visible form field's appearance is a text of its own (not password fields, not Hidden or NoView
+widgets; a comb field's read without the space MuPDF would put between every two of its cells, so a
+codice fiscale is found as typed). The matcher folds text and query alike: case and accents ignored
+by default, apostrophes, quotes, dashes and runs of spaces made one, soft hyphens, zero-width
+characters and bidi marks ignored, ligatures and TeX accents read as letters, a word hyphenated at
+the line end (by a hyphen or a soft hyphen) found whole and as written, and Italian's apostrophe
+for an accent ("perche'" finds "perché"); the options are whole words, case (Æ, Œ, ẞ then read AE,
+OE, SS) and accents. A hit has one quad per line run, in MuPDF's corner order (equal to MuPDF's own
+where MuPDF finds the hit too), `in: "field"` and the field's full name when it is in a field, and
+some text around it. Not searched: notes' /Contents and other annotations, text outside the page.
+Found although not seen: invisible text (OCR layers), text in a layer switched off, text under a
+white box: it is in the page. Characters beyond U+FFFF, which MuPDF.js cuts to 16 bits, are read
+whole (from the structured text as text, or the drawn glyphs), so they never match by mistake.
+
+**The search protocol.** As one request, a search of 600 pages kept a render waiting about 5 s, so
+it is steps the client drives (`search`: from a page up to another, at least one page, then more
+while the step has taken less than its budget, 5..200 ms, default 20, and found fewer than
+`maxHits`, at most 10,000; `next` is the page to go on from, `truncated` says the last page read
+had more). Nothing is kept between steps but the page texts, so the client (`ui/search/runner.ts`)
+goes from the current page to the end and then from the first page back to it, keeps at most 1000
+hits, and cancels by not asking for the next step. The session's cache of page texts (600 dense
+pages take about 23 MB, reading a page again 7 to 9 ms) holds at most 32 MB, and past it a page
+read is not kept: evicting the oldest would, read after read, push out the very page the next
+search starts from, so a longer document keeps the pages read first and a search reads only the
+rest again. It follows the history in one place, `history()`: the pages a step changed leave it, a
+page operation's layout moves the others to their new indices (a page it turned or made is read
+again), and open, close, newFromPictures and resumeSession empty it. After an edit the client reads
+its changed pages again, one step each; after a layout it starts over.
+
+**Bianchetto and Oscura** (`redact.ts`, its header says how). MuPDF's redaction (a Redact
+annotation per rect, `applyRedactions` with line art removed only when wholly covered) does the
+core of it; on its own it leaves a lot in the file, so around it, as part of the same edit:
+
+- **Oscura** removes text (every render mode, hidden layers, the copies MuPDF makes of the forms the
+  page draws), drawings wholly inside the area, picture pixels and the soft mask or /Mask under the
+  area (a signature's shape lives there), every annotation whose /Rect meets the area, whole
+  (links, notes with their popups and replies, FreeText, highlights, form widgets: a field left
+  without widgets leaves the form, its value with it; one with widgets elsewhere keeps its value
+  there, and the report says so), the descriptions of what changed (/ActualText, /Alt and /E,
+  inline and in named property lists, a shared one copied first, and the structure elements'),
+  the page's /Thumb and /PieceInfo, and whatever the page's resources listed and it no longer
+  draws (pictures, forms, fonts only the removed text used, graphics states, patterns, shadings,
+  property lists) from every dictionary of the document that lists it, unless something else
+  draws it. The new pictures get device colour spaces instead of MuPDF's Artifex profiles, their
+  /OC, /StructParent and /PEOrientation back, and a JPEG stays a JPEG (quality 85; the others
+  stay lossless).
+- **Bianchetto** removes text and drawings wholly inside the area. Pictures are only covered and
+  annotations and fields stay on top (the UI says so before applying, and offers Oscura); a link
+  MuPDF removed comes back, unless it lay wholly inside the area (then it leaves the structure
+  tree too).
+- **Both**: the file's own pending Redact marks sit out the call and come back as they were. The
+  app's lines: an emptied one is removed and untagged, a cut one loses /PEText and is printed text
+  from then on. The box is the app's own block (`/Artifact <</PERedact id>>`, appended with
+  `appendSafely`), over the area and the characters the redaction took (a character goes whole
+  when its box, shrunk by 10 %, meets the area), kept to 70 % of their height; `decorations.ts`
+  never takes it for a line's background or underline. The edit never goes through
+  `protectAdded`, which would write back the app's lines the area took.
+
+**Areas from hits and lines are made smaller, never larger** (`redactGeometry.areasForQuads`): a
+hit's quads are full line height (16.5 pt for 12 pt Helvetica), and an area that large took letters
+from the lines above and below. Each quad keeps the middle half across it, and stops a little
+short of its ends.
+
+**Refusals**, all checked before anything changes ("not-editable", the message naming the
+`RedactRefusal`; nothing logged, nothing rolled back: `RedactError.changed` is false, and the
+session keeps its working document as it is; so it does for a bad request, areas wholly off their
+pages among them, which the session finds itself before the edit): a picture in printing colours (Separation,
+DeviceN) under the area; a picture of more than 50 million pixels (clearing it would not fit in a
+phone's memory); resources shared with other pages that the app cannot read for sure (everything
+that draws with the dictionaries the page's resources are is read first, at most 20 million content
+operations); content that cannot take the box. One case shows only after the change (another page
+whose drawing cannot be read lists an object the redaction took off; `changed` true): the session
+rolls the edit back, as for any failed edit. `redactPreview` says, changing nothing, what would go
+or stay on each page, the attached files and the refusal, so the UI can say it before the user
+applies.
+
+**What is logged.** A `kind: "redact"` entry, plain data: the mode and the areas in page space as
+checked (one entry per page, in page order, the rects as given, at most 1000 a page). The edit is
+deterministic, so undo, redo, a rebuild from a checkpoint or the original and Riprendi repeat it
+exactly. "Oscura tutti i risultati…" is one such entry over every chosen hit's areas; on a page
+with more than 1000 rects (hundreds of hits, or a turned page, where each hit is many pieces) it is
+several, each hit whole in one of them unless it alone has more, and the toast's Annulla undoes
+them all, the last first.
+A redaction that removed widgets answers, as its undo and redo do, with a layout of the same pages
+(`from` the identity) carrying the form and the signature count read again.
+`HistoryState.redactions` counts the redactions applied; the download is then named "-oscurato". The log stays
+version 1: an older build that reads a log with a redaction refuses it as malformed, and its home
+page card forgets the record.
+
+**What cannot be guaranteed**, said in the UI where it applies: the length of the removed text
+(its width stays, as the space before the next word); characters still in embedded fonts that the
+rest of the page shares; the part of a drawing, a shading or a pattern cell that only crosses the
+area (it stays, covered); the outline of a clip under the area (MuPDF keeps clip paths: the shape
+a gradient fills through one stays, covered); text outside the CropBox; the same words elsewhere
+(Cerca finds them); attached files (not touched: counted and said, they may hold the same data);
+and the original file and the Riprendi record on this device, which hold everything until the
+document is closed.
+A cleared picture is stored losslessly unless it was a JPEG, so the file can grow (the report's
+`growth`; said past about 1 MB).
 
 ## PDF/A ("PDF/A per l'archivio")
 

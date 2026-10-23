@@ -6,8 +6,9 @@
 // short "Compila" takes its place (a container query, phone.css). Pages and More open their bottom
 // sheet (PhoneSheets), focusing their own button first: WebKit does not focus a tapped button, and
 // the sheet gives the focus back to whatever had it when it opened.
-// Not shown while a line editor or a writer is open or a form field takes typing, so the
-// keyboard and the page get the room (a ticked box or a list keeps it: bottomBarsHidden). Styled
+// Not shown while a line editor or a writer is open, a form field takes typing or Cerca's field
+// does, so the keyboard and the page get the room (a ticked box or a list keeps it:
+// bottomBarsHidden). Styled
 // by styles/phone.css (.tabbar).
 import type { ComponentChildren } from "preact";
 import { t } from "../i18n";
@@ -15,6 +16,7 @@ import { updateReady } from "../platform/pwa";
 import { editingLine, editingStopped, openWriter, sheet, tool, typingField, type SheetKind, type Tool } from "../state";
 import { setTool } from "./actions";
 import { IconEditText, IconMore, IconPages, IconSign } from "./icons";
+import { searchTakesTyping } from "./search/state";
 
 /**
  * The bars at the bottom of a phone (the tab bar, the sub-tools strip of Modifica and of Compila e
@@ -24,10 +26,11 @@ import { IconEditText, IconMore, IconPages, IconSign } from "./icons";
  * and blur, so it follows the control that really has the focus, however it got there (a tap,
  * Tab, the keyboard's "next", "Next empty field"). Check boxes, radio buttons, lists and "Sign
  * here" raise no keyboard, though Android keeps the focus on them after a tap: then the bars
- * stay. Reactive.
+ * stay. Cerca's field on a phone, while it has the focus, counts as one (searchTakesTyping).
+ * Reactive.
  */
 export function bottomBarsHidden(): boolean {
-  return editingLine.value !== null || openWriter.value !== null || typingField.value;
+  return editingLine.value !== null || openWriter.value !== null || typingField.value || searchTakesTyping();
 }
 
 interface TabProps {

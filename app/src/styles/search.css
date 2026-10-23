@@ -1,0 +1,267 @@
+/* Cerca (release 5): the desktop find bar docked at the top of the viewer (its buttons go to a
+   second row when the viewer is too narrow for one), the phone's search in place of the top bar
+   (with the line under it that says what is going on, and the hidden field that keeps its
+   keyboard up), the options menu's check marks, and the results drawn on the pages
+   (ui/search/SearchBar.tsx, viewer/SearchLayer.tsx).
+   Colours only from tokens.css. The results are drawn on the PDF page, which is white in both
+   themes: they mix the --page-mark tokens (never redefined for dark) and outline the current one
+   in --accent, as the image frame does; in forced-colours mode they take the system's Mark and
+   Highlight colours, with a thicker outline. The phone's field is 16 px, so iOS does not zoom
+   into it. */
+
+/* --- The field (both bars) ----------------------------------------------------------------- */
+
+/* The box is the wrapper (with the icon, or the phone's count, inside it); the input has none.
+   It grows to 300 px from its least, so the find bar wraps only when that least does not fit,
+   and it takes the free room first: the count and the note get what is left. */
+.search-field {
+  position: relative;
+  flex: 100 1 120px;
+  min-width: 120px;
+  max-width: 300px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 8px 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--field-bg);
+  transition: border-color 0.12s;
+}
+
+.search-field > .icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+@media (hover: hover) {
+  .search-field:hover:not(:focus-within) {
+    border-color: var(--muted);
+  }
+}
+
+/* The ring sits on the border, as on the dialogs' fields. */
+.search-field:focus-within {
+  border-color: var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+  outline: none; /* the wrapper draws the ring */
+}
+
+.search-input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+/* --- Desktop: the find bar ----------------------------------------------------------------- */
+
+/* One row (48 px tall, also with 44 px buttons); in a viewer too narrow for it (thumbnails and
+   details open on a small screen) the buttons go to a second row, at the right. Where it wraps
+   depends on the viewer's width alone, not on what the count says (.find-status), so the bar keeps
+   its height while it is open, as the viewer's scroll compensation (Viewer.tsx) expects. */
+.find-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 1px max(8px, env(safe-area-inset-right)) 1px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  animation: find-bar-in 0.16s var(--ease);
+}
+
+@keyframes find-bar-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The count and what is going on, from room for the widest count ("1000 of 1000+": its digits
+   are tabular, 1ch each, the rest narrower), whatever the count and the note say now (min-width:
+   not the note's whole text), and a line tall also when both are empty (on a row of its own). */
+.find-status {
+  flex: 1 1 13ch;
+  min-width: 0;
+  min-height: 1.35em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.find-count {
+  flex: none;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* What is going on gives way first (the status region says it whole; the tooltip shows it). */
+.find-note {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.find-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* --- Phones: the search in the top bar ----------------------------------------------------- */
+
+.phone-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.search-field.is-phone {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  height: 40px;
+  margin: 0 2px;
+  padding: 0 10px 0 12px;
+}
+
+.search-field.is-phone .search-input {
+  font-size: 16px;
+}
+
+.search-count {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.search-count:empty {
+  display: none;
+}
+
+/* What is going on (searchNoteText), in a line hanging under the top bar, over the page. */
+.phone-search-note {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  padding: 4px max(12px, env(safe-area-inset-right)) 4px max(12px, env(safe-area-inset-left));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.phone-search-note:empty {
+  display: none;
+}
+
+/* Takes the focus within the magnifier's tap (SearchBar.tsx): never seen, never in the way. */
+.search-keeper {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  font-size: 16px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* --- The options menu ---------------------------------------------------------------------- */
+
+[data-search-bar] .menu {
+  min-width: 260px;
+}
+
+/* The tick of a check box; the same room when it is not ticked, so the labels line up. */
+.search-menu-check {
+  flex: none;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  color: var(--active-fg);
+}
+
+/* --- The results on the page --------------------------------------------------------------- */
+
+.search-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.search-hit {
+  fill: color-mix(in srgb, var(--page-mark-image) 30%, transparent);
+}
+
+.search-hit.is-current {
+  fill: color-mix(in srgb, var(--page-mark-image) 42%, transparent);
+  stroke: var(--accent);
+  stroke-width: 2px;
+  stroke-linejoin: round;
+}
+
+@media (forced-colors: active) {
+  .search-layer {
+    forced-color-adjust: none;
+  }
+
+  .search-hit {
+    fill: Highlight;
+    fill: Mark;
+    fill-opacity: 0.45;
+  }
+
+  .search-hit.is-current {
+    stroke: Highlight;
+    stroke-width: 3px;
+  }
+
+  .search-menu-check {
+    color: CanvasText;
+  }
+}

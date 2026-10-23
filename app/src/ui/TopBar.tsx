@@ -5,9 +5,11 @@
 //   download options), Update and a "More" menu (language, "Install the app" where it can be
 //   installed and is not yet, what the bar has no room for, the signatures saved on this device
 //   when there are any, source code, close document);
-// - phone with a document: Back (closes it), the file name over "Page n of m · Edited",
-//   Undo, Redo and Download. Zoom, share, the download options, language, update and open live
-//   in the phone "More" sheet (PhoneSheets), editing in the tab bar.
+// - phone with a document: Back (closes it), the file name over "Page n of m · Edited", Cerca's
+//   magnifier, Undo, Redo and Download. Zoom, share, the download options, language, update and
+//   open live in the phone "More" sheet (PhoneSheets), editing in the tab bar. While the search is
+//   open it takes the bar's place (ui/search/SearchBar.tsx, PhoneSearch); the hidden field that
+//   holds the keyboard for it stays first in the bar in both, so it is the same element throughout.
 // Width budget of the desktop bar (nothing may overflow from 640 px, with 44 px buttons on touch
 // screens, and the file name must stay readable): below 768 px the zoom controls move into the
 // More menu (pinch and Ctrl + wheel still zoom). Share and Update stay in the bar from 1024 px,
@@ -40,6 +42,8 @@ import {
 import { Logo } from "./Logo";
 import { canSharePdf, hasZoomRoom, isCoarse, isNarrow, isRoomy, isWide, shortcuts } from "./media";
 import { MenuButton, type MenuItem } from "./Menu";
+import { PhoneSearch, SearchKeeper, SearchToggle } from "./search/SearchBar";
+import { searchOpen } from "./search/state";
 
 /** Room for Share and Update too: from 1024 px, or from 768 px with 36 px (mouse) buttons. */
 const extrasInBar = computed(() => isRoomy.value || (hasZoomRoom.value && !isCoarse.value));
@@ -182,12 +186,22 @@ export function TopBar() {
   }
 
   if (narrow) {
+    if (searchOpen.value) {
+      return (
+        <header class="topbar is-search">
+          <SearchKeeper key="keeper" />
+          <PhoneSearch />
+        </header>
+      );
+    }
     const count = d.pages.length;
     const page = Math.min(currentPage.value, count - 1) + 1;
     return (
       <header class="topbar">
+        <SearchKeeper key="keeper" />
         <ToolButton icon={<IconBack />} label={t("toolbar.close")} onClick={() => void closeDocument()} />
         <PhoneTitle fileName={d.fileName} page={page} count={count} />
+        <SearchToggle />
         <UndoRedo />
         <DownloadButton showLabel={false} />
       </header>

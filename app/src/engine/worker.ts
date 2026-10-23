@@ -124,6 +124,12 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
     case "resumeSession":
       // The original and the log's byte arrays arrived with this message: the session keeps them as they are.
       return reply<"resumeSession">(s.resumeSession(msg.original, msg.log, msg.password, { transfer: true }));
+    case "search":
+      return reply<"search">(s.search(msg.query, msg.from, { options: msg.options, to: msg.to, budgetMs: msg.budgetMs, maxHits: msg.maxHits }));
+    case "redactPreview":
+      return reply<"redactPreview">(s.redactPreview(msg.areas, msg.mode));
+    case "redact":
+      return reply<"redact">(s.redact(msg.areas, msg.mode));
     default: {
       const unknown: never = msg;
       throw new Error(`Unknown request ${JSON.stringify(unknown)}`);

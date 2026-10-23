@@ -613,7 +613,8 @@ const LIST_KEYS = new Set(["Annots", "Kids", "Fields", "CO", "OCGs", "ON", "OFF"
 /** Keys whose arrays hold key/value pairs (name and number trees): the pair goes. */
 const PAIR_KEYS = new Set(["Names", "Nums"]);
 
-const refsIn = (text: string) => Array.from(text.matchAll(REF), (m) => Number(m[1]));
+/** The object numbers a printing of an object references (exported for redact.ts, as cutReferences). */
+export const refsIn = (text: string) => Array.from(text.matchAll(REF), (m) => Number(m[1]));
 
 /** Cuts the references to `gone` inside `o` and its direct sub-objects; returns how many. */
 function cutIn(o: Obj, gone: Set<number>, parentKey: string, depth: number): number {
@@ -651,9 +652,9 @@ function cutIn(o: Obj, gone: Set<number>, parentKey: string, depth: number): num
 /**
  * Reads every object reachable from the trailer once (never through a removed one) and cuts the
  * references left to `gone`: afterwards none of them is reachable, so a garbage-collected save
- * leaves them out. Returns how many references were cut.
+ * leaves them out. Returns how many references were cut. (Also redact.ts's safety net.)
  */
-function cutReferences(doc: Doc, gone: Set<number>): number {
+export function cutReferences(doc: Doc, gone: Set<number>): number {
   if (!gone.size) return 0;
   const total = doc.countObjects();
   const seen = new Set<number>();

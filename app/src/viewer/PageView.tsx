@@ -3,10 +3,13 @@
 // lines and its images; wherever the text writer is on (Compila e firma, and Modifica with
 // Aggiungi testo) the fill layer (taps, the writer, what the user wrote) and the pictures the user
 // added, and in Compila e firma its form fields too; with no tool on (browse), its form fields
-// alone. Form fields never show in Modifica. Overlays are mounted for near pages, and also for a
-// page far away that holds what is open or focused, what the app asks to focus (focusRequest), or,
-// for its form fields, the next or previous page with fields from the field focused last (so Tab
-// and Shift+Tab reach them: fields.ts). Switching Modifica's sub-tool swaps the layers: a box
+// alone; in Modifica with Bianchetto or Oscura (release 5) the layer that marks an area to white
+// out or redact (RedactLayer) instead of the lines and images. Form fields never show in Modifica.
+// Cerca's highlights (SearchLayer) go on every near page with hits, whatever the tool. Overlays
+// are mounted for near pages, and also for a page far away that holds what is open or focused
+// (the area waiting to be applied too), what the app asks to focus (focusRequest), or, for its
+// form fields, the next or previous page with fields from the field focused last (so Tab and
+// Shift+Tab reach them: fields.ts). Switching Modifica's sub-tool swaps the layers: a box
 // that had the keyboard focus hands it to the same picture's box in the new layer when there is
 // one, else to the scroller, never to <body> (ui/actions.ts, focusAfterLayers).
 //
@@ -20,12 +23,16 @@ import {
   devicePixelRatio, editingLine, editingStopped, editTool, focusedField, focusRequest, openWriter, selectedImage, tool,
   type EditTool, type Tool,
 } from "../state";
+import { pendingRedact, redactMode } from "../ui/redact/pending";
+import { hitsByPage } from "../ui/search/runner";
 import { nextToFieldFocus, pageHasFields } from "./fields";
 import { everyPageAction, FillLayer } from "./FillLayer";
 import { FormLayer } from "./FormLayer";
 import { ImageLayer } from "./ImageLayer";
 import { LineLayer } from "./LineLayer";
 import type { PageModel } from "./model";
+import { RedactLayer } from "./RedactLayer";
+import { SearchLayer } from "./SearchLayer";
 import type { RenderQueue } from "./renderQueue";
 import type { PageVisibility } from "./visibility";
 
@@ -114,6 +121,10 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
   // last (Tab and Shift+Tab go on to them).
   const formOverlay = layers.fields && pageHasFields(page.index) &&
     (near || here(focusedField.value) || (asked && request?.kind === "field") || nextToFieldFocus(page.index));
+  // Bianchetto and Oscura: near pages, and the page with the area waiting to be applied.
+  const redact = redactMode.value;
+  const redactOverlay = redact !== null && (near || pendingRedact.value?.page === page);
+  const searchOverlay = near && hitsByPage.value.has(page.index);
 
   useEffect(() => {
     const node = el.current!;
@@ -195,6 +206,8 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
           extraAction={(image) => everyPageAction(page, image)}
         />
       )}
+      {searchOverlay && <SearchLayer key="search" page={page} zoom={zoom} />}
+      {redactOverlay && <RedactLayer key="redact" page={page} zoom={zoom} mode={redact} />}
     </div>
   );
 }

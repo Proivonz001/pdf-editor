@@ -43,6 +43,16 @@
 // PDF readers ignore, turns the placement instead, so a phone photo stored sideways shows upright
 // (replacePlacement, and newcontent.addImage). The picture object records that orientation
 // (/PEOrientation), so a later replace fits the new picture to the old one as seen.
+//
+// Release 5 (redact.ts, Bianchetto and Oscura): the cleanup follows every kind of named resource,
+// not only pictures (fonts, graphics states, patterns, shadings, named property lists: what the
+// image edits prune stays pictures alone), can check without changing anything, look at given
+// dictionaries only, or ask of each object whether anything draws it (pruneUnused); placements
+// carry their image XObject, and walkedPictures lists the pictures as the walk reads them, hidden
+// layers included, which MuPDF's redaction clears too. For both, what draws is what drawn content
+// names: a form (Do), pattern (scn), soft mask's group (gs) or Type 3 glyph (Tf, and the glyph
+// shown) that resources only list draws nothing, nor does what the form fields' default resources
+// list but fonts. (Content listed that cannot be decoded still keeps the cleanup from pruning.)
 import type * as MuPDF from "mupdf";
 import { structParents } from "./core.js";
 import { MAX_IMAGE_BYTES, type ImageLockReason, type Matrix, type Rect } from "./protocol";
@@ -747,6 +757,27 @@ interface Walked {
   added: boolean;
   /** The EXIF orientation its picture object records (turnOf), 1 for any other picture. */
   turn: number;
+  /** The image XObject drawn (null: an inline image). */
+  xobject: Obj | null;
+  /** The form whose content draws it (null: the page's), and where its operation starts in that content. */
+  host: Obj | null;
+  at: number;
+}
+
+/** A soft mask the content sets (release 5: redact.ts redacts its group too): a gs whose graphics state has an /SMask group. */
+export interface SoftMaskUse {
+  /** The graphics state's name, in `resources` (the resources in effect where it is set). */
+  name: string;
+  resources: Obj;
+  /** The form whose content sets it (null: the page's). */
+  host: Obj | null;
+  /** The page-level operation being expanded where it is set inside a form (null: at page level). */
+  top: { stream: number; start: number } | null;
+  extGState: Obj;
+  /** The transparency group the mask is made of. */
+  group: Obj;
+  /** The CTM at the gs (page space): the group is drawn there (ISO 32000-1, 11.6.5.2). */
+  ctm: Matrix;
 }
 
 interface WalkResult {
@@ -754,6 +785,7 @@ interface WalkResult {
   texts: string[];
   /** Something was painted with a pattern colour or a Type 3 font: MuPDF may draw images that are not placements. */
   extraDraws: boolean;
+  masks: SoftMaskUse[];
 }
 
 /** The page's content streams, in /Contents order (none when it has no content). */
@@ -777,7 +809,8 @@ const nameOf = (o: Obj) => (o.isName() ? o.asName() : null);
 export const isNumeric = (args: Operand[], count: number) => args.length === count && args.every((x) => x.num !== undefined);
 export const numbersOf = (args: Operand[]) => args.map((x) => x.num!);
 
-function matrixOf(o: Obj): Matrix {
+/** A /Matrix entry, identity when it is missing or not six numbers (exported for redact.ts). */
+export function matrixOf(o: Obj): Matrix {
   if (!o.isArray() || o.length !== 6) return IDENTITY;
   const m = [0, 1, 2, 3, 4, 5].map((k) => o.get(k).asNumber());
   return m.every(Number.isFinite) ? (m as Matrix) : IDENTITY;
@@ -856,6 +889,7 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
   const texts = streams.map((st) => latin1(streamBytes(st)));
   const resources = pageObj.getInheritable("Resources");
   const walked: Walked[] = [];
+  const masks: SoftMaskUse[] = [];
   const blocks: Block[] = [];
   /** The content of each form drawn, read once. */
   const formTexts = new Map<number, string>();
@@ -895,7 +929,7 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
     if (clip) gs.clips = { clip, prev: gs.clips, size: (gs.clips?.size ?? 0) + 1 };
   };
   const point = (x: number, y: number) => applyTo(gs.ctm, x, y);
-  const record = (o: Operation, level: number, stream: number, top: TopOp | null, kind: Walked["kind"], name: string | null, layer: Obj | null) => {
+  const record = (o: Operation, level: number, stream: number, top: TopOp | null, kind: Walked["kind"], name: string | null, layer: Obj | null, host: Obj | null) => {
     if (walked.length >= MAX_PLACEMENTS) throw new WalkLimit(`More than ${MAX_PLACEMENTS} images`);
     clipChecks += gs.clips?.size ?? 0;
     if (clipChecks > MAX_CLIP_CHECKS) throw new WalkLimit("Too many clips");
@@ -915,6 +949,9 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
       group: false,
       added: marks.some((m) => m.added),
       turn: 1,
+      xobject: null,
+      host,
+      at: o.start,
     };
     walked.push(w);
     return w;
@@ -980,6 +1017,9 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
             if (sm.isDictionary()) {
               gs.smaskDepth = gstack.length;
               gs.smaskLevel = level;
+              const group = sm.get("G");
+              if (group.isStream())
+                masks.push({ name: a[0]?.name ?? "", resources: res, host, top: top && { stream: top.stream, start: top.start }, extGState: eg, group, ctm: gs.ctm });
             } else if (sm.isName()) gs.smaskDepth = -1; // /None
           }
           break;
@@ -1051,7 +1091,7 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
             if (level === 0) paintAtTop(1, null);
             break;
           }
-          const w = record(o, level, stream, top, level === 0 ? "inline" : "form", null, null);
+          const w = record(o, level, stream, top, level === 0 ? "inline" : "form", null, null, host);
           if (level === 0) paintAtTop(1, w);
           break;
         }
@@ -1071,8 +1111,9 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
               if (level === 0) paintAtTop(1, null);
               break;
             }
-            const w = record(o, level, stream, top, level === 0 ? "xobject" : "form", name, layer.isDictionary() ? layer : null);
+            const w = record(o, level, stream, top, level === 0 ? "xobject" : "form", name, layer.isDictionary() ? layer : null, host);
             w.turn = turnOf(xo);
+            w.xobject = xo;
             if (level === 0) paintAtTop(1, w);
           } else if (subtype === "Form") {
             const objNum = xo.isIndirect() ? xo.asIndirect() : -1;
@@ -1138,7 +1179,7 @@ function walkPage(page: MuPDF.PDFPage): WalkResult {
   endMarks(0); // (sequences left open end with the page)
   // Blocks close inner-first, so the last block found for a placement is the outermost.
   for (const b of blocks) if (b.paints === 1 && b.first) b.first.unit = b;
-  return { walked, texts, extraDraws };
+  return { walked, texts, extraDraws, masks };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1282,6 +1323,8 @@ export interface Placement {
    * pixels') is concat(ORIENTATION[turn], the picture as seen). 1 for any other picture.
    */
   turn: number;
+  /** The image XObject drawn (release 5: redact.ts follows a picture the redaction replaced); null for an inline image and when the walk was not trusted. */
+  xobject: Obj | null;
 }
 
 export interface PagePlacements {
@@ -1311,6 +1354,32 @@ function matchDrawn(walked: Walked[], drawn: Drawn[]): number[] | null {
 }
 
 /**
+ * Release 5 (redact.ts): every picture the page's content draws, in order, as the walk reads it,
+ * with no safety gate, so hidden layers included (MuPDF's interpreter does not draw them; MuPDF's
+ * redaction clears them all the same). Null when the walk cannot read the page, or past its caps.
+ */
+export function walkedPictures(page: MuPDF.PDFPage): { matrix: Matrix; xobject: Obj | null; stream: number; start: number; host: Obj | null; at: number }[] | null {
+  try {
+    return walkPage(page).walked.map((w) => ({ matrix: concat(FLIP, w.P), xobject: w.xobject, stream: w.top.stream, start: w.top.start, host: w.host, at: w.at }));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Release 5 (redact.ts): every soft mask the page's content sets, in order, as the walk reads it
+ * (hidden layers included; not those set inside patterns, Type 3 glyphs or soft-mask groups).
+ * Null when the walk cannot read the page, or past its caps.
+ */
+export function walkedSoftMasks(page: MuPDF.PDFPage): SoftMaskUse[] | null {
+  try {
+    return walkPage(page).masks;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The image placements of a page, in painting order: the walk, checked against the device pass.
  * When they disagree (or the content cannot be read, or is beyond the walk's caps), the images
  * are listed as MuPDF draws them (MAX_PLACEMENTS at most), all locked with reason "unreadable".
@@ -1332,7 +1401,7 @@ export function findPlacements(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePla
     const placements = drawn.slice(0, MAX_PLACEMENTS).map((d, index): Placement => ({
       index, kind: "xobject", matrix: d.matrix, bbox: bboxOf(quadOf(d.matrix)), visible: d.visible,
       pixelWidth: d.width, pixelHeight: d.height, movable: false, reason: "unreadable", drawIndex: index,
-      mcid: null, mcidHost: null, alone: false, layers: [], inside: [], top: null, unit: null, inner: null, added: false, turn: 1,
+      mcid: null, mcidHost: null, alone: false, layers: [], inside: [], top: null, unit: null, inner: null, added: false, turn: 1, xobject: null,
     }));
     return { placements, texts: walk?.texts ?? [], agreed: false };
   }
@@ -1354,7 +1423,7 @@ export function findPlacements(mupdf: MuPDFModule, page: MuPDF.PDFPage): PagePla
     return {
       index, kind: w.kind, matrix, bbox, visible: d.visible, pixelWidth: d.width, pixelHeight: d.height,
       movable: reason === null, reason, drawIndex: match[index], mcid: w.mark?.mcid ?? null, mcidHost: w.mark?.host ?? null,
-      alone: w.mark?.paints === 1, layers: w.layers, inside: moving, top: w.top, unit: w.unit, inner: w.inner, added: w.added, turn: w.turn,
+      alone: w.mark?.paints === 1, layers: w.layers, inside: moving, top: w.top, unit: w.unit, inner: w.inner, added: w.added, turn: w.turn, xobject: w.xobject,
     };
   });
   return { placements, texts: walk.texts, agreed: true };
@@ -1639,7 +1708,7 @@ const DEVICE_SPACES: Record<number, string> = { 1: "DeviceGray", 3: "DeviceRGB",
  * With `onlyMuPDFs`, only for MuPDF's own profiles (their description names Artifex): the file's
  * format was not read, so a profile of its own may be in it.
  */
-function deviceSpace(cs: Obj, onlyMuPDFs: boolean): string | null {
+export function deviceSpace(cs: Obj, onlyMuPDFs: boolean): string | null {
   if (!cs.isArray() || cs.length !== 2 || nameOf(cs.get(0)) !== "ICCBased") return null;
   const profile = cs.get(1);
   if (!profile.isStream()) return null;
@@ -1721,8 +1790,13 @@ export function ownXObjects(doc: Doc, pageObj: Obj): Obj {
   return xobjects;
 }
 
-/** The same object: the same indirect object, or the same direct one in memory (as pdfa.ts compares them). */
-const identity = (o: Obj) => (o.isIndirect() ? `n${o.asIndirect()}` : `p${o.pointer}`);
+/**
+ * The same object: the same indirect object, or the same direct one in memory (as pdfa.ts compares
+ * them). Exported (release 5) as the key pruneUnused takes; a direct object's key holds only while
+ * a wrapper of it keeps it alive.
+ */
+export const objectIdentity = (o: Obj) => (o.isIndirect() ? `n${o.asIndirect()}` : `p${o.pointer}`);
+const identity = objectIdentity;
 
 function keysOf(dict: Obj): string[] {
   const keys: string[] = [];
@@ -1730,8 +1804,14 @@ function keysOf(dict: Obj): string[] {
   return keys;
 }
 
-/** Content the cleanup cannot read with certainty: nothing more is pruned for that edit (the edit is made all the same). */
-class Unsure extends Error {}
+/**
+ * Content the cleanup cannot read with certainty: nothing more is pruned for that edit (the edit is
+ * made all the same). Exported for redact.ts (release 5), which refuses instead.
+ */
+export class Unsure extends Error {
+  /** What the cleanup was looking into (pruneUnused: the object, or with `dryRun` the dictionary, by identity), when known: redact.ts names the page that listed it. */
+  key?: string;
+}
 
 /** Most content-stream operations the cleanup reads for one edit. */
 const MAX_CLEANUP_OPERATIONS = 4_000_000;
@@ -1739,25 +1819,171 @@ const MAX_CLEANUP_OPERATIONS = 4_000_000;
 const MAX_CLEANUP_OBJECTS = 200_000;
 
 /**
- * Reads the XObject names that content draws (the operands of its Do operators) for the cleanup,
- * each stream once however many pages or forms draw it. Throws Unsure for a stream MuPDF cannot
- * decode, and past MAX_CLEANUP_OPERATIONS.
+ * The kinds of named resources the cleanup follows, each with what content names them by: Do
+ * (XObject), Tf (Font), gs (ExtGState), scn and SCN (Pattern), sh (Shading), BDC and DP (a named
+ * property list). The image edits prune pictures (XObject) only; redact.ts (release 5) all of
+ * them. Colour spaces are not pruned: /DefaultRGB and the like are used without being named.
  */
-function namesReader() {
-  const cache = new Map<string, Set<string>>();
+export type ResourceKind = "XObject" | "Font" | "ExtGState" | "Pattern" | "Shading" | "Properties";
+export const RESOURCE_KINDS: readonly ResourceKind[] = ["XObject", "Font", "ExtGState", "Pattern", "Shading", "Properties"];
+
+/**
+ * The names content uses, by kind; the codes it shows in each font (by name), and whether it
+ * shows text in a font it did not select itself (its caller's, a form's or a mask's group's): a
+ * Type 3 font draws only the glyphs shown (shownGlyphs). `selected`: the fill and stroke patterns
+ * selected where it draws an XObject (by name: a form may paint with both, a stencil mask with the
+ * fill) and, last, at its end (null: a page's next stream may paint with them); drawnWith decides.
+ * `type3`: the patterns selected where text is shown that paints (by font: "" for one it did not
+ * select), as a Type 3 glyph may fill and stroke whatever the render mode; drawnWith decides.
+ */
+export type Used = Record<ResourceKind, Set<string>> & {
+  shown: Map<string, Set<number>>;
+  inherited: boolean;
+  selected: [xobject: string | null, fill: string | null, stroke: string | null][];
+  type3: [font: string, fill: string | null, stroke: string | null][];
+};
+const noneUsed = (): Used => ({
+  XObject: new Set(), Font: new Set(), ExtGState: new Set(), Pattern: new Set(), Shading: new Set(), Properties: new Set(), shown: new Map(), inherited: false, selected: [], type3: [],
+});
+
+/** The bytes of a string operand (literal or hex), escapes undone (exported for redact.ts). */
+export function bytesOf(x: Operand | undefined): string {
+  if (x?.hex !== undefined) {
+    const h = x.hex.replace(/[^0-9A-Fa-f]/g, "");
+    let out = "";
+    for (let i = 0; i < h.length; i += 2) out += String.fromCharCode(parseInt(h.slice(i, i + 2).padEnd(2, "0"), 16));
+    return out;
+  }
+  if (x?.str === undefined) return "";
+  const raw = x.str;
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (ch !== "\\") {
+      out += ch;
+      continue;
+    }
+    const e = raw[++i];
+    if (e === undefined) break;
+    const simple = ({ n: "\n", r: "\r", t: "\t", b: "\b", f: "\f" } as Record<string, string>)[e];
+    if (simple) out += simple;
+    else if (e >= "0" && e <= "7") {
+      let o = e;
+      while (o.length < 3 && raw[i + 1] >= "0" && raw[i + 1] <= "7") o += raw[++i];
+      out += String.fromCharCode(parseInt(o, 8) & 255);
+    } else if (e === "\r") {
+      if (raw[i + 1] === "\n") i++;
+    } else if (e !== "\n") out += e;
+  }
+  return out;
+}
+
+/**
+ * The glyphs (CharProcs names) of Type 3 `font` that `used` shows with it as `name`, through its
+ * /Encoding /Differences; "all" when a code shown is not there (a base encoding could name any
+ * glyph) or the text's font is not known (Used.inherited).
+ */
+export function shownGlyphs(font: Obj, name: string, used: Used): Set<string> | "all" {
+  if (used.inherited) return "all";
+  const diffs = new Map<number, string>();
+  const d = lookup(font, "Encoding", "Differences");
+  for (let i = 0, code = 0; d.isArray() && i < d.length; i++) {
+    const v = d.get(i);
+    if (v.isNumber()) code = v.asNumber();
+    else if (v.isName()) diffs.set(code++, v.asName());
+  }
+  const out = new Set<string>();
+  for (const code of used.shown.get(name) ?? []) {
+    const glyph = diffs.get(code);
+    if (glyph === undefined) return "all";
+    out.add(glyph);
+  }
+  return out;
+}
+
+/**
+ * The kind of resource an operator names, and which of its operands is the name: counted from the
+ * end (scn takes colour components first, BDC a tag), except Do's first, as the walk reads it.
+ */
+const NAMING: Record<string, [ResourceKind, number]> = {
+  Do: ["XObject", 0], Tf: ["Font", -2], gs: ["ExtGState", -1], scn: ["Pattern", -1], SCN: ["Pattern", -1], sh: ["Shading", -1],
+  BDC: ["Properties", -1], DP: ["Properties", -1],
+};
+
+/** The operators that set the fill colour, and the stroke colour (a pattern selected with scn or SCN). */
+const FILL_COLOUR = new Set(["cs", "sc", "scn", "g", "rg", "k"]), STROKE_COLOUR = new Set(["CS", "SC", "SCN", "G", "RG", "K"]);
+/** Whether a path-painting operator fills, and strokes; the same for text, by its render mode (Tr). */
+const PATH_PAINTS: Record<string, [boolean, boolean]> = {
+  f: [true, false], F: [true, false], "f*": [true, false], S: [false, true], s: [false, true], B: [true, true], "B*": [true, true], b: [true, true], "b*": [true, true],
+};
+const TEXT_PAINTS: [boolean, boolean][] = [[true, false], [false, true], [true, true], [false, false], [true, false], [false, true], [true, true], [false, false]];
+
+/**
+ * Reads the resource names that content uses (the operands of its Do, Tf, gs, scn, SCN, sh, BDC
+ * and DP operators) and the codes it shows in each font for the cleanup, each stream once however
+ * many pages or forms draw it. A pattern selected counts once something paints with it (the fill
+ * pattern a fill, text its render mode fills, an inline stencil mask; the stroke pattern a stroke,
+ * text it strokes), not when another colour or a Q replaces it first; at an XObject drawn, and at
+ * the end, Used.selected keeps it for drawnWith. Throws Unsure for a stream MuPDF cannot decode,
+ * and past `maxOperations` (all it reads counted: redact.ts reads every page with one).
+ */
+export function namesReader(maxOperations = MAX_CLEANUP_OPERATIONS) {
+  const cache = new Map<string, Used>();
   let operationsRead = 0;
   const read = (s: string) => {
-    const names = new Set<string>();
+    const names = noneUsed();
+    let font: string | null = null, fill: string | null = null, stroke: string | null = null, mode = 0;
+    const saved: (string | null)[] = [], colours: (string | null)[][] = [], modes: number[] = [];
+    const paint = ([fills, strokes]: [boolean, boolean]) => {
+      if (fills && fill !== null) names.Pattern.add(fill);
+      if (strokes && stroke !== null) names.Pattern.add(stroke);
+    };
+    const keep = (xobject: string | null) => { if (fill !== null || stroke !== null) names.selected.push([xobject, fill, stroke]); };
+    const show = (x: Operand | undefined) => {
+      const bytes = bytesOf(x);
+      if (!bytes) return;
+      if (font === null) {
+        names.inherited = true;
+        return;
+      }
+      let codes = names.shown.get(font);
+      if (!codes) names.shown.set(font, (codes = new Set()));
+      for (let i = 0; i < bytes.length; i++) codes.add(bytes.charCodeAt(i));
+    };
     for (const o of operations(s)) {
-      if (++operationsRead > MAX_CLEANUP_OPERATIONS) throw new Unsure();
-      const name = o.op === "Do" ? o.args[0]?.name : undefined;
-      if (name !== undefined) names.add(name);
+      if (++operationsRead > maxOperations) throw new Unsure();
+      const naming = NAMING[o.op];
+      const name = naming ? o.args.at(naming[1])?.name : undefined;
+      if (name !== undefined && naming[0] !== "Pattern") names[naming[0]].add(name);
+      if (FILL_COLOUR.has(o.op)) fill = o.op === "scn" ? (name ?? null) : null;
+      else if (STROKE_COLOUR.has(o.op)) stroke = o.op === "SCN" ? (name ?? null) : null;
+      else if (PATH_PAINTS[o.op]) paint(PATH_PAINTS[o.op]);
+      else if (SHOW_TEXT.has(o.op)) {
+        const paints = TEXT_PAINTS[mode] ?? [true, true];
+        paint(paints);
+        if ((paints[0] || paints[1]) && (fill !== null || stroke !== null)) names.type3.push([font ?? "", fill, stroke]);
+      }
+      else if (o.op === "BI") paint([(o.args[0]?.dict?.IM ?? o.args[0]?.dict?.ImageMask)?.bool === true, false]);
+      else if (o.op === "Do" && name !== undefined) keep(name);
+      if (o.op === "q") {
+        saved.push(font);
+        colours.push([fill, stroke]);
+        modes.push(mode);
+      } else if (o.op === "Q" && saved.length) {
+        font = saved.pop()!;
+        [fill, stroke] = colours.pop()!;
+        mode = modes.pop()!;
+      } else if (o.op === "Tf") font = name ?? null;
+      else if (o.op === "Tr") mode = o.args[0]?.num ?? mode;
+      else if (o.op === "Tj" || o.op === "'" || o.op === "\"") show(o.args.at(-1));
+      else if (o.op === "TJ") for (const x of o.args[0]?.arr ?? []) show(x);
     }
+    keep(null);
     return names;
   };
   return {
     text: read,
-    stream(stream: Obj): Set<string> {
+    stream(stream: Obj): Used {
       const id = identity(stream);
       let names = cache.get(id);
       if (!names) {
@@ -1773,10 +1999,10 @@ function namesReader() {
     },
   };
 }
-type NamesReader = ReturnType<typeof namesReader>;
+export type NamesReader = ReturnType<typeof namesReader>;
 
-/** An annotation's appearance streams: normal, rollover and down, each a stream or one per state. */
-function appearances(annot: Obj): Obj[] {
+/** An annotation's appearance streams: normal, rollover and down, each a stream or one per state (exported for redact.ts). */
+export function appearances(annot: Obj): Obj[] {
   const out: Obj[] = [];
   for (const k of ["N", "R", "D"]) {
     const ap = lookup(annot, "AP", k);
@@ -1787,15 +2013,18 @@ function appearances(annot: Obj): Obj[] {
 }
 
 /**
- * The XObject names drawn with `resources`: by `contents` (the content of a page, or of a form,
- * pattern, Type 3 font or appearance whose /Resources these are; as text or as streams) and by
- * the content that uses the same resources because it has none of its own: the forms it draws,
- * Type 3 glyphs, patterns, soft-mask groups, and the appearances of `annots`. Throws Unsure when
- * some of it cannot be read, or draws a name that is not a key of the resources' /XObject: the
- * cleanup would then not see what MuPDF draws.
+ * The resource names used with `resources`, by kind (the XObject names: those drawn): by
+ * `contents` (the content of a page, or of a form, pattern, Type 3 font or appearance whose
+ * /Resources these are; as text or as streams; a pattern still selected at the end of one but the
+ * last counts, as a page's next stream may paint with it) and by the content that uses the same
+ * resources because it has none of its own: the forms it draws (Do), the glyphs of the Type 3
+ * fonts it selects (Tf), the patterns it paints with (scn, SCN), the soft-mask groups of the
+ * graphics states it sets (gs), and the appearances of `annots`. One the resources only list draws
+ * nothing. Throws Unsure when some of it cannot be read, or draws a name that is not a key of the
+ * resources' /XObject: the cleanup would then not see what MuPDF draws.
  */
-function drawnWith(read: NamesReader, resources: Obj, contents: (string | Obj)[], annots: Obj | null): Set<string> {
-  const drawn = new Set<string>(), seen = new Set<string>();
+function drawnWith(read: NamesReader, resources: Obj, contents: (string | Obj)[], annots: Obj | null): Used {
+  const used = noneUsed(), drawn = used.XObject, seen = new Set<string>();
   const xobjects = lookup(resources, "XObject");
   /** Content that uses these resources because it has none of its own, still to read (each once). */
   const pending: Obj[] = [];
@@ -1806,39 +2035,120 @@ function drawnWith(read: NamesReader, resources: Obj, contents: (string | Obj)[]
     seen.add(id);
     pending.push(stream);
   };
-  const add = (names: Set<string>) => {
-    for (const name of names) {
+  /** `followed`: a page's stream another of its streams follows. */
+  const add = (names: Used, followed = false) => {
+    for (const name of names.XObject) {
       if (drawn.has(name)) continue;
       const xo = lookup(xobjects, name);
       if (xo.isNull()) throw new Unsure();
       drawn.add(name);
       if (xo.isStream() && nameOf(xo.get("Subtype")) === "Form") using(xo);
     }
+    const patterns = new Set(names.Pattern);
+    for (const [name, fill, stroke] of names.selected) {
+      const xo = name === null ? null : lookup(xobjects, name), mask = xo?.get("ImageMask");
+      const both = xo ? nameOf(xo.get("Subtype")) === "Form" : followed;
+      if ((both || (mask?.isBoolean() && mask.asBoolean())) && fill !== null) patterns.add(fill);
+      if (both && stroke !== null) patterns.add(stroke);
+    }
+    for (const [font, fill, stroke] of names.type3) {
+      if (font !== "" && !isType3(lookup(resources, "Font", font))) continue;
+      if (fill !== null) patterns.add(fill);
+      if (stroke !== null) patterns.add(stroke);
+    }
+    for (const kind of RESOURCE_KINDS) {
+      if (kind === "XObject") continue;
+      for (const name of kind === "Pattern" ? patterns : names[kind]) {
+        if (used[kind].has(name)) continue;
+        used[kind].add(name);
+        // (forEach on the null object does nothing)
+        const v = lookup(resources, kind, name);
+        if (kind === "Pattern") using(v);
+        else if (kind === "ExtGState") using(lookup(v, "SMask", "G"));
+      }
+    }
+    for (const [font, codes] of names.shown) {
+      const all = used.shown.get(font);
+      if (all) for (const c of codes) all.add(c);
+      else used.shown.set(font, new Set(codes));
+    }
+    if (names.inherited) used.inherited = true;
   };
-  for (const c of contents) add(typeof c === "string" ? read.text(c) : read.stream(c));
-  // (forEach on the null object does nothing)
-  lookup(resources, "Font").forEach((font) => {
-    if (nameOf(lookup(font, "Subtype")) !== "Type3" || lookup(font, "Resources").isDictionary()) return;
-    lookup(font, "CharProcs").forEach(using);
-  });
-  lookup(resources, "Pattern").forEach(using);
-  lookup(resources, "ExtGState").forEach((eg) => using(lookup(eg, "SMask", "G")));
+  const inherits = inheritsText(read);
+  const own = (o: Obj) => o.isStream() && o.get("Resources").isDictionary();
+  contents.forEach((c, k) => add(typeof c === "string" ? read.text(c) : read.stream(c), k < contents.length - 1));
   annots?.forEach((annot) => appearances(annot).forEach(using));
-  while (pending.length) add(read.stream(pending.pop()!));
-  return drawn;
+  for (;;) {
+    while (pending.length) add(read.stream(pending.pop()!));
+    // The glyphs shown of the Type 3 fonts without resources of their own (a form or a mask's group
+    // with resources of its own may show text in the font selected here: then every glyph).
+    const fonts = [...used.Font].filter((name) => isType3(lookup(resources, "Font", name)));
+    if (!fonts.length) break;
+    used.inherited ||= [...drawn].some((name) => { const xo = lookup(xobjects, name); return own(xo) && nameOf(xo.get("Subtype")) === "Form" && inherits(xo, resources); })
+      || [...used.ExtGState].some((name) => { const group = lookup(resources, "ExtGState", name, "SMask", "G"); return own(group) && inherits(group, resources); });
+    for (const name of fonts) {
+      const font = lookup(resources, "Font", name);
+      if (lookup(font, "Resources").isDictionary()) continue;
+      const shown = shownGlyphs(font, name, used);
+      lookup(font, "CharProcs").forEach((proc, glyph) => { if (shown === "all" || shown.has(String(glyph))) using(proc); });
+    }
+    if (!pending.length) break;
+  }
+  // The rest of what they list without resources of its own draws nothing, but is read all the
+  // same, as it always was: one that cannot be decoded keeps the cleanup from pruning (Unsure).
+  const listedOnly = (s: Obj) => { if (s.isStream() && !s.get("Resources").isDictionary() && !seen.has(identity(s))) read.stream(s); };
+  lookup(resources, "Font").forEach((font) => { if (isType3(font) && !lookup(font, "Resources").isDictionary()) lookup(font, "CharProcs").forEach(listedOnly); });
+  lookup(resources, "Pattern").forEach(listedOnly);
+  lookup(resources, "ExtGState").forEach((eg) => listedOnly(lookup(eg, "SMask", "G")));
+  return used;
 }
 
-/** Content that draws with one resources dictionary: a page (with its annotations' appearances), or a form, pattern, Type 3 font or appearance whose own /Resources it is. */
+const isType3 = (font: Obj) => nameOf(lookup(font, "Subtype")) === "Type3";
+
+/**
+ * Whether a form or a mask's group, or a form it draws, shows text in a font it did not select
+ * (its caller's, maybe). A loop reads as not; too deep, as it does.
+ */
+function inheritsText(read: NamesReader) {
+  const memo = new Map<string, boolean>();
+  const inherits = (stream: Obj, res: Obj, depth = 0): boolean => {
+    const own = stream.get("Resources"), r = own.isDictionary() ? own : res;
+    const key = `${identity(stream)}|${identity(r)}`;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    memo.set(key, false);
+    const names = read.stream(stream);
+    const out = names.inherited || depth > 16 || [...names.XObject].some((name) => {
+      const xo = lookup(r, "XObject", name);
+      return xo.isStream() && nameOf(xo.get("Subtype")) === "Form" && inherits(xo, r, depth + 1);
+    });
+    memo.set(key, out);
+    return out;
+  };
+  return inherits;
+}
+
+/** Content that draws with one resources dictionary: a page (with its annotations' appearances), or a form, pattern, Type 3 glyph or appearance whose own /Resources it is (a glyph's: its font's). */
 interface ResourceUser {
   resources: Obj;
   contents: Obj[];
   annots: Obj | null;
+  /**
+   * A form, pattern, Type 3 glyph or soft mask's group: where it is listed (what draws with that
+   * dictionary, and its kind and name there; a glyph's font). It draws only when one of those,
+   * itself drawn, uses that name (and shows that glyph: shownGlyphs). None for a page or an
+   * appearance: drawn.
+   */
+  via?: Place[];
 }
 
-/** An XObject dictionary of the document that lists some of the pictures an edit took off a page. */
+type Place = { users: ResourceUser[]; kind: ResourceKind; name: string; glyph?: { font: Obj; name: string } };
+
+/** A dictionary of one kind of resource (an /XObject, a /Font...) that lists some of the objects an edit took off a page. */
 interface Listing {
-  xobjects: Obj;
-  /** Its names for those pictures. */
+  kind: ResourceKind;
+  dict: Obj;
+  /** Its names for those objects. */
   names: string[];
   /** What draws with it. */
   users: ResourceUser[];
@@ -1847,15 +2157,18 @@ interface Listing {
 }
 
 /**
- * The XObject dictionaries of the document that list any of the objects `gone` (by object
- * number), with what draws with each: every /Resources reachable from the pages (inherited ones
+ * The dictionaries of `kinds` of the document that list any of the objects `gone` (identity
+ * keys), with what draws with each: every /Resources reachable from the pages (inherited ones
  * included), the page tree's own (inherited by no page any more, they are still in the file),
  * those of the forms, patterns, Type 3 fonts, soft-mask groups and annotation appearances found
- * in them, and the form fields' default resources (/AcroForm /DR, whose use is not known). Each
- * dictionary is looked through once. Throws Unsure past MAX_CLEANUP_OBJECTS.
+ * in them, and the form fields' default resources (/AcroForm /DR: a field's /DA names its fonts,
+ * whose use is not known; nothing else there is drawn). Each dictionary is looked through once.
+ * Throws Unsure past MAX_CLEANUP_OBJECTS.
  */
-function listings(doc: Doc, gone: Set<number>): Listing[] {
+function listings(doc: Doc, gone: Set<string>, kinds: readonly ResourceKind[], only?: Set<string>): Listing[] {
   const byDict = new Map<string, Listing>();
+  const byContent = [...gone].some((k) => k.startsWith("d"));
+  const isGone = (v: Obj) => gone.has(identity(v)) || (byContent && !v.isIndirect() && gone.has(directKey(v)));
   const seen = new Set<string>();
   const first = (o: Obj) => {
     const id = identity(o);
@@ -1864,85 +2177,229 @@ function listings(doc: Doc, gone: Set<number>): Listing[] {
     seen.add(id);
     return true;
   };
-  /** The listing of the /XObject of `res`, made when first seen (null: none, or one that lists nothing gone). */
-  const listingOf = (res: Obj): Listing | null => {
-    const xobjects = lookup(res, "XObject");
-    if (!xobjects.isDictionary()) return null;
-    const id = identity(xobjects);
-    let listing = byDict.get(id);
-    if (!listing) {
-      const names: string[] = [];
-      xobjects.forEach((v, k) => { if (v.isIndirect() && gone.has(v.asIndirect())) names.push(String(k)); });
-      byDict.set(id, (listing = { xobjects, names, users: [], unknown: false }));
+  /** The listings of `res`'s dictionaries of each kind, made when first seen: those that list something gone. */
+  const listingsOf = (res: Obj): Listing[] => {
+    const out: Listing[] = [];
+    for (const kind of kinds) {
+      const dict = lookup(res, kind);
+      if (!dict.isDictionary()) continue;
+      const id = identity(dict);
+      if (only && !only.has(id)) continue;
+      let listing = byDict.get(id);
+      if (!listing) {
+        const names: string[] = [];
+        dict.forEach((v, k) => { if (isGone(v)) names.push(String(k)); });
+        byDict.set(id, (listing = { kind, dict, names, users: [], unknown: false }));
+      }
+      if (listing.names.length) out.push(listing);
     }
-    return listing.names.length ? listing : null;
+    return out;
+  };
+  /** What draws with each resources dictionary (by identity). */
+  const usersOf = new Map<string, ResourceUser[]>();
+  const usersOfRes = (res: Obj) => {
+    const id = identity(res);
+    let users = usersOf.get(id);
+    if (!users) usersOf.set(id, (users = []));
+    return users;
+  };
+  /** `user` draws with its resources: one user for all the kinds of dictionaries they hold. */
+  const usedBy = (user: ResourceUser) => {
+    usersOfRes(user.resources).push(user);
+    for (const l of listingsOf(user.resources)) l.users.push(user);
   };
   /** Resources dictionaries still to look through. */
   const pending: Obj[] = [];
-  /** A form, pattern, Type 3 font or appearance: its own resources, when it has some, are a user's and are looked through. */
-  const holder = (obj: Obj, contents: () => Obj[]) => {
-    const res = obj.get("Resources");
-    if (!res.isDictionary() || !first(obj)) return;
-    listingOf(res)?.users.push({ resources: res, contents: contents(), annots: null });
-    pending.push(res);
+  const holders = new Map<string, ResourceUser>();
+  /**
+   * A form, pattern, soft mask's group, appearance or Type 3 glyph: its own resources `res` (a
+   * glyph's: its font's), when it has some, are a user's and are looked through. `from`: where it
+   * is listed (an appearance, or a glyph of the fields' resources, has none: drawn).
+   */
+  const holder = (obj: Obj, res: Obj, contents: () => Obj[], from?: Omit<Place, "users"> & { res: Obj }) => {
+    if (!res.isDictionary()) return;
+    let user = holders.get(identity(obj));
+    if (!user) {
+      if (!first(obj)) return;
+      holders.set(identity(obj), (user = { resources: res, contents: contents(), annots: null, via: from ? [] : undefined }));
+      usedBy(user);
+      pending.push(res);
+    }
+    if (!from) user.via = undefined;
+    else user.via?.push({ users: usersOfRes(from.res), kind: from.kind, name: from.name, glyph: from.glyph });
+  };
+  /** Each glyph of a Type 3 font a user of its own: it draws only when shown. */
+  const glyphs = (font: Obj, from?: Omit<Place, "users"> & { res: Obj }) => {
+    const own = lookup(font, "Resources");
+    lookup(font, "CharProcs").forEach((proc, glyph) => {
+      if (proc.isStream()) holder(proc, own, () => [proc], from && { ...from, glyph: { font, name: String(glyph) } });
+    });
   };
   const lookThrough = (res: Obj) => {
     if (!res.isDictionary() || !first(res)) return;
-    listingOf(res);
-    lookup(res, "XObject").forEach((xo) => { if (xo.isStream() && nameOf(xo.get("Subtype")) === "Form") holder(xo, () => [xo]); });
-    lookup(res, "Pattern").forEach((pattern) => { if (pattern.isStream()) holder(pattern, () => [pattern]); });
-    lookup(res, "Font").forEach((font) => {
-      if (nameOf(lookup(font, "Subtype")) !== "Type3") return;
-      holder(font, () => {
-        const procs: Obj[] = [];
-        lookup(font, "CharProcs").forEach((proc) => { if (proc.isStream()) procs.push(proc); });
-        return procs;
-      });
+    listingsOf(res);
+    lookup(res, "XObject").forEach((xo, name) => {
+      if (xo.isStream() && nameOf(xo.get("Subtype")) === "Form") holder(xo, xo.get("Resources"), () => [xo], { res, kind: "XObject", name: String(name) });
     });
-    lookup(res, "ExtGState").forEach((eg) => {
+    lookup(res, "Pattern").forEach((pattern, name) => {
+      if (pattern.isStream()) holder(pattern, pattern.get("Resources"), () => [pattern], { res, kind: "Pattern", name: String(name) });
+    });
+    lookup(res, "Font").forEach((font, name) => { if (isType3(font)) glyphs(font, { res, kind: "Font", name: String(name) }); });
+    lookup(res, "ExtGState").forEach((eg, name) => {
       const group = lookup(eg, "SMask", "G");
-      if (group.isStream()) holder(group, () => [group]);
+      if (group.isStream()) holder(group, group.get("Resources"), () => [group], { res, kind: "ExtGState", name: String(name) });
     });
   };
   const drain = () => { while (pending.length) lookThrough(pending.pop()!); };
   for (let k = 0, n = doc.countPages(); k < n; k++) {
     const pageObj = doc.findPage(k);
     const res = pageObj.getInheritable("Resources"), annots = pageObj.get("Annots");
-    listingOf(res)?.users.push({ resources: res, contents: contentStreams(pageObj), annots });
+    usedBy({ resources: res, contents: contentStreams(pageObj), annots });
     pending.push(res);
-    annots.forEach((annot) => appearances(annot).forEach((ap) => holder(ap, () => [ap])));
+    annots.forEach((annot) => appearances(annot).forEach((ap) => holder(ap, ap.get("Resources"), () => [ap])));
     for (let node = pageObj.get("Parent"), up = 0; node.isDictionary() && up < 64 && first(node); node = node.get("Parent"), up++)
       pending.push(node.get("Resources"));
     drain();
   }
   const fields = doc.getTrailer().get("Root", "AcroForm", "DR");
-  const listed = listingOf(fields);
-  if (listed) listed.unknown = true;
+  lookup(fields, "Font").forEach((font) => { if (isType3(font)) glyphs(font); });
+  for (const listed of listingsOf(fields)) if (listed.kind === "Font") listed.unknown = true;
   pending.push(fields);
   drain();
   return [...byDict.values()].filter((l) => l.names.length);
 }
 
 /**
- * Pictures the edit took off a page (the objects `gone`) may still be listed elsewhere: in the
- * /Resources the page shared with other pages (FPDF and TCPDF write one for all), inherited from
- * the page tree, given to a form as its /Resources, or left to the other pages when a text edit
- * gave this one resources of its own. Each such name leaves its dictionary when nothing that
- * draws with that dictionary draws it; one that something draws stays, and so does the picture.
- * Throws Unsure, before removing anything, when what one of them draws is not known for sure.
+ * Pictures the edit took off a page (the objects `gone`, identity keys) may still be listed
+ * elsewhere: in the /Resources the page shared with other pages (FPDF and TCPDF write one for
+ * all), inherited from the page tree, given to a form as its /Resources, or left to the other
+ * pages when a text edit gave this one resources of its own. Each such name leaves its dictionary
+ * when nothing drawn that draws with that dictionary draws it (a form, pattern, Type 3 font or
+ * soft mask's group only listed draws nothing: live); one that something draws stays, and so
+ * does the picture. The same for the other `kinds` (fonts, graphics states...: release 5). Throws
+ * Unsure, before removing anything, when what one of them draws is not known for sure; with
+ * `dryRun`, removes nothing (the check alone). With `byObject`, returns the keys of the objects
+ * that stay because something draws them (the others are listed nowhere any more).
  */
-function pruneElsewhere(doc: Doc, gone: Set<number>, read: NamesReader) {
+function pruneElsewhere(doc: Doc, gone: Set<string>, read: NamesReader, kinds: readonly ResourceKind[], { dryRun = false, only, byObject = false }: PruneOptions = {}): Set<string> {
   const prune: [Obj, string[]][] = [];
-  for (const listing of listings(doc, gone)) {
-    if (listing.unknown) continue;
-    const left = new Set(listing.names);
-    for (const user of listing.users) {
-      for (const name of drawnWith(read, user.resources, user.contents, user.annots)) left.delete(name);
-      if (!left.size) break;
+  const kept = new Set<string>();
+  const memo = new Map<ResourceUser, Used>();
+  /** What `user` draws, read for `key` (an Unsure says it). */
+  const usedBy = (user: ResourceUser, key: string) => {
+    let used = memo.get(user);
+    if (!used) {
+      try {
+        used = drawnWith(read, user.resources, user.contents, user.annots);
+      } catch (err) {
+        if (err instanceof Unsure) err.key ??= key;
+        throw err;
+      }
+      memo.set(user, used);
     }
-    if (left.size) prune.push([listing.xobjects, [...left]]);
-  }
-  for (const [xobjects, names] of prune) for (const name of names) xobjects.delete(name);
+    return used;
+  };
+  const liveness = new Map<ResourceUser, boolean>();
+  /** Whether content that uses `used` draws what is listed at `p`. */
+  const names = (used: Used, p: Place) => {
+    if (!used[p.kind].has(p.name)) return false;
+    const shown = p.glyph ? shownGlyphs(p.glyph.font, p.name, used) : "all";
+    return shown === "all" || shown.has(p.glyph!.name);
+  };
+  /**
+   * Whether `user` is drawn: a page or an appearance is; a form, pattern, Type 3 font or soft
+   * mask's group when something drawn that draws with a dictionary listing it uses its name
+   * there. Settled at once for every holder it can be drawn through, from what surely is drawn
+   * (so a form that only draws itself is not). Read for `key` (an Unsure says it).
+   */
+  const live = (user: ResourceUser, key: string): boolean => {
+    if (!user.via) return true;
+    const known = liveness.get(user);
+    if (known !== undefined) return known;
+    const group = new Set([user]);
+    for (const h of group) for (const p of h.via!) for (const u of p.users) if (u.via && !liveness.has(u)) group.add(u);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const h of group)
+        if (!liveness.get(h) && h.via!.some((p) => p.users.some((u) => (!u.via || liveness.get(u)) && names(usedBy(u, key), p)))) {
+          liveness.set(h, true);
+          changed = true;
+        }
+    }
+    for (const h of group) if (!liveness.has(h)) liveness.set(h, false);
+    return liveness.get(user)!;
+  };
+  const found = listings(doc, gone, kinds, only);
+  if (byObject) {
+    // Each object (a direct one with its copies) once: it stays wherever it is listed as soon as one
+    // user draws it (it is in the file anyway); otherwise it leaves every dictionary that lists it.
+    const places = new Map<string, [Listing, string][]>();
+    for (const listing of found)
+      for (const name of listing.names) {
+        const v = listing.dict.get(name);
+        const key = v.isIndirect() ? identity(v) : directKey(v);
+        places.set(key, [...(places.get(key) ?? []), [listing, name]]);
+      }
+    for (const [key, where] of places) {
+      const drawn = where.some(([listing, name]) => listing.unknown || listing.users.some((user) => usedBy(user, key)[listing.kind].has(name) && live(user, key)));
+      if (drawn) kept.add(key);
+      else for (const [listing, name] of where) prune.push([listing.dict, [name]]);
+    }
+  } else
+    for (const listing of found) {
+      if (listing.unknown) continue;
+      const left = new Set(listing.names);
+      for (const user of listing.users) {
+        const used = usedBy(user, identity(listing.dict))[listing.kind];
+        if (live(user, identity(listing.dict))) for (const name of used) left.delete(name);
+        if (!left.size && !dryRun) break; // (the check reads every user: after the edit, others may be the ones left)
+      }
+      if (left.size) prune.push([listing.dict, [...left]]);
+    }
+  if (dryRun) return kept;
+  for (const [dict, names] of prune) for (const name of names) dict.delete(name);
+  return kept;
+}
+
+/**
+ * How pruneElsewhere goes (release 5): `dryRun` reads and removes nothing (and reads every user);
+ * `only` looks at the dictionaries of those identities alone; `byObject` asks of each object
+ * whether anything draws it, not of each dictionary (the first user that does settles it).
+ */
+interface PruneOptions {
+  dryRun?: boolean;
+  only?: Set<string>;
+  byObject?: boolean;
+}
+
+/**
+ * The key of a direct object by what it holds (release 5): a direct property list or graphics
+ * state shared by two pages' resources is written once for each, so after a save they are two
+ * objects holding the same.
+ */
+export const directKey = (o: Obj) => `d${o.toString()}`;
+
+/**
+ * Release 5 (redact.ts): every dictionary of `kinds` in the document that lists one of `gone`
+ * (objectIdentity keys, and directKey ones for direct objects listed elsewhere as copies) loses
+ * the names that nothing drawing with it uses (pruneElsewhere and its options), so that what a
+ * redaction took off a page is not carried into the saved file unless something still draws it.
+ * `maxOperations` is the reading's budget (MAX_CLEANUP_OPERATIONS when not given). Throws Unsure,
+ * before removing anything, when what one of them draws is not known for sure. With `byObject`,
+ * returns the keys of those that stay because something draws them.
+ */
+export function pruneUnused(doc: Doc, gone: Set<string>, kinds: readonly ResourceKind[], options: PruneOptions & { maxOperations?: number } = {}): Set<string> {
+  return pruneElsewhere(doc, gone, namesReader(options.maxOperations), kinds, options);
+}
+
+/**
+ * Release 5 (redact.ts): the resource names, by kind, that `contents` (and the appearances of
+ * `annots`) use with `resources`, the content that has no resources of its own included
+ * (drawnWith), read with `read` (a reader of its own when not given). Throws Unsure when some of
+ * it cannot be read for sure.
+ */
+export function namesUsed(resources: Obj, contents: (string | Obj)[], annots: Obj | null, read = namesReader()): Used {
+  return drawnWith(read, resources, contents, annots);
 }
 
 /**
@@ -1960,17 +2417,17 @@ function dropUnusedNames(doc: Doc, pageObj: Obj, texts: string[], own?: Obj) {
   try {
     const resources = pageObj.getInheritable("Resources"), xobjects = lookup(resources, "XObject");
     const read = namesReader();
-    const drawn = drawnWith(read, resources, texts, pageObj.get("Annots"));
+    const drawn = drawnWith(read, resources, texts, pageObj.get("Annots")).XObject;
     const unused = keysOf(xobjects).filter((n) => !drawn.has(n));
     if (!unused.length) return;
-    const gone = new Set<number>();
+    const gone = new Set<string>();
     for (const n of unused) {
       const v = xobjects.get(n);
-      if (v.isIndirect()) gone.add(v.asIndirect());
+      if (v.isIndirect()) gone.add(identity(v));
     }
     const mine = own ?? ownXObjects(doc, pageObj);
     for (const n of unused) mine.delete(n);
-    if (gone.size) pruneElsewhere(doc, gone, read);
+    if (gone.size) pruneElsewhere(doc, gone, read, ["XObject"]);
   } catch (err) {
     if (!(err instanceof Unsure)) throw err;
   }

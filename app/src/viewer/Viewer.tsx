@@ -14,6 +14,10 @@
 // them): the pages are laid out again, each PageView follows its own page (keyed by PageModel.key,
 // not by position), fit-width fits again when the widest page changed, and the page the operation
 // is about (currentPage, set with the change: ui/pageActions.ts, state.ts) is brought into view.
+//
+// Cerca (release 5): on desktop its find bar is docked above the notice and the banner while the
+// search is open (ui/search/SearchBar.tsx; on phones it takes the top bar's place instead), and the
+// current result is brought into the middle of the view when it is not well in view already.
 import type { RefObject } from "preact";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
@@ -26,6 +30,8 @@ import { announceForm, FillBanner, FillStrip } from "../ui/fill/FillBar";
 import { rescueFocus, viewerScroller } from "../ui/focus";
 import { IconInfo } from "../ui/icons";
 import { isNarrow, prefersReducedMotion } from "../ui/media";
+import { FindBar } from "../ui/search/SearchBar";
+import { searchOpen, setHitRevealer } from "../ui/search/state";
 import { bottomBarsHidden } from "../ui/TabBar";
 import { installZoomGestures, type Anchor } from "./gestures";
 import { clampZoom, computeLayout, fitWidthZoom, pageIndexAt, spacing, type Layout } from "./layout";
@@ -144,9 +150,12 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
   const strip = stripFor(banner);
   const signedNotice = doc.info.signatures > 0 && signedNoticeDismissed.value !== doc.id;
   const noticeRef = useRef<HTMLDivElement>(null);
+  /** Cerca's find bar, above them all (desktop only: on phones the search is in the top bar). */
+  const findBar = searchOpen.value && !isNarrow.value;
+  const findRef = useRef<HTMLDivElement>(null);
   /**
-   * Height of the bars above the scroller (signed notice and edit banner; 0 when there are none);
-   * null before the first layout.
+   * Height of the bars above the scroller (find bar, signed notice and edit banner; 0 when there
+   * are none); null before the first layout.
    */
   const bannerHeight = useRef<number | null>(null);
   /**
@@ -223,6 +232,30 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
         el.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
       },
     });
+    // Cerca's current result: left where it is when it is well in view (clear of the edges and of
+    // the page indicator), else brought to the middle (sideways only when it is out of view
+    // across), its page then counting as the current page, as a page picked from the thumbnails.
+    setHitRevealer((hit) => {
+      const L = layoutRef.current;
+      const i = hit.pageIndex;
+      const page = doc.pages[i];
+      if (!page || i >= L.tops.length) return;
+      const [bx, by] = page.bounds;
+      const x0 = L.lefts[i] + (hit.rect[0] - bx) * L.zoom, x1 = L.lefts[i] + (hit.rect[2] - bx) * L.zoom;
+      const y0 = L.tops[i] + (hit.rect[1] - by) * L.zoom, y1 = L.tops[i] + (hit.rect[3] - by) * L.zoom;
+      const h = el.clientHeight, w = el.clientWidth;
+      const margin = Math.min(64, h / 6);
+      const inViewDown = y0 >= el.scrollTop + margin && y1 <= el.scrollTop + h - margin;
+      const inViewAcross = x0 >= el.scrollLeft && x1 <= el.scrollLeft + w;
+      if (inViewDown && inViewAcross) return;
+      const clamp = (v: number, max: number) => Math.max(0, Math.min(v, max));
+      const top = inViewDown ? el.scrollTop : clamp((y0 + y1) / 2 - h / 2, el.scrollHeight - h);
+      const left = inViewAcross ? el.scrollLeft : clamp((x0 + x1) / 2 - w / 2, el.scrollWidth - w);
+      const smooth = Math.abs(i - currentPage.peek()) <= 3 && !prefersReducedMotion.peek();
+      picked.current = { index: i, top, until: performance.now() + (smooth ? 1500 : 300) };
+      currentPage.value = i;
+      el.scrollTo({ top, left, behavior: smooth ? "smooth" : "auto" });
+    });
     const removeGestures = installZoomGestures({ scroller: el, anchorAt, zoomAround });
 
     // Width changes (window resize, rotation): re-centre, and re-fit in fit-width mode. Height
@@ -246,6 +279,7 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
 
     return () => {
       setZoomController(null);
+      setHitRevealer(null);
       removeGestures();
       resize.disconnect();
       el.removeEventListener("scroll", onScroll);
@@ -300,12 +334,13 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
     currentPage.value = pageIndexAt(layout, el.scrollTop + el.clientHeight / 2);
   }, [layout]);
 
-  // The edit banner (and the signed notice) push the scroller down when they come and let it up
-  // when they go: scroll by the same amount, so the document stays still on screen (not on the
-  // first layout).
+  // The edit banner (and the signed notice, and the find bar) push the scroller down when they come
+  // and let it up when they go: scroll by the same amount, so the document stays still on screen
+  // (not on the first layout).
   useLayoutEffect(() => {
     const before = bannerHeight.current;
-    const after = (bannerRef.current?.offsetHeight ?? 0) + (noticeRef.current?.offsetHeight ?? 0);
+    const after = (bannerRef.current?.offsetHeight ?? 0) + (noticeRef.current?.offsetHeight ?? 0) +
+      (findRef.current?.offsetHeight ?? 0);
     bannerHeight.current = after;
     const el = scrollerRef.current;
     if (!el || before === null || after === before) return;
@@ -315,7 +350,7 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
     // document did not move on screen, so the pick moves with the scroll.
     const p = picked.current;
     if (p && Math.abs(from - p.top) < 2) p.top = el.scrollTop;
-  }, [bannerShape, signedNotice]);
+  }, [bannerShape, signedNotice, findBar]);
 
   // A form: said once when the document opens (its fields work without choosing a tool, D2), from
   // what the engine counted at open (no page's fields are read for it).
@@ -325,6 +360,7 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
 
   return (
     <div class="viewer">
+      {findBar && <FindBar elRef={findRef} />}
       {signedNotice && <SignedNotice docId={doc.id} elRef={noticeRef} />}
       {banner && <ToolBanner kind={banner} doc={doc} elRef={bannerRef} />}
       <div class="viewer-body">
