@@ -4,10 +4,8 @@ The rewrite of PDF Editor: it edits the **real text** of a PDF, in the file's ow
 computer or a phone. It can be installed as an app, works offline, and the file never leaves
 the device: there is no server, all the work happens in the browser.
 
-It lives in `app/` while the current editor at the repository root (`index.html` + `lib/`)
-keeps working, and replaces it once it does everything the old one did. It is in phase 2:
-engine, viewer, the full "Carta + giallo" interface with desktop and phone layouts, installable
-app and deploy.
+What it does is listed in the [repository README](../README.md). The first single-file editor
+(`index.html` + `lib/` at the repository root) is still there, no longer developed.
 
 "PDF Editor" is a **working name** until the product is named. It appears in
 `vite.config.ts` (manifest), `index.html` (title), `../wrangler.jsonc` (`name`, which is also
@@ -34,7 +32,8 @@ From this folder (`app/`):
 | `npm run icons` | Redraw the icons in `public/icons/` (Python 3 with Pillow, `scripts/make_icons.py`). |
 
 GitHub runs `npm ci`, `typecheck`, `test` and `build` on every pull request that touches
-`app/` (`.github/workflows/app.yml`).
+`app/` (`.github/workflows/app.yml`, job `check`), and a second job, `pdfa`, that converts the
+test files to PDF/A and validates them with veraPDF (PDF/A-2b), in Docker.
 
 ## Architecture
 

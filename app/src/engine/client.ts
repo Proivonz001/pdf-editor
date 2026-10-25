@@ -1,7 +1,7 @@
 // Main-thread side of the engine: starts the worker and turns messages into promises.
 import type {
   FieldValue, ImageTarget, LineEditOptions, Matrix, Op, PagePicture, PagesEdit, RedactArea, RedactMode,
-  RequestOf, ResponseMessage, ResultMap, SaveOptions, SearchOptions, TextStyle,
+  RequestOf, ResponseMessage, ResultMap, SaveOptions, SearchOptions, Shape, TextStyle,
 } from "./protocol";
 // The URL of the worker chunk: Vite bundles worker.ts as a worker entry for this import.
 import workerPath from "./worker.ts?worker&url";
@@ -192,6 +192,16 @@ export class EngineClient {
   /** The original and the log's byte arrays are transferred: the caller's buffers become empty. */
   resumeSession(original: ArrayBuffer, log: unknown, password?: string) {
     return this.call<"resumeSession">({ op: "resumeSession", original, log, password }, buffersIn([original, log]));
+  }
+  addShape(pageIndex: number, shape: Shape) {
+    return this.call<"addShape">({ op: "addShape", pageIndex, shape });
+  }
+  shapes(pageIndex: number) {
+    return this.call<"shapes">({ op: "shapes", pageIndex });
+  }
+  /** `shape` null deletes it. */
+  editShape(pageIndex: number, id: number, shape: Shape | null) {
+    return this.call<"editShape">({ op: "editShape", pageIndex, shapeId: id, shape });
   }
   terminate() {
     this.worker.terminate();

@@ -1,10 +1,14 @@
 // A small drop-down menu (the "More" button of the desktop top bar, Cerca's options): menu button
 // pattern with arrow-key navigation (Home/End too; ArrowDown/ArrowUp on the button open it),
 // Escape to close (focus back on the button), Tab and click-outside to close. Rows are actions,
-// or check boxes (menuitemcheckbox) that leave the menu open as they are ticked. It opens under
+// or check boxes (menuitemcheckbox) that leave the menu open as they are ticked. A row that cannot
+// act now but should say why (`reason`) stays reachable: aria-disabled, its name the label alone,
+// the reason as its description and tooltip, and in a toast when it is chosen (as the organizer's
+// buttons do). It opens under
 // its button, aligned to the button's right edge (styles/overlays.css).
 import { Fragment, type ComponentChildren } from "preact";
 import { useEffect, useId, useRef, useState } from "preact/hooks";
+import { showToast } from "../state";
 import { ToolButton } from "./Button";
 
 export interface MenuItem {
@@ -21,6 +25,8 @@ export interface MenuItem {
   divider?: boolean;
   /** A check box, ticked or not: choosing it leaves the menu open. Left out for an action. */
   checked?: boolean;
+  /** Why it does nothing now: the row stays reachable (aria-disabled), says it, and choosing it shows it in a toast. */
+  reason?: string;
 }
 
 export function MenuButton(props: { label: string; icon: ComponentChildren; items: MenuItem[]; badge?: boolean }) {
@@ -105,15 +111,21 @@ export function MenuButton(props: { label: string; icon: ComponentChildren; item
                 class="menu-item"
                 tabIndex={-1}
                 disabled={item.disabled}
+                aria-disabled={item.reason ? "true" : undefined}
+                aria-label={item.reason ? item.label : undefined}
+                aria-describedby={item.reason ? `${id}-${item.key}-why` : undefined}
+                title={item.reason}
                 lang={item.lang}
                 onClick={() => {
                   if (item.checked === undefined) close(true);
-                  item.onSelect();
+                  if (item.reason) showToast("info", item.reason);
+                  else item.onSelect();
                 }}
               >
                 {item.icon}
                 <span class="menu-label">{item.label}</span>
                 {item.detail && <span class="menu-detail">{item.detail}</span>}
+                {item.reason && <span id={`${id}-${item.key}-why`} class="sr-only">{item.reason}</span>}
               </button>
             </Fragment>
           ))}

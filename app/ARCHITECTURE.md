@@ -23,7 +23,9 @@ repository root keeps working; it replaces it once it does everything the old on
   sign"). `decorations.ts` makes a line's underline, strike-through, links and background follow
   an edit of its text (see "Decorations"). `pages.ts` moves, deletes, copies, turns and adds
   pages (see "Pages, scans and Riprendi"). `search.ts` finds text and `redact.ts` removes what
-  lies under an area (see "Cerca, Bianchetto and Oscura"). `pdfa.ts` converts a
+  lies under an area (see "Cerca, Bianchetto and Oscura"). `shapes.ts` draws lines, arrows,
+  boxes, ellipses, freehand strokes and highlights as page content, with the geometry of
+  `shapeGeometry.ts`, which the viewer's preview shares (see "Forme"). `pdfa.ts` converts a
   copy to PDF/A and checks the result, with our own colour profile from `icc.ts` (see "PDF/A").
   `worker.ts` only turns messages into `EngineSession` calls. `protocol.ts` is the contract;
   `client.ts` is the main-thread side.
@@ -46,11 +48,12 @@ repository root keeps working; it replaces it once it does everything the old on
     content, `DetailsContent`) (`ui/TabBar.tsx`, `ui/Sheet.tsx`, `ui/PhoneSheets.tsx`).
 
   The tools (`tool` in `src/state.ts`, changed only through `setTool`, which first writes what
-  is still typed): Edit ("Modifica") has five sub-tools on its bar (`ui/EditBar.tsx`,
+  is still typed): Edit ("Modifica") has six sub-tools on its bar (`ui/EditBar.tsx`,
   `editTool`, `setEditTool`): Change ("Cambia", where it starts: a line to change, a picture to
   move), Add text ("Aggiungi testo"), Add image ("Aggiungi immagine": the picker; the picture
-  lands in the middle of what shows, selected, back on Change), and White-out and Redact
-  ("Bianchetto", "Oscura": an area to remove, see "Cerca, Bianchetto and Oscura"). Fill & sign ("Compila e firma",
+  lands in the middle of what shows, selected, back on Change), Shapes ("Forme", see "Forme"), and
+  White-out and Redact ("Bianchetto", "Oscura": an area to remove, see "Cerca, Bianchetto and
+  Oscura"). Fill & sign ("Compila e firma",
   `ui/fill/FillBar.tsx`) has Text, Tick, Cross, Date, Sign and Initials, and no picture of its
   own. The two bars share one toolbar (`ui/SubTools.tsx`). The text writer and the boxes of the
   text the user wrote (`viewer/FillLayer.tsx`) serve Fill & sign and Add text alike: `writerOn`
@@ -90,8 +93,9 @@ repository root keeps working; it replaces it once it does everything the old on
    300 dpi full-page JPEG at scale 2), a cost paid once per such edit, accepted for correctness.
    New code that changes an already-loaded resource in place must do the same, or write a new
    object instead.
-7. **What the app adds stays its own** (release 3): every line of text and every picture it
-   writes is a marked block of its own (`/PEText`, `/PEImage`), appended with
+7. **What the app adds stays its own** (release 3): every line of text, every picture and every
+   shape it writes is a marked block of its own (`/PEText`, `/PEImage`, `/PEShape` since release
+   6; the boxes of Bianchetto and Oscura are `/PERedact`), appended with
    `newcontent.appendSafely`, never `core.appendContent`, and changed by rewriting that block,
    never by redaction, which would take whatever lies under it.
 8. **Form fields are filled by the app's rules, not MuPDF's setters alone**: MuPDF.js checks
@@ -743,6 +747,157 @@ and the original file and the Riprendi record on this device, which hold everyth
 document is closed.
 A cleared picture is stored losslessly unless it was a JPEG, so the file can grow (the report's
 `growth`; said past about 1 MB).
+
+## Forme
+
+Release 6 draws shapes on a page: lines, arrows (one head or two), rectangles, ellipses, freehand
+strokes ("Penna") and highlights ("Evidenzia"), in a fixed palette, three widths, solid, dashed or
+dotted (`shapes.ts`; `EngineSession.addShape`, `shapes`, `editShape`; the geometry in
+`shapeGeometry.ts`, shared with the viewer).
+
+**Page content, not annotations.** Square, Circle, Line and Ink annotations would fight release 5:
+Bianchetto leaves annotations on top and Oscura deletes them whole; whoever receives the file can
+move or delete them; some print and portal paths drop them. So a shape is real page content, like
+new text and pictures (rule 7): a marked block of its own, after everything else on the page,
+never tagged:
+
+```
+/Artifact <</PEShape id /PEDef <</V 1 /K /line /P [x y x y] /C [r g b] /W w /D /dashed /H 2>>>> BDC
+q  w J j M d  RG rg  <path> S  <heads> f  Q
+EMC
+```
+
+`/PEDef` is the shape's own definition (kind, points, colour, width, dash, heads, version 1), its
+points in the page's **user space**, so a page the organizer turns, copies or moves keeps its
+shapes where they are seen, its width in points as seen; `shapes()` gives them back in page space
+(as seen). The app reads the definition, never the drawing operators. The drawing is
+`shapeGeometry.drawing` of the shape as seen (page space): the stroke, and the arrow heads as one
+filled path (filled triangles; the stroke stops inside them), the very paths the viewer previews
+with `svgPath`, taken to user space point by point (so each path starts and runs as the preview's
+and the dashes fall the same), the width and dashes divided by the page transform's scale (1, or
+the page's /UserUnit: a shape is as wide on a large-format page as it was drawn). Every stroke
+parameter is set inside the block (`w`, `J`, `j`, `M`, `d`, `RG`/`rg` in DeviceRGB): appendSafely
+wraps content that leaves the CTM, a clip or a graphics state changed, not one that leaves
+`5 w [3] 0 d` outside any q. Ids are newcontent's (`nextId` over the page's `/PEShape` ids): stable
+across edits, undo, redo and Riprendi; an edit rewrites the block in place, keeping its id and its
+place in the painting order; a delete removes the block. Pages without "PEShape" in their content
+are not lexed.
+
+**What is read back** is bounded, since a file from elsewhere can hold any `/PEShape` block. A block
+is listed (and so rewritten or deleted) only when it holds nothing but what the app writes (paths,
+colours, stroke state, q/Q), is the first with its id (a set, not a search: thousands of blocks
+stay linear), its `/PEDef` is within what the session takes (a width of MIN_SHAPE_WIDTH..
+MAX_SHAPE_WIDTH, a highlight's 0; heads on a line only; pen and highlight solid), it paints as
+many paths as its definition draws, its paths' points lie within the box the definition draws
+(1 pt of slack), no `w` in it is wider than the definition's width, no miter limit over 10 and
+a graphics state only on a highlight that strokes nothing: a block that says "small arrow" and
+paints a page-wide fill is line art, never deleted as an arrow. At most 2000 shapes and 200 000
+points in all are listed on a page (`MAX_LISTED_SHAPES`, `MAX_LISTED_POINTS`); past them blocks
+are line art, and a new shape there is refused ("not-editable") rather than drawn unlisted.
+
+**No opaque fill.** A filled box would look like Oscura while the text under it stays in the file
+(a fake redaction): outlines are never filled. The highlight is a box filled through an ExtGState
+of the page's own resources (`/BM /Multiply`, `/ca` HIGHLIGHT_ALPHA = 0.45): black text under it
+stays black, and where a reader has no blend modes it still reads through. The state is looked up
+by its values at every write (a redaction gives the page new resources and may rename them), and
+added, the page given its own copy of /Resources and /ExtGState, when there is none.
+
+**The session.** A new shape and a change or delete are two logged kinds, plain data:
+`{kind: "addShape", pageIndex, shape, id}` (a replay that gives another id fails, as for new
+text) and `{kind: "editShape", pageIndex, id, shape | null}`. The shape is checked as untrusted
+before anything is logged ("bad-request"): the kind, two points (2 to MAX_PEN_POINTS for a pen
+stroke), finite and on the page (one at most 1 pt outside, as a stroke along the edge leaves, is
+brought onto it), big enough (`shapeGeometry.isShapeDrawable`, the one rule the viewer also
+applies before sending a shape: a line at least MIN_SHAPE_SIZE long, a box with both sides at
+least that, a pen stroke whose box is at least that one way), the colour, a width within
+MIN_SHAPE_WIDTH..MAX_SHAPE_WIDTH, the dash, heads; a pen stroke and a highlight are made solid, a
+highlight's width 0, heads 0 but on a line. A change to what is there already (to 0.001) is a
+no-op. The log validator of Riprendi reads both kinds, and every replay puts each shape on its
+page again as when it was drawn (a stored log is untrusted: a point far off the page would write a
+number PDF cannot read), so one that no longer fits stops the replay there; LOG_VERSION stays 1,
+so an older build refuses a log with shapes as malformed and its home page card forgets the record
+(as for redactions). A page whose content cannot take an addition is "not-editable".
+
+**With the other edits.**
+- A line edit's redaction runs the whole page through MuPDF's content filter: it writes an inline
+  `/PEDef` again as it was (tests/shapes.test.ts proves it first), and it removes no line art, so
+  shapes under or over an edited line stay, and can be changed after it.
+- Bianchetto and Oscura remove line art lying wholly under the area: a shape wholly under it
+  goes, and its emptied block with it (redact.ts); one crossing the edge stays, covered by the box,
+  and the "drawing crossing the edge" note says so (truthfully). A block the redaction only partly
+  emptied (an arrow whose shaft, or heads, alone lay under the area) is printed line art from then
+  on, as a cut line loses /PEText: its tag becomes `/Artifact BMC`, without /PEShape and /PEDef
+  (nothing records where the removed part was), so it is neither listed nor rewritten (a rewrite
+  would bring the removed part back).
+- `decorations.ts` never takes a shape for a line's underline, strike-through or background (its
+  paths are left out of the device pass, as Bianchetto's boxes are): a line drawn under a word is
+  the user's, and stays where it is when the word is edited.
+- images.ts and search.ts need nothing: a shape draws no picture and no text.
+- PDF/A-2b: DeviceRGB under the app's sRGB output intent, Multiply is a standard blend mode and a
+  fill opacity is allowed; tests/pdfa.test.ts converts every kind and style for veraPDF in CI.
+
+**In the viewer.** Forme is Modifica's fourth sub-tool; its banner holds the kind picker (Linea,
+Freccia, Rettangolo, Ellisse, Penna, Evidenzia: `shapeKind`, a radio group), the hint for the
+kind, "Metti al centro" (all but Penna: it bumps `shapeCentreRequest`, and a default shape lands
+in the middle of what shows) and "Fine". `viewer/ShapeLayer.tsx` replaces the line and image
+layers while Forme is on (PageView's `shapesMode`, as RedactLayer for Bianchetto and Oscura):
+- a page's shapes are read with `shapes()` into a cache per page keyed by its revision
+  (`ui/shapes/actions.ts`), again after every edit, undo, redo and page operation; its text lines
+  are read as soon as Forme is on (a highlighter click waits for them);
+- with a mouse a drag draws (Shift: square, circle, lines at 45°), a click selects the topmost
+  shape under it (hit-tested on the geometry: near the stroke, 6 px with a mouse and 22 px with a
+  finger, inside a highlight; a mouse double click's second click does nothing); on touch one
+  finger still scrolls and a tap puts a default shape there (40 mm line, 30 × 20 mm box,
+  50 × 6 mm highlight), or, inside a selected box, selects the shape under it or deselects. With
+  Penna one finger draws too (a second cancels the stroke and zooms), a tap makes a dot (also next
+  to a stroke) and only a tap on a stroke's ink (half its width + 0.5 pt) selects it; with one
+  selected, a tap off every ink drops it. Evidenzia on a text line covers that line (the pieces
+  MuPDF splits a justified line into, joined when up to 2.5 line heights apart, never across a
+  column gap; a turned line only on its own run), and on touch a tap on a text line reaches only a
+  shape's own stroke, so lines near a shape can still be highlighted;
+- a new shape is selected, but a pen stroke and a highlight are not, so strokes and highlighted
+  lines follow one another (a selection the user makes while a shape is written stays; of shapes
+  drawn quickly one after another, the last is selected); a selected line's frame, and with Penna
+  any selected shape's frame, takes presses only on its handles and grip, so the next stroke can
+  start inside it: a mouse press on the shape itself moves it, a finger or a stylus there scrolls
+  or draws;
+- every shape is also a button (Tab, painting order) named by what it is, for the keyboard and
+  screen readers; pointer clicks go through the hit test;
+- the selected shape has a frame (a box with handles and the grip; two end handles on a line), a
+  role="application" with its keys (arrows, Shift, Alt, Delete, Esc), and a context bar: colour,
+  width, line style, heads, "Sposta e ridimensiona", Elimina, Deseleziona, placed as the image
+  bar is (`placeBar`: below the shape, a highlight's above, on the side where it fits in what shows
+  and among the pages: it may stand out of its page over the gap and the next one, never past the
+  last; with room kept for the move buttons' row while it is closed, so opening it never flips
+  the bar, unless neither side has that room; else over the shape; placed again on scroll, zoom
+  and when it changes size). A one-page landscape document on a phone has no room either side:
+  there the bar covers the shape.
+  Keys, the bar and those buttons add up and are written as one editShape 600 ms after the last
+  change (registerEditor flushes them first before downloads, undo and tool changes), and the
+  status then says the shape's name, size and place; a style chosen is the next shape's
+  (`shapeStyle`). Previews are SVG of the engine's own paths, until the canvas shows the edit; a
+  change of style alone is not previewed over the old drawing (two dash patterns, two colours
+  multiplied): the canvas shows it once written.
+
+**Without dragging** (release 6, WCAG 2.5.7). The image and shape context bars have a "Sposta e
+ridimensiona" toggle (`ui/NudgeControls.tsx`): arrows (2 pt, Shift 10 pt, holding repeats) and
+− / + (× 0.9, ÷ 0.9 about the centre), the keyboard's path by other means, adding up with its keys.
+For shapes a "Sposta / Allunga" choice turns the arrows into a stretch (a box's width and height;
+a line's end point, which changes its direction and length).
+
+**Deleting a page** (release 6 makes it findable): the thumbnails panel's action bar is always
+there, acting on the page shown when no page is selected, its actions labelled; "Elimina pagina N"
+is in the desktop More menu and the phone's Altro sheet (the same command: the toast's Annulla,
+Ctrl+Z, refused with its reason when one page is left or editing has stopped). The page shown
+(`Viewer.currentPageAt`, also the indicator's) is the one in the middle of the view, except
+within half a view of either end of the scroll, where the point slides to the view's top or
+bottom edge, so short first and last pages can be reached.
+
+**Not in this release**: filled shapes, a colour picker, opacity, turning a box or an ellipse (they
+stay upright as seen; lines go at any angle), text in shapes, other arrow heads, polygons, bring to
+front or send to back, grouping, shapes in the reading order (they are artifacts: a screen reader
+skips them), editing shapes other tools drew (annotations or plain line art), and shapes in Compila
+e firma or outside Forme.
 
 ## PDF/A ("PDF/A per l'archivio")
 

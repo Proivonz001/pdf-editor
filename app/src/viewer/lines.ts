@@ -3,16 +3,19 @@
 import { engine } from "../state";
 import type { PageModel } from "./model";
 
-const loading = new WeakMap<PageModel, number>();
+const loading = new WeakMap<PageModel, { rev: number; done: Promise<void> }>();
 
-/** Read the lines of `page` unless they are cached for its current revision or already loading. */
-export function ensureLines(page: PageModel) {
+/**
+ * Read the lines of `page` unless they are cached for its current revision or already loading.
+ * Settles when they are in page.lines (or the read is over: failed, or stale after a change).
+ */
+export function ensureLines(page: PageModel): Promise<void> {
   const rev = page.rev.peek();
   const cached = page.lines.peek();
-  if (cached && cached.rev === rev) return;
-  if (loading.get(page) === rev) return;
-  loading.set(page, rev);
-  engine()
+  if (cached && cached.rev === rev) return Promise.resolve();
+  const now = loading.get(page);
+  if (now?.rev === rev) return now.done;
+  const done = engine()
     .lines(page.index)
     .then(
       (lines) => {
@@ -25,6 +28,8 @@ export function ensureLines(page: PageModel) {
       },
     )
     .finally(() => {
-      if (loading.get(page) === rev) loading.delete(page);
+      if (loading.get(page)?.rev === rev) loading.delete(page);
     });
+  loading.set(page, { rev, done });
+  return done;
 }

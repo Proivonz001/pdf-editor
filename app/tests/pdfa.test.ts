@@ -1751,3 +1751,41 @@ describe("added text and pictures", () => {
     expect(expectSubset(bytes, fixture("reportlab-form.pdf"))).toContain("Helvetica");
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Forme (release 6): the shapes the app draws (src/engine/shapes.ts), through the session, then
+// converted, so veraPDF checks in CI (PDFA_OUT) every kind and style the app writes: solid, dashed
+// and dotted strokes, arrows with one and two heads, an ellipse, a freehand stroke and a highlight
+// (a graphics state with /BM /Multiply and a fill opacity, which PDF/A-2 allows).
+
+describe("shapes", () => {
+  /** One shape of each kind and style, inside `bounds` (page space). */
+  function everyShape([x0, y0]: number[]) {
+    type RGB = [number, number, number];
+    const red: RGB = [0.85, 0.18, 0.13], blue: RGB = [0.12, 0.36, 0.85], yellow: RGB = [1, 0.83, 0];
+    const at = (x: number, y: number): [number, number] => [x0 + x, y0 + y];
+    const base = { color: red, width: 2, dash: "solid" as const, heads: 0 as const };
+    return [
+      { ...base, kind: "line" as const, points: [at(40, 40), at(200, 80)] },
+      { ...base, kind: "line" as const, points: [at(40, 110), at(200, 110)], dash: "dashed" as const, heads: 1 as const },
+      { ...base, kind: "line" as const, points: [at(200, 150), at(40, 140)], dash: "dotted" as const, heads: 2 as const, color: blue, width: 4 },
+      { ...base, kind: "rect" as const, points: [at(220, 40), at(300, 100)], dash: "dashed" as const, width: 1 },
+      { ...base, kind: "ellipse" as const, points: [at(320, 40), at(400, 110)], dash: "dotted" as const, color: blue },
+      { ...base, kind: "pen" as const, points: Array.from({ length: 50 }, (_, k) => at(40 + k * 4, 200 + 12 * Math.sin(k / 4))), width: 1 },
+      { ...base, kind: "highlight" as const, points: [at(40, 240), at(260, 260)], color: yellow, width: 0 },
+    ];
+  }
+
+  for (const name of ["word-winansi.pdf", "chrome-rotate90-crop.pdf"]) {
+    it(`converts every kind of shape, and they read back: ${name}`, () => {
+      const { s, info } = open(fixture(name));
+      const shapes = everyShape(info.pages[0].bounds);
+      for (const shape of shapes) s.addShape(0, shape);
+      const shown = s.render(0, 0.5);
+      const { report, again } = convert(`shapes-${name.replace(/\.pdf$/, "")}`, s);
+      expect(report).toMatchObject({ blockers: [], removals: [] });
+      expect(changedPixels(shown, again.render(0, 0.5))).toBe(0);
+      expect(again.shapes(0).map((x) => [x.id, x.shape.kind, x.shape.dash, x.shape.heads])).toEqual(shapes.map((x, k) => [k + 1, x.kind, x.dash, x.heads]));
+    });
+  }
+});

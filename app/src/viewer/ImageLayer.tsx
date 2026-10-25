@@ -19,8 +19,11 @@
 // sprite stays until the page's canvas shows the edit. Keyboard moves, stretches, scales and
 // turns add up the same way and are written as one edit 600 ms after the last key, or at once
 // when the selection changes or the app needs it (registerEditor: downloads, undo, leaving edit
-// mode...). The frame is an "application" for screen readers, so its keys reach it; after each
-// change is written, its status region says where the picture now is.
+// mode...). The bar's move and size buttons (ui/NudgeControls.tsx, the way that needs no
+// dragging) are the arrow and + − keys by other means: they add up with them, the frame moves at
+// once, and the same pause writes it all as one edit. The frame is an "application" for screen
+// readers, so its keys reach it; after each change is written, its status region says where the
+// picture now is.
 //
 // The selection survives its own edit (transform and replace keep the image's index): the frame
 // stays mounted while the page's images are read again, so it keeps the keyboard focus. When it
@@ -58,6 +61,7 @@ import { chooseReplacement, deleteImage, lockReasonText, selectImage, transformI
 import { rescueFocus, viewerScroller } from "../ui/focus";
 import { IconDeselect, IconImage, IconMove, IconRotate, IconTrash } from "../ui/icons";
 import { isCoarse } from "../ui/media";
+import { NudgeControls, nudgeOpen } from "../ui/NudgeControls";
 import { addedDescription, honourFocusRequest, mayTakeFocus } from "./added";
 import {
   beyondEdge, boundsOf, centre, clampCentre, corners, cssBox, handlePoint, nearlyEqual, pagePoint, previewTransform,
@@ -776,6 +780,14 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
     }
   };
 
+  /** The bar's move and size buttons: what the arrow and + − keys do, by other steps. */
+  const nudge = (dx: number, dy: number) => {
+    if (!latest.current.pending && !gesture.current) keyChange((m) => translateBy(m, dx, dy));
+  };
+  const nudgeScale = (factor: number) => {
+    if (!latest.current.pending && !gesture.current) keyChange((m) => scaleAbout(m, centre(m), factor));
+  };
+
   const onBarKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -808,7 +820,8 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
   extentRef.current = extent;
 
   /**
-   * Keep the context bar on screen and on the page: above the selection, else below it, else (a
+   * Keep the context bar on screen and on the page: above the selection, else below it (each side
+   * with room for the move buttons' row, also while it is closed), else (a
    * picture taller than the room there, such as a full-page scan) over the picture at the top of
    * what shows of it; shifted sideways when the selection starts near (or past) an edge of the
    * viewport. Its labels show only when the labelled bar fits on the page and on screen. Worked
@@ -843,11 +856,18 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
     const pageH = p.height;
     const above = ext.top - BAR_GAP - h;
     const belowTop = extBottom + BAR_GAP;
+    // The move buttons' row, closed: its room kept on the side it grows to, so opening it never
+    // flips the bar; when neither side has that much, the sides are tried again without it (better
+    // a flip than covering the picture).
+    const toggle = barEl.querySelector<HTMLElement>(".nudge-toggle");
+    const reserve = nudgeOpen.peek() || !toggle ? 0 : toggle.offsetHeight + BAR_ITEM_GAP;
+    const fitsAbove = (more: number) => above - more >= 0 && p.top + above - more >= viewTop;
+    const fitsBelow = (more: number) => belowTop + h + more <= pageH && p.top + belowTop + h + more <= viewBottom;
     let top: number;
     let below = false;
-    if (above >= 0 && p.top + above >= viewTop) {
+    if (fitsAbove(reserve) || (!fitsBelow(reserve) && fitsAbove(0))) {
       top = above;
-    } else if (belowTop + h <= pageH && p.top + belowTop + h <= viewBottom) {
+    } else if (fitsBelow(reserve) || fitsBelow(0)) {
       top = belowTop;
       below = true;
     } else {
@@ -883,7 +903,12 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
     scroller?.addEventListener("scroll", onMove, { passive: true });
     viewport.addEventListener("resize", onMove);
     viewport.addEventListener("scroll", onMove);
+    // The bar's size changed (the move buttons' row shown or hidden): placed again before it is
+    // drawn, so the row grows away from the picture and the bar's buttons stay where they were.
+    const resized = new ResizeObserver(() => placeRef.current());
+    if (bar.current) resized.observe(bar.current);
     return () => {
+      resized.disconnect();
       scroller?.removeEventListener("scroll", onMove);
       viewport.removeEventListener("resize", onMove);
       viewport.removeEventListener("scroll", onMove);
@@ -1007,6 +1032,20 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
     { id: "done", label: labels[3], tip: t("image.doneTip", { key: t("key.esc") }), icon: <IconDeselect />, onClick: done, primary: true },
   ];
   const showLabels = fit.labels;
+  const actionButton = (a: (typeof actions)[number]) => (
+    <button
+      type="button"
+      key={a.id}
+      class={`btn context-btn${a.primary ? " btn-primary" : ""}${showLabels ? "" : " is-icon"}`}
+      title={a.tip}
+      aria-label={showLabels ? undefined : a.label}
+      aria-disabled={pending || undefined}
+      onClick={a.onClick}
+    >
+      {a.icon}
+      {showLabels && <span>{a.label}</span>}
+    </button>
+  );
 
   return (
     <>
@@ -1066,20 +1105,11 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
           aria-label={t("image.toolbar")}
           onKeyDown={onBarKeyDown}
         >
-          {actions.map((a) => (
-            <button
-              type="button"
-              key={a.id}
-              class={`btn context-btn${a.primary ? " btn-primary" : ""}${showLabels ? "" : " is-icon"}`}
-              title={a.tip}
-              aria-label={showLabels ? undefined : a.label}
-              aria-disabled={pending || undefined}
-              onClick={a.onClick}
-            >
-              {a.icon}
-              {showLabels && <span>{a.label}</span>}
-            </button>
-          ))}
+          {actions.slice(0, 2).map(actionButton)}
+          {/* The buttons after the toggle go before its row, which is drawn last (below the picture). */}
+          <NudgeControls onMove={nudge} onScale={nudgeScale} disabled={pending}>
+            {actions.slice(2).map(actionButton)}
+          </NudgeControls>
           {/* "Writing…" beside the buttons (for screen readers it is in the status region). */}
           {pending && (
             <span class="context-writing" aria-hidden="true">
@@ -1099,6 +1129,9 @@ function SelectedImage({ page, zoom, image, imageRev, waiting, canvasRev, extra,
                 <span>{a.label}</span>
               </span>
             ))}
+            <span class="btn context-btn is-icon">
+              <IconMove />
+            </span>
             <span ref={measureMark} class="context-writing">
               <span class="spinner" />
               {t("image.writing")}

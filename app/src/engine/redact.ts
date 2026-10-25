@@ -79,7 +79,10 @@
 //   the glyph shown), what the form fields' default resources list but fonts, and the /Alternates of a
 //   picture only the redacted pages draw (never shown), keep nothing.
 // - The app's blocks: an emptied /PEText line is removed and untagged, a line partly under the area
-//   loses /PEText (it is printed text from then on). The edit never goes through protectAdded.
+//   loses /PEText (it is printed text from then on); a shape (release 6, /PEShape) wholly under the
+//   area is line art MuPDF removes, and its emptied block goes too; a block it only partly emptied
+//   (an arrow's shaft) loses /PEShape and /PEDef (printed line art from then on, `/Artifact BMC`).
+//   The edit never goes through protectAdded.
 // - Resources: MuPDF gives the page new resources, which can still list what nothing draws (a
 //   pattern whose fill went, a property list): the page's own (and those of the forms it copied)
 //   lose the names it no longer uses. Then whatever the page's resources listed before (pictures,
@@ -134,6 +137,7 @@ import {
   walkedSoftMasks, writeStream, type Operand, type ResourceKind, type SoftMaskUse,
 } from "./images";
 import { addedBlocks, appendProblem, appendSafely, untag } from "./newcontent";
+import { pathsOf, shapeBlocksIn } from "./shapes";
 import { cutReferences, refsIn } from "./pages";
 import type { Matrix, Quad, Rect, RedactArea, RedactFacts, RedactMode, RedactPreview, RedactRefusal, RedactReport } from "./protocol";
 import { MAX_REDACT_RECTS, clampAreas } from "./redactGeometry";
@@ -2390,8 +2394,9 @@ function describeLevel(
 
 /**
  * After the redaction: descriptions of what changed go (describeLevel), and the app's lines it
- * touched: an emptied one is removed and untagged, a cut one loses /PEText. The page's content is
- * written back as one stream when anything changed.
+ * touched: an emptied one is removed and untagged, a cut one loses /PEText; the app's shapes too: an
+ * emptied block is removed, one painting less than its /PEDef is plain `/Artifact BMC`. The page's
+ * content is written back as one stream when anything changed.
  */
 function rewriteContent(
   mupdf: MuPDFModule, doc: Doc, pageIndex: number, before: Content, pictures: Walked | null, rects: Rect[], blocksBefore: ReturnType<typeof addedBlocks>,
@@ -2418,8 +2423,22 @@ function rewriteContent(
       }
     } else dropKey.set(start, "PEText");
   }
+  // Release 6: a shape the redaction emptied (it lay wholly under the area) leaves with its block;
+  // one it partly emptied keeps what is left as line art, without the definition of what went.
+  const retag = new Set<number>(); // after's sequence start
+  for (const b of shapeBlocksIn([after.text])) {
+    if (!b.plain) continue;
+    if (b.paints === 0) {
+      removed.push([b.start, b.end]);
+      edits.push({ start: b.start, end: b.end, insert: "" });
+    } else if (b.def && b.paints < pathsOf(b.def)) retag.add(b.start);
+  }
   after.seqs.forEach((s, k) => {
     if (removed.some(([a, z]) => s.start >= a && s.start < z)) return;
+    if (retag.has(s.start)) {
+      edits.push({ start: s.start, end: s.end, insert: "/Artifact BMC" });
+      return;
+    }
     const key = dropKey.get(s.start) ?? null;
     if (!strip.has(k) && !key) return;
     edits.push({ start: s.start, end: s.end, insert: stripOperation(after.text.slice(s.start, s.end), s, strip.has(k), key) });

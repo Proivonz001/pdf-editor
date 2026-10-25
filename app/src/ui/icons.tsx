@@ -520,3 +520,110 @@ export const IconRedact = () => (
     <rect x="4" y="9.5" width="16" height="5" rx="1" fill="currentColor" />
   </Svg>
 );
+
+// Release 6, r6-shapes: Forme (ui/EditBar.tsx, viewer/ShapeLayer.tsx). Keep these icons here.
+
+/** A square and a circle overlapping: the Forme sub-tool. */
+export const IconShapes = () => (
+  <Svg>
+    <rect x="3.5" y="3.5" width="10" height="10" rx="1" />
+    <circle cx="15" cy="15" r="5.5" />
+  </Svg>
+);
+
+/** A slanted line: Linea; a selected line with no heads. */
+export const IconShapeLine = () => (
+  <Svg>
+    <path d="M5 19 19 5" />
+  </Svg>
+);
+
+/** A slanted arrow: Freccia; a line with one head. */
+export const IconShapeArrow = () => (
+  <Svg>
+    <path d="M5 19 18 6" />
+    <path d="M10.5 5.5H18.5V13.5" />
+  </Svg>
+);
+
+/** An arrow with a head at both ends: a line with two heads. */
+export const IconShapeArrowBoth = () => (
+  <Svg>
+    <path d="M6 18 18 6" />
+    <path d="M12 5.5h6.5V12" />
+    <path d="M12 18.5H5.5V12" />
+  </Svg>
+);
+
+/** A rectangle: Rettangolo. */
+export const IconShapeRect = () => (
+  <Svg>
+    <rect x="4" y="6" width="16" height="12" rx="1" />
+  </Svg>
+);
+
+/** An ellipse: Ellisse. */
+export const IconShapeEllipse = () => (
+  <Svg>
+    <ellipse cx="12" cy="12" rx="8.5" ry="6.5" />
+  </Svg>
+);
+
+/** A pen nib drawing a wave: Penna. */
+export const IconShapePen = () => (
+  <Svg>
+    <path d="m14.5 4.5 5 5L10 19H5v-5z" />
+    <path d="M3.5 21.5c2-1 3.5-1 5 0s3 1 5 0" />
+  </Svg>
+);
+
+/** A highlighter over a line of text: Evidenzia. */
+export const IconShapeHighlight = () => (
+  <Svg>
+    <rect x="3.5" y="8.5" width="17" height="7" rx="1" fill="currentColor" fill-opacity="0.3" />
+    <path d="M6 12h12" />
+  </Svg>
+);
+
+/** A whole, a dashed and a dotted stroke: a shape's line style. */
+export const IconDashSolid = () => (
+  <Svg>
+    <path d="M4 12h16" />
+  </Svg>
+);
+export const IconDashDashed = () => (
+  <Svg>
+    <path d="M4 12h4M10 12h4M16 12h4" />
+  </Svg>
+);
+export const IconDashDotted = () => (
+  <Svg>
+    <path d="M4.5 12h0M8.5 12h0M12.5 12h0M16.5 12h0M20 12h0" stroke-width="2.6" />
+  </Svg>
+);
+
+// Release 6, r6-nudge: move and resize buttons (ui/NudgeControls.tsx). Keep these icons here.
+
+/** Arrows left and right, drawn like IconArrowUp and IconArrowDown: move the selection sideways. */
+export const IconArrowLeft = () => (
+  <Svg>
+    <path d="M19 12H5.5" />
+    <path d="m11 6.5-5.5 5.5 5.5 5.5" />
+  </Svg>
+);
+
+export const IconArrowRight = () => (
+  <Svg>
+    <path d="M5 12h13.5" />
+    <path d="m13 6.5 5.5 5.5-5.5 5.5" />
+  </Svg>
+);
+
+/** A box with an arrow out of its bottom-right corner: the arrows stretch the shape (or move a line's end). */
+export const IconStretch = () => (
+  <Svg>
+    <rect x="4.5" y="4.5" width="9" height="9" rx="1" />
+    <path d="m13.5 13.5 6 6" />
+    <path d="M14.5 19.5h5v-5" />
+  </Svg>
+);

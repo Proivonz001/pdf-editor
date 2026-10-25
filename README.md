@@ -1,16 +1,40 @@
 # PDF Editor
 
-A PDF editor that runs entirely in your browser. Edit text in place, highlight,
-erase, draw, add images and signatures, merge files, and OCR scanned pages.
-Nothing is uploaded anywhere: all the work happens on your machine. The page also
-declares a Content Security Policy that forbids it from sending data to any other site.
+A PDF editor that edits the **real text** of a PDF, in the file's own fonts, on a computer or a
+phone. It installs as an app, works offline, and the file never leaves your device: there is no
+server, all the work happens in the browser.
 
-Try it online: https://vibesite-one.vercel.app/tools/pdf-edit/index.html
+Use it at **https://pdf-editor.priamo-anfuso.workers.dev** (the interface is in Italian or
+English, following your device's language).
 
-New version, in progress (edits the real text in the PDF's own fonts, on phones too, and
-installs as an app): https://pdf-editor.priamo-anfuso.workers.dev
+## What it does
 
-## Running it offline
+- **Modifica**: change a line of text in its original font (underlines, strike-throughs, links
+  and backgrounds follow the new text); add new text; add pictures, and move, resize, rotate,
+  replace or delete the ones already there; **Forme**: lines, arrows, rectangles, ellipses, a
+  freehand pen and a highlighter, in five colours, solid, dashed or dotted.
+- **Bianchetto and Oscura**: white-out and redaction that really remove what lies under the
+  area (text and drawings; Oscura also the pixels of pictures), not just cover it.
+- **Compila e firma**: fill in form fields, write wherever you tap, tick, cross and date,
+  signature and initials (drawn, typed or from a photo).
+- **Pagine**: reorder, rotate, duplicate, delete, add blank pages or pages from another PDF,
+  extract pages to a new PDF; add photos and scans as pages.
+- **Cerca**: find text, ignoring accents and case.
+- **Scarica**: a normal PDF, or PDF/A-2b for archiving; a protected PDF keeps its password.
+  The app warns before changing a digitally signed PDF.
+- **Riprendi da dove eri**: if the tab closes, the document and its edits come back (kept only
+  on this device).
+- Undo and redo for every edit.
+
+How to run, test and deploy it: [app/README.md](app/README.md). How it works:
+[app/ARCHITECTURE.md](app/ARCHITECTURE.md).
+
+## The first version (repository root)
+
+The original single-file editor is still in the repository root (`index.html` and `lib/`), and
+online at https://vibesite-one.vercel.app/tools/pdf-edit/index.html. It is no longer developed.
+
+### Running it offline
 
 1. Double-click **`Start.bat`**.
 2. A black window opens (the mini-server): do **not** close it while you use the app.
@@ -26,7 +50,7 @@ machines; otherwise install it from https://www.python.org/ and tick "Add Python
 Everything the app needs is in the `lib/` folder, including the MuPDF engine and the
 Tesseract OCR data, so it works without an internet connection.
 
-## Tools
+### Tools
 
 - **Text**: add new text boxes.
 - **Edit text (✎)**: click a word or a line to edit it in place, on the original page.
@@ -59,7 +83,7 @@ Tesseract OCR data, so it works without an internet connection.
   (`name-edited.pdf`). Password-protected PDFs ask for their password when opened;
   the exported copy is saved without protection.
 
-## The indicator in the top-right corner
+### The indicator in the top-right corner
 
 The text-removal engine (MuPDF, about 10 MB) is loaded only when it is needed: the
 first time you use Edit text, All text or Erase, or when you export.
@@ -70,7 +94,7 @@ first time you use Edit text, All text or Erase, or when you export.
 - `○ Real removal: n/a`: the engine could not be loaded. Before downloading, the app
   warns you that the old text would only be covered.
 
-## How it is built
+### How it is built
 
 Plain JavaScript in a single HTML file, no framework. Four engines cooperate:
 [pdf.js](https://mozilla.github.io/pdf.js/) for rendering the pages,
@@ -81,16 +105,6 @@ pdf.js loads at startup; the others load the first time they are needed, always 
 the local `lib/` folder.
 
 Built with Claude Code.
-
-## New version in progress (app/)
-
-A rewrite is under way in the `app/` folder: MuPDF as the only engine, editing the real text
-in the PDF's own fonts, usable on phones, installable and offline. It does not change the
-editor described above, which stays the one to use until the new version can replace it.
-
-Try it at https://pdf-editor.priamo-anfuso.workers.dev: Cloudflare publishes it from `main`
-after every merge. For now it edits text; the other tools come in the next phases.
-How to run, test and deploy it: [app/README.md](app/README.md).
 
 ## License
 

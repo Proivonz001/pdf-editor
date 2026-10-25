@@ -130,6 +130,12 @@ async function run(s: EngineSession, msg: RequestMessage): Promise<Reply<Op>> {
       return reply<"redactPreview">(s.redactPreview(msg.areas, msg.mode));
     case "redact":
       return reply<"redact">(s.redact(msg.areas, msg.mode));
+    case "addShape":
+      return reply<"addShape">(s.addShape(msg.pageIndex, msg.shape));
+    case "shapes":
+      return reply<"shapes">(s.shapes(msg.pageIndex));
+    case "editShape":
+      return reply<"editShape">(s.editShape(msg.pageIndex, msg.shapeId, msg.shape));
     default: {
       const unknown: never = msg;
       throw new Error(`Unknown request ${JSON.stringify(unknown)}`);

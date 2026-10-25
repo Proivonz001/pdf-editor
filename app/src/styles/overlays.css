@@ -67,16 +67,17 @@
 }
 
 @media (hover: hover) {
-  .menu-item:hover:not(:disabled) {
+  .menu-item:hover:not(:disabled, [aria-disabled="true"]) {
     background: var(--hover);
   }
 }
 
-.menu-item:active:not(:disabled) {
+.menu-item:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--pressed);
 }
 
-.menu-item:disabled {
+.menu-item:disabled,
+.menu-item[aria-disabled="true"] {
   opacity: 0.4;
   cursor: default;
 }

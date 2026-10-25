@@ -113,6 +113,27 @@ function PageIndicator({ count }: { count: number }) {
   );
 }
 
+/**
+ * The current page at the scroll position of `el` (the indicator's "N", what "Elimina pagina N"
+ * and the pages panel's bar act on): the page in the middle of the view, except within half a
+ * view of either end of the scroll, where the point slides to the view's top edge (scrolled to the
+ * start) or its bottom edge (scrolled to the end). So the first and the last page are current at
+ * either end even when they are too short to reach the middle (landscape pages on a phone, a
+ * document zoomed out), every page is current somewhere on the way, and in a long document the
+ * page named is the one in the middle of what shows. A scroll shorter than the view slides the
+ * point over the whole view; a view that does not scroll counts as scrolled to the start (the
+ * other pages become current through `picked`: a thumbnail, a search hit, a page operation).
+ */
+export function currentPageAt(layout: Layout, el: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">): number {
+  const max = el.scrollHeight - el.clientHeight, h = el.clientHeight, t = el.scrollTop;
+  let at = h / 2;
+  if (max <= 0) at = 0;
+  else if (max <= h) at = h * (t / max);
+  else if (t < h / 2) at = t;
+  else if (max - t < h / 2) at = h - (max - t);
+  return pageIndexAt(layout, t + at);
+}
+
 export function Viewer({ doc }: { doc: OpenDoc }) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [viewportWidth, setViewportWidth] = useState(0);
@@ -128,8 +149,8 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
   const pending = useRef<{ anchor: Anchor; view: View } | null>(null);
   /**
    * The page picked with goToPage (a thumbnail): it counts as the current page while the viewer
-   * scrolls there and as long as it stays there, even when another page is at the centre of
-   * the viewport (low zoom, or the last pages, which cannot scroll to the top).
+   * scrolls there and as long as it stays there, even when the scroll position names another
+   * page (currentPageAt: low zoom, or the last pages, which cannot scroll to the top).
    */
   const picked = useRef<{ index: number; top: number; until: number } | null>(null);
   /** The page operation seen last (doc.layout), and the page it is about while it waits to be shown. */
@@ -199,7 +220,7 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
         }
         picked.current = null;
       }
-      currentPage.value = pageIndexAt(layoutRef.current, el.scrollTop + el.clientHeight / 2);
+      currentPage.value = currentPageAt(layoutRef.current, el);
     };
 
     const vis = new PageVisibility(el);
@@ -331,7 +352,7 @@ export function Viewer({ doc }: { doc: OpenDoc }) {
       scrollToAnchor(el, layout, p.anchor, p.view);
     }
     picked.current = null; // the page positions changed
-    currentPage.value = pageIndexAt(layout, el.scrollTop + el.clientHeight / 2);
+    currentPage.value = currentPageAt(layout, el);
   }, [layout]);
 
   // The edit banner (and the signed notice, and the find bar) push the scroller down when they come

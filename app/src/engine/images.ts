@@ -151,6 +151,8 @@ const between = (X: Matrix, P: Matrix, target: Matrix) => concat(concat(concat(X
 
 /** A PDF number: fixed notation (PDF has no exponents), about 7 significant digits, trailing zeros dropped. */
 export function num(v: number): string {
+  // (PDF has no exponent form, which toFixed gives from 1e21: such a number would break the content)
+  if (!Number.isFinite(v) || Math.abs(v) >= 1e21) throw new RangeError(`Not a number PDF content can hold: ${v}`);
   if (Math.abs(v) < 1e-9) return "0";
   let s = v.toFixed(Math.max(0, 6 - Math.max(0, Math.floor(Math.log10(Math.abs(v))))));
   if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");

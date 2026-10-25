@@ -214,14 +214,14 @@ export function endState(s: string): EndState {
  */
 export const MAX_ID = 2 ** 31 - 1;
 
-/** A /PEText or /PEImage id the app takes as its own (1..MAX_ID). */
-const isId = (v: number | undefined): v is number => Number.isSafeInteger(v) && v! >= 1 && v! <= MAX_ID;
+/** A /PEText, /PEImage or /PEShape id the app takes as its own (1..MAX_ID). */
+export const isId = (v: number | undefined): v is number => Number.isSafeInteger(v) && v! >= 1 && v! <= MAX_ID;
 
 /** An MCID the app reads and writes again: a whole number from 0 to 2^53 (null for anything else: a fraction, a negative, beyond). */
 const mcidOf = (v: number | undefined): number | null => (Number.isSafeInteger(v) && v! >= 0 ? v! : null);
 
 /** The id for a new block among `used`: one more than the largest, or, past MAX_ID, the smallest one free. */
-function nextId(used: Set<number>): number {
+export function nextId(used: Set<number>): number {
   let max = 0;
   for (const id of used) max = Math.max(max, id);
   if (max < MAX_ID) return max + 1;
@@ -231,20 +231,21 @@ function nextId(used: Set<number>): number {
 }
 
 /** What one pass over a page's content tells: how it ends, and the ids it marks. */
-interface ContentScan {
+export interface ContentScan {
   end: EndState;
   /** The largest MCID marked (inline or named property lists), -1 if none. */
   maxMcid: number;
-  /** The /PEText and /PEImage ids of the app's blocks (isId). */
+  /** The /PEText, /PEImage and /PEShape (release 6, shapes.ts) ids of the app's blocks (isId). */
   textIds: Set<number>;
   imageIds: Set<number>;
+  shapeIds: Set<number>;
 }
 
 function scanText(s: string, properties: Obj | null): ContentScan {
   const stack: ("q" | "m" | "t")[] = [];
   let saved = 0, marks = 0, inText = false, deep = false, pendingPath = false, changed = false, underflow = 0;
   let maxMcid = -1, lastEnd = 0, last = "", lastStart = 0;
-  const textIds = new Set<number>(), imageIds = new Set<number>();
+  const textIds = new Set<number>(), imageIds = new Set<number>(), shapeIds = new Set<number>();
   // (the counters say whether there is one to close, so the stack is only searched when there is)
   const open = (x: "q" | "m" | "t") => {
     if (stack.length >= MAX_OPEN) deep = true;
@@ -283,10 +284,11 @@ function scanText(s: string, properties: Obj | null): ContentScan {
           const named = lookup(properties, p.name);
           if (named.isDictionary() && named.get("MCID").isNumber()) mcid = named.get("MCID").asNumber();
         }
-        const text = p?.dict?.PEText?.num, image = p?.dict?.PEImage?.num, m = mcidOf(mcid);
+        const text = p?.dict?.PEText?.num, image = p?.dict?.PEImage?.num, shape = p?.dict?.PEShape?.num, m = mcidOf(mcid);
         if (m !== null) maxMcid = Math.max(maxMcid, m);
         if (isId(text)) textIds.add(text);
         if (isId(image)) imageIds.add(image);
+        if (isId(shape)) shapeIds.add(shape);
         break;
       }
       case "EMC":
@@ -319,18 +321,18 @@ function scanText(s: string, properties: Obj | null): ContentScan {
   const inside = imageOpen || endsInside(s.slice(lastEnd));
   const dangling = !inside && holdsOperands(s.slice(lastEnd));
   const end: EndState = { open: saved + marks + (inText ? 1 : 0), stack, deep, pendingPath, changed, underflow, inside, dangling };
-  return { end, maxMcid, textIds, imageIds };
+  return { end, maxMcid, textIds, imageIds, shapeIds };
 }
 
 /** One pass over the page's content (its streams read as MuPDF reads them: one content, a space between them). */
-function scanContent(pageObj: Obj): ContentScan {
+export function scanContent(pageObj: Obj): ContentScan {
   const text = contentStreams(pageObj).map((s) => latin1(streamBytes(s))).join(" ");
   const properties = lookup(pageObj.getInheritable("Resources"), "Properties");
   return scanText(text, properties.isDictionary() ? properties : null);
 }
 
 /** Why nothing can be appended after content that ends so (null: it can). */
-function endProblem(end: EndState): string | null {
+export function endProblem(end: EndState): string | null {
   if (end.inside) return "The page's content ends inside a string, an array, a dictionary or an inline image";
   if (isClean(end)) return null;
   if (end.deep) return `The page's content nests more than ${MAX_OPEN} levels deep`;
@@ -647,6 +649,7 @@ function readBlocks(page: MuPDF.PDFPage): { texts: string[]; blocks: AddedBlock[
   // A page the app wrote no text on is not lexed (heavy vector pages take hundreds of ms).
   if (!texts.some((t) => t.includes("PEText"))) return { texts, blocks: [] };
   const blocks: AddedBlock[] = [];
+  const ids = new Set<number>(); // (a crafted page may hold many thousands: no search of `blocks`)
   type GState = { ctm: Matrix; color: [number, number, number] };
   let gs: GState = { ctm: page.getTransform() as Matrix, color: [0, 0, 0] };
   const saved: GState[] = [];
@@ -702,7 +705,8 @@ function readBlocks(page: MuPDF.PDFPage): { texts: string[]; blocks: AddedBlock[
         case "EMC":
           if (cur && marks === cur.depth) {
             // (a second block with an id already found is not the app's: only a crafted file has one)
-            if (cur.stream === k && !blocks.some((b) => b.id === cur!.id)) {
+            if (cur.stream === k && !ids.has(cur.id)) {
+              ids.add(cur.id);
               const { depth: _depth, tms: _tms, ...block } = cur;
               blocks.push({ ...block, end: o.end });
             }

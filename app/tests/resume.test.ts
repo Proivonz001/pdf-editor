@@ -295,6 +295,18 @@ describe("Riprendi store: the document", () => {
     expect(blobKeys("session")).toHaveLength(5);
   });
 
+  it("release 6: a log with shape edits (a pen stroke of 4000 points, a delete) is kept as it is, and adds no blob", async () => {
+    const pen = Array.from({ length: 4000 }, (_, k) => [10 + k / 10, 300 + Math.sin(k / 50)]);
+    const value = [
+      { kind: "addShape", pageIndex: 0, shape: { kind: "pen", points: pen, color: [0, 0, 0], width: 1, dash: "solid", heads: 0 }, id: 1 },
+      { kind: "addShape", pageIndex: 0, shape: { kind: "line", points: [[1, 2], [3.5, 4.25]], color: [0.85, 0.18, 0.13], width: 2, dash: "dotted", heads: 2 }, id: 2 },
+      { kind: "editShape", pageIndex: 0, id: 1, shape: null },
+    ];
+    expect(await saveSession(session({ log: value, editCount: 3 }))).toBe(true);
+    expect((await loadSession())!.log).toStrictEqual(value);
+    expect(blobKeys("session")).toHaveLength(1); // the original alone
+  });
+
   it("the original is written once, not again after every edit; a picture no longer in the log goes", async () => {
     let from = fake.writes.length;
     expect(await saveSession(session({ log: log(2) }))).toBe(true);

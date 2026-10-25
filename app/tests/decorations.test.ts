@@ -873,7 +873,9 @@ describe("limits and MuPDF objects", () => {
     const ms = performance.now() - t;
     expect(summaryOf(d)).toMatchObject({ underlines: 0, left: [{ kind: "underline", reason: "complex" }] });
     expect(planOf(d, undefined).shapes).toEqual([]);
-    expect(ms).toBeLessThan(3000);
+    // About 0.9 s alone; the full suite on a busy machine has taken over 3 s. A walk that did not
+    // stop at MAX_PATHS would take far longer than this bound.
+    expect(ms).toBeLessThan(10_000);
   }, 30_000);
 
   it("the device pass destroys every path, stroke state, colour space and text it receives", () => {

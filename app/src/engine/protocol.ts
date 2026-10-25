@@ -644,7 +644,14 @@ export type Request =
   /** What redact(areas, mode) would remove or leave, without changing anything. */
   | { op: "redactPreview"; areas: RedactArea[]; mode: RedactMode }
   /** Bianchetto or Oscura over `areas` (one or more pages): one undoable edit. */
-  | { op: "redact"; areas: RedactArea[]; mode: RedactMode };
+  | { op: "redact"; areas: RedactArea[]; mode: RedactMode }
+  // Release 6: Forme (see the section below).
+  /** Draw a new shape on the page (checked as Shape says): one undoable edit. */
+  | { op: "addShape"; pageIndex: number; shape: Shape }
+  /** The page's shapes drawn by the app (ShapeInfo), in painting order. */
+  | { op: "shapes"; pageIndex: number }
+  /** Change a shape the app drew to `shape` (its id stays), or delete it (null): one undoable edit. */
+  | { op: "editShape"; pageIndex: number; shapeId: number; shape: Shape | null };
 
 export interface ResultMap {
   open: OpenResult;
@@ -679,6 +686,9 @@ export interface ResultMap {
   search: SearchStep;
   redactPreview: RedactPreview;
   redact: RedactResult;
+  addShape: ShapeResult;
+  shapes: ShapeInfo[];
+  editShape: ShapeResult;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -948,3 +958,66 @@ export interface RedactReport extends RedactFacts {
 export interface RedactResult extends HistoryState {
   report: RedactReport;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Release 6: Forme (lines, arrows, rectangles, ellipses, the pen, the highlighter).
+
+/**
+ * What a shape is: "line" (an arrow when it has heads), "rect" and "ellipse" (outlines, upright as
+ * seen), "pen" (a freehand stroke through its points, smoothed) and "highlight" (an upright box
+ * filled with translucent colour, blended so the text under it stays readable: it hides nothing).
+ */
+export type ShapeKind = "line" | "rect" | "ellipse" | "pen" | "highlight";
+/** How a stroke is drawn: whole, dashed (3 widths on, 2 off) or dotted (round dots 2 widths apart). */
+export type ShapeDash = "solid" | "dashed" | "dotted";
+
+/**
+ * A shape drawn by the app, in page space (points, y down, /Rotate and CropBox applied: as seen).
+ * - `points`: "line", two (start, end); "rect", "ellipse", "highlight": two opposite corners of
+ *   the box (any order; the box is upright as seen); "pen": the stroke's points in order, 2 to
+ *   MAX_PEN_POINTS. Every point within the page bounds.
+ * - `color`: sRGB 0..1 (the stroke; the fill of a highlight).
+ * - `width`: stroke width in points, MIN_SHAPE_WIDTH..MAX_SHAPE_WIDTH ("highlight": ignored, 0).
+ * - `dash`: "line", "rect", "ellipse"; "solid" for "pen" and "highlight".
+ * - `heads`: "line" only: 0 none, 1 an arrow head at the end, 2 at both ends (0 for the others).
+ * Refused ("bad-request"): fewer or more points than the kind takes, a point off the page or not
+ * finite, a line, a box's side or a pen stroke's box both ways shorter than MIN_SHAPE_SIZE (the
+ * rule is shapeGeometry.isShapeDrawable, which the viewer applies too), a width or colour out of range.
+ */
+export interface Shape {
+  kind: ShapeKind;
+  points: [number, number][];
+  color: [number, number, number];
+  width: number;
+  dash: ShapeDash;
+  heads: 0 | 1 | 2;
+}
+
+/** A shape the app drew, as found on the page (shapes()). */
+export interface ShapeInfo {
+  /** Stable for this shape across edits, undo, redo and Riprendi (its marked block's /PEShape). */
+  id: number;
+  shape: Shape;
+  /** What it covers, page space, stroke and arrow heads included. */
+  bbox: Rect;
+}
+
+export interface ShapeResult extends HistoryState {
+  pageIndex: number;
+  /** The shape's id (the same as before for an edit); null when an edit deleted it. */
+  id: number | null;
+}
+
+/** Stroke width limits, in points. */
+export const MIN_SHAPE_WIDTH = 0.25;
+export const MAX_SHAPE_WIDTH = 24;
+/** Shortest line, and shortest side of a box, in points. */
+export const MIN_SHAPE_SIZE = 1;
+/** Most points a pen stroke may have. */
+export const MAX_PEN_POINTS = 4000;
+/**
+ * A highlight's fill opacity, blended with Multiply: the text under it stays as dark as it was,
+ * and it still reads through where a reader has no blend modes. The viewer's preview uses the same
+ * (the SVG's fill-opacity, set by ShapeLayer, and mix-blend-mode: multiply) so it looks like the page.
+ */
+export const HIGHLIGHT_ALPHA = 0.45;

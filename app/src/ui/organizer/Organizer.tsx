@@ -1,6 +1,6 @@
 // The page organizer around the thumbnails (viewer/Thumbnails.tsx), in its two places:
-// - the desktop pages panel (ui/PagesPanel.tsx): the thumbnails, then the action bar while pages
-//   are selected (PanelOrganizer);
+// - the desktop pages panel (ui/PagesPanel.tsx): the thumbnails, then the action bar, for the
+//   selected pages or, with none, the page shown (PanelOrganizer);
 // - the phone's "Organizza" sheet (ui/PhoneSheets.tsx), full screen: a bar with Undo and Redo, a
 //   short hint and "Seleziona" (in "Seleziona": the count, "Tutte" or "Nessuna", and "Fine"),
 //   the grid of thumbnails, and in "Seleziona" the action bar (SheetOrganizer). The sheet is a
@@ -32,7 +32,8 @@ export function OrganizerStatus() {
 }
 
 /**
- * The desktop panel's organizer: the thumbnails in one column, and the action bar under them.
+ * The desktop panel's organizer: the thumbnails in one column, and the action bar under them
+ * (always: with nothing selected it acts on the page shown).
  * The selection goes with the panel (hidden, another document, the phone layout): one nobody can
  * see must not be what a key acts on.
  */
