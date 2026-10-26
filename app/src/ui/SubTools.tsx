@@ -6,8 +6,8 @@
 //   on the button, so the icons-only bar (when the banner is narrow) keeps it, with the tooltip.
 //   In the banner on desktop, or as the phone strip right above the tab bar, which scrolls
 //   sideways when the screen is too narrow for them all (ToolStrip).
-// - PlaceCentreButton, "Metti al centro": what a tap would write goes in the middle of what
-//   shows. An icon alone, quieter than the buttons beside it.
+// - PlaceCentreButton, "Metti al centro": what a tap would write (or draw) goes in the middle of
+//   what shows. An icon alone, quieter than the buttons beside it.
 // Styled by styles/shell.css (the banner) and styles/phone.css (the strip).
 import type { FunctionComponent } from "preact";
 import { useRef, useState } from "preact/hooks";
@@ -97,15 +97,18 @@ export function ToolStrip({ label, items }: { label: string; items: readonly Sub
  * and switch access, on phones too, where a tap on the page cannot be aimed. In Compila e firma
  * for every sub-tool and for the signature waiting to be placed; in Modifica with Aggiungi testo.
  * The icon alone, named by aria-label, with its tooltip. `onClick` replaces placeAtCentre (Bianchetto
- * and Oscura place their default box).
+ * and Oscura place their default box, Forme a shape); `tip` the tooltip (Forme's says "la", the
+ * shape, in Italian).
  */
-export function PlaceCentreButton({ onClick = () => void placeAtCentre() }: { onClick?: () => void } = {}) {
+export function PlaceCentreButton(
+  { onClick = () => void placeAtCentre(), tip }: { onClick?: () => void; tip?: string } = {},
+) {
   return (
     <button
       type="button"
       class="btn tool-banner-centre"
       aria-label={t("fill.placeCenter")}
-      title={t(isCoarse.value ? "fill.placeCenterTipTouch" : "fill.placeCenterTip")}
+      title={tip ?? t(isCoarse.value ? "fill.placeCenterTipTouch" : "fill.placeCenterTip")}
       onClick={onClick}
     >
       <IconTarget />

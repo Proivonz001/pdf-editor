@@ -1,0 +1,67 @@
+/* Move and resize buttons (release 6, ui/NudgeControls.tsx), shared by the image and shape context bars.
+   The toggle is one of the bar's icon buttons; on, it looks like a tool that is on (base.css), and
+   so does the shapes' Stretch toggle at the start of the row when pressed. The row takes a line of
+   the bar of its own: the bar wraps, the row adds nothing to the bar's width (width 0) yet spans
+   it (min-width 100%), and the bar is made at least as wide as the row's buttons on one line
+   (--nudge-btn: an icon button's real width, .btn's min-width var(--btn) in base.css, which wins
+   over .context-btn.is-icon's 32 px; 4 px gaps; the bar's 3 px padding and 1 px border on each
+   side), but never wider than the page: on a narrower page the row wraps. The row goes on the side
+   away from the selection: above the bar's buttons when the bar is above it, below them when it is
+   below (it comes last in the DOM: NudgeControls). */
+
+.nudge-toggle[aria-expanded="true"],
+.nudge-stretch[aria-pressed="true"] {
+  background: var(--active-bg);
+  border-color: var(--accent);
+  color: var(--active-fg);
+}
+
+@media (hover: hover) {
+  .nudge-toggle[aria-expanded="true"]:hover:not(:disabled, [aria-disabled="true"]),
+  .nudge-stretch[aria-pressed="true"]:hover:not(:disabled, [aria-disabled="true"]) {
+    background: var(--active-bg);
+  }
+}
+
+.context-bar:has(> .nudge-row) {
+  --nudge-btn: var(--btn);
+  flex-wrap: wrap;
+  height: auto;
+  min-width: min(calc(6 * var(--nudge-btn) + 5 * 4px + 8px), 100%);
+}
+
+.context-bar:has(> .nudge-row.has-stretch) {
+  min-width: min(calc(7 * var(--nudge-btn) + 6 * 4px + 8px), 100%);
+}
+
+.context-bar:has(> .nudge-row.is-move-only) {
+  min-width: min(calc(4 * var(--nudge-btn) + 3 * 4px + 8px), 100%);
+}
+
+.nudge-row {
+  order: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  width: 0;
+  min-width: 100%;
+}
+
+.context-slot:not(.is-below) .nudge-row {
+  order: -1;
+}
+
+/* Taps in quick succession move, they do not zoom; a long press holds, it brings no callout. */
+.nudge-row .context-btn {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+}
+
+@media (forced-colors: active) {
+  .nudge-toggle[aria-expanded="true"],
+  .nudge-stretch[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

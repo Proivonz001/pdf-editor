@@ -2,9 +2,10 @@
 // they name: turn, duplicate, extract, delete, move (one place with Alt+↑/↓, to where a drag
 // dropped them, to a position chosen in "Sposta in posizione…"), and add pages at a place between
 // them: a blank page, pages of another PDF (its file chosen here, or dropped there), photos or
-// scans (the scan flow, ui/scan). Every page operation goes through ui/pageActions.ts, which makes
-// it one edit and says what it did in a toast; the organizer adds its own words for what shows at
-// once and has no toast (a move, a turn), for screen readers (model.ts, announce).
+// scans (the scan flow, ui/scan); and "Elimina pagina N" of the desktop More menu and the phone's
+// Altro sheet (release 6), on the page shown. Every page operation goes through ui/pageActions.ts,
+// which makes it one edit and says what it did in a toast; the organizer adds its own words for
+// what shows at once and has no toast (a move, a turn), for screen readers (model.ts, announce).
 //
 // The pages are taken as PageModels and turned into their indices only here, as the action
 // starts; the dialogs that stay open while page operations may land ("Sposta in posizione…", the
@@ -19,7 +20,7 @@
 // is worked out in the queue too, so that the thumbnail can show two quick turns added up
 // (rotatePages, model.ts addTurns).
 import { t, pageCount } from "../../i18n";
-import { doc, scanFlow, showDialog, showToast, type DialogState } from "../../state";
+import { currentPage, doc, editingStopped, scanFlow, showDialog, showToast, type DialogState } from "../../state";
 import type { OpenDoc, PageModel } from "../../viewer/model";
 import {
   deletePagesAction, duplicatePagesAction, extractPagesAction, insertBlankPage, moveOrder, movePagesTo, runPagesEdit,
@@ -92,6 +93,23 @@ export async function extractPages(pages: readonly PageModel[]): Promise<void> {
   const d = doc.peek();
   const chosen = present(d, pages);
   if (d && chosen.length) await extractPagesAction(indicesOf(d, chosen));
+}
+
+/** The page shown now in `d` (`currentPage`): what the panel's action bar acts on with none selected. */
+export function shownPage(d: OpenDoc): PageModel {
+  return d.pages[Math.min(Math.max(0, currentPage.value), d.pages.length - 1)];
+}
+
+/**
+ * "Elimina pagina N" (the desktop More menu, the phone's Altro sheet): the page shown now, and why
+ * it cannot be deleted now (one page left, editing stopped), or no reason. Deleting it goes through
+ * deletePages, so its toast, "Annulla" and focus are the organizer's. Pages the engine cannot
+ * change are known only when it refuses: the delete says so then (pageOps.notEditable).
+ */
+export function deleteShown(d: OpenDoc): { page: PageModel; label: string; reason?: string } {
+  const page = shownPage(d);
+  const reason = editingStopped.value ? t("broken.note") : canDelete(1, d.pages.length) ? undefined : t("pageOps.keepOne");
+  return { page, label: t("org.deletePage", { page: page.index + 1 }), reason };
 }
 
 /** Delete `pages`; never every page (refused with a word why). The toast offers "Annulla". */

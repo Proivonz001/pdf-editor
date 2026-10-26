@@ -1,0 +1,354 @@
+/* Forme (release 6): the shapes layer, its frame and context bar (viewer/ShapeLayer.tsx), the kind picker in Modifica's banner (ui/EditBar.tsx). Phone rules go in phone.css. */
+
+/* --- r6-shapes-layer: the shapes on a page (viewer/ShapeLayer.tsx) ---------------------------
+   On the page (white in both themes, like the other page marks): the catcher at the bottom (one
+   finger scrolls, two zoom, a mouse draws; with the pen one finger draws too), the shapes'
+   buttons (1: they let the pointer through to the layer's hit test, and show under the mouse or
+   the keyboard focus), the SVG previews of what is drawn or being written (2), the selected
+   shape's frame with the image frame's handles and grip (3: viewer.css) and its context bar (4:
+   .context-slot). A highlight's preview is multiplied, as the engine writes it (its opacity is the
+   engine's HIGHLIGHT_ALPHA, set on the SVG by ShapeLayer). */
+
+.shapes-layer {
+  position: absolute;
+  inset: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.shapes-catcher {
+  position: absolute;
+  inset: 0;
+  touch-action: pan-x pan-y;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* The pen: one finger draws, two fingers zoom and pan (gestures.ts). */
+.shapes-layer.is-pen .shapes-catcher {
+  touch-action: none;
+}
+
+@media (hover: hover) {
+  .shapes-catcher {
+    cursor: crosshair;
+  }
+
+  .shapes-catcher.is-over {
+    cursor: pointer;
+  }
+
+  .shapes-catcher.is-selected {
+    cursor: move;
+  }
+}
+
+.shape-svg {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.shape-svg.is-highlight {
+  mix-blend-mode: multiply;
+}
+
+.shape-box {
+  position: absolute;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  font: inherit;
+  pointer-events: none;
+}
+
+.shape-box.is-hover {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+}
+
+.shape-box:focus-visible {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The selected shape: a box frame round its points (a thin ink-blue line with a white rim), or,
+   for a line, its two end handles alone (the focus ring shows round it from the keyboard). */
+.shape-frame {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  box-shadow: 0 0 0 1.5px var(--accent), 0 0 0 2.5px rgb(255 255 255 / 0.8);
+  cursor: move;
+  outline: none;
+}
+
+/* A line's frame is its end handles and grip, and so is any frame with the pen (the next stroke
+   may begin in it): elsewhere in its box a press reaches the page (a mouse press on the shape
+   itself moves it: ShapeLayer hands it over). */
+.shape-frame.is-line {
+  box-shadow: none;
+}
+
+.shape-frame.is-line,
+.shapes-layer.is-pen .shape-frame {
+  pointer-events: none;
+}
+
+.shape-frame.is-line > .image-handle,
+.shape-frame.is-line > .image-grip,
+.shapes-layer.is-pen .shape-frame > .image-handle,
+.shapes-layer.is-pen .shape-frame > .image-grip {
+  pointer-events: auto;
+}
+
+@media (pointer: fine) {
+  .shape-frame {
+    touch-action: none;
+  }
+}
+
+.shape-frame:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.shape-frame.is-pending {
+  box-shadow: none;
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  cursor: progress;
+}
+
+.shape-frame.is-pending > * {
+  display: none;
+}
+
+/* A line's end handles: placed by ShapeLayer at the line's ends. */
+.shape-frame .shape-end {
+  cursor: crosshair;
+}
+
+/* Where the shape was, while it is moved or its edit is written (the canvas still shows it there). */
+.shape-ghost {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 1px;
+  pointer-events: none;
+}
+
+@media (pointer: coarse) {
+  .shape-frame {
+    cursor: default;
+  }
+
+  /* Each corner target is 44 × 44 px, also on a thin box: it reaches --reach-x / --reach-y px
+     into the box (ShapeLayer) and the rest out, as on Bianchetto's box (redact.css). */
+  .shape-frame.is-box .image-handle {
+    width: 44px;
+    height: 44px;
+  }
+
+  .shape-frame.is-box .image-handle.is-nw { margin: calc(var(--reach-y, 22px) - 44px) 0 0 calc(var(--reach-x, 22px) - 44px); }
+  .shape-frame.is-box .image-handle.is-ne { margin: calc(var(--reach-y, 22px) - 44px) 0 0 calc(-1 * var(--reach-x, 22px)); }
+  .shape-frame.is-box .image-handle.is-se { margin: calc(-1 * var(--reach-y, 22px)) 0 0 calc(-1 * var(--reach-x, 22px)); }
+  .shape-frame.is-box .image-handle.is-sw { margin: calc(-1 * var(--reach-y, 22px)) 0 0 calc(var(--reach-x, 22px) - 44px); }
+  .shape-frame.is-box .image-handle.is-nw::before { left: calc(37px - var(--reach-x, 22px)); top: calc(37px - var(--reach-y, 22px)); }
+  .shape-frame.is-box .image-handle.is-ne::before { right: calc(37px - var(--reach-x, 22px)); top: calc(37px - var(--reach-y, 22px)); }
+  .shape-frame.is-box .image-handle.is-se::before { right: calc(37px - var(--reach-x, 22px)); bottom: calc(37px - var(--reach-y, 22px)); }
+  .shape-frame.is-box .image-handle.is-sw::before { left: calc(37px - var(--reach-x, 22px)); bottom: calc(37px - var(--reach-y, 22px)); }
+
+  /* A line's ends: a 44 px target centred on each end. */
+  .shape-frame .shape-end {
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0 -22px;
+  }
+
+  .shape-frame .shape-end::before {
+    left: 15px;
+    top: 15px;
+  }
+
+  /* Below a small shape the grip clears the 44 px targets (ShapeLayer's GRIP_ROOM). */
+  .shape-frame .image-grip.is-outside {
+    top: calc(100% + 66px);
+  }
+}
+
+/* The context bar: the choices (colour, width, line style, heads) as small radio groups, the
+   move and size buttons, Elimina and Deseleziona; it wraps on narrow pages, and a group too when
+   the page is narrower than it (no swatch sticks out of the bar). */
+.context-bar.shape-bar {
+  flex-wrap: wrap;
+  height: auto;
+  max-width: min(32rem, 100%);
+  white-space: normal;
+}
+
+.shape-radios {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+  border-right: 1px solid var(--line);
+}
+
+.btn.shape-radio[aria-checked="true"],
+.btn.shape-radio[aria-checked="true"]:hover:not(:disabled, [aria-disabled="true"]) {
+  background: var(--active-bg);
+  border-color: var(--accent);
+  color: var(--active-fg);
+}
+
+.shape-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--muted); /* shows round black on the dark bar, and round yellow on white */
+}
+
+.shape-width {
+  width: 18px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+@media (forced-colors: active) {
+  .shapes-layer {
+    forced-color-adjust: none;
+  }
+
+  .shape-frame {
+    box-shadow: none;
+    outline: 2px solid var(--accent);
+    outline-offset: 0;
+  }
+
+  .shape-frame.is-line {
+    outline: none;
+  }
+
+  .shape-frame:focus-visible {
+    outline: 4px double var(--accent);
+    outline-offset: 1px;
+  }
+
+  .shape-swatch {
+    forced-color-adjust: none;
+    box-shadow: inset 0 0 0 1px CanvasText;
+  }
+
+  /* A background would be forced to Canvas: the widths would all be blank. */
+  .shape-width {
+    background: ButtonText;
+  }
+
+  .btn.shape-radio[aria-checked="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shape-bar {
+    animation: none;
+  }
+}
+
+/* --- r6-shapes-bar: Forme's kind picker in Modifica's banner (ui/EditBar.tsx) ----------------
+   Keep this block at the end of the file. A radio group of the six kinds: a white group on the
+   tinted bar like the sub-tools beside it (shell.css), leading the banner's second row before the
+   hint. The chosen kind is tinted with the ink border and a bolder name, so the state does not
+   rest on colour alone. The names show beside the icons where the bar has room, icons alone below
+   1100 px of bar (each keeps its name, as aria-label, and its tooltip). Touch screens: 36 px
+   buttons with a 44 px target, the icons 44 px wide. Phones: a row of its own (phone.css). */
+
+.shape-kinds {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 3px 0;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--hint-text) 22%, transparent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.btn.shape-kind {
+  height: 28px;
+  padding: 0 9px 0 7px;
+  gap: 5px;
+  border-radius: 6px;
+  font-size: var(--fs-sm);
+}
+
+.shape-kind .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.btn.shape-kind[aria-checked="true"],
+.btn.shape-kind[aria-checked="true"]:hover:not(:disabled) {
+  background: var(--active-bg);
+  border-color: var(--accent);
+  color: var(--active-fg);
+}
+
+.shape-kind[aria-checked="true"] .shape-kind-label {
+  font-weight: 700;
+}
+
+@container tool-banner (max-width: 1099.98px) {
+  .btn.shape-kind {
+    width: 32px;
+    padding: 0;
+  }
+
+  .shape-kind-label {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .btn.shape-kind {
+    height: 36px;
+  }
+
+  .shape-kind::after {
+    content: "";
+    position: absolute;
+    inset: -4px 0;
+  }
+
+  @container tool-banner (max-width: 1099.98px) {
+    .btn.shape-kind {
+      width: var(--tap);
+    }
+  }
+}
+
+@media (forced-colors: active) {
+  .shape-kinds {
+    border-color: CanvasText;
+  }
+
+  .btn.shape-kind[aria-checked="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}

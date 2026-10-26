@@ -13,7 +13,7 @@ import { batch, computed, signal } from "@preact/signals";
 import { EngineClient, EngineError } from "./engine/client";
 import type {
   HistoryState, LineDecorations, LineInfo, PdfaBlockerCode, PdfaIssue, PdfaRemovalCode, PdfaWarningCode, Rect,
-  SearchHit,
+  SearchHit, ShapeDash,
 } from "./engine/protocol";
 import { applyLayout, type OpenDoc, type PageModel } from "./viewer/model";
 
@@ -429,12 +429,56 @@ export const fillMode = computed(() => tool.value === "fill");
 /**
  * What a tap does in Modifica: "change" (the default: open a line to change it, select an image
  * to move it), "addText" (write a new text where the user taps, with the same writer as Testo
- * in Compila e firma), "whiteout" (Bianchetto) or "redact" (Oscura): mark an area (drag, a tap,
- * a line), then apply it (release 5). "Aggiungi immagine" is an action (the picture picker),
+ * in Compila e firma), "shapes" (Forme: draw lines, arrows, rectangles, ellipses, pen and
+ * highlighter, release 6), "whiteout" (Bianchetto) or "redact" (Oscura): mark an area (drag, a
+ * tap, a line), then apply it (release 5). "Aggiungi immagine" is an action (the picture picker),
  * never left on. Back to "change" whenever the tool changes (setTool).
  */
-export type EditTool = "change" | "addText" | "whiteout" | "redact";
+export type EditTool = "change" | "addText" | "shapes" | "whiteout" | "redact";
 export const editTool = signal<EditTool>("change");
+
+// ---------------------------------------------------------------------------------------------
+// Forme (release 6): Modifica's "shapes" sub-tool.
+
+/** What Forme draws next: "arrow" is a line with one head (a selected line's heads change in its bar). */
+export type ShapeToolKind = "line" | "arrow" | "rect" | "ellipse" | "pen" | "highlight";
+export const shapeKind = signal<ShapeToolKind>("rect");
+
+/** The fixed palette of Forme (no colour picker): names, and their sRGB 0..1 as Shape.color wants them. */
+export type ShapeColor = "black" | "red" | "blue" | "green" | "yellow";
+export const SHAPE_COLORS: Record<ShapeColor, [number, number, number]> = {
+  black: [0, 0, 0],
+  red: [0xd9 / 255, 0x2d / 255, 0x20 / 255],
+  blue: [0x1f / 255, 0x5b / 255, 0xd8 / 255],
+  green: [0x07 / 255, 0x94 / 255, 0x55 / 255],
+  yellow: [1, 0xd4 / 255, 0],
+};
+/** The colours a highlight may take (black would only darken what it covers). */
+export const HIGHLIGHT_COLORS: readonly ShapeColor[] = ["yellow", "green", "blue", "red"];
+/** The three stroke widths offered, in points. */
+export const SHAPE_WIDTHS = [1, 2, 4] as const;
+
+/**
+ * The style of the next shape: the last one chosen, for the session. `color` for outlines, lines
+ * and the pen, `highlight` for the highlighter (its own, yellow at first), `heads` for a new arrow.
+ */
+export const shapeStyle = signal<{
+  color: ShapeColor;
+  highlight: ShapeColor;
+  width: (typeof SHAPE_WIDTHS)[number];
+  dash: ShapeDash;
+  heads: 1 | 2;
+}>({ color: "red", highlight: "yellow", width: 2, dash: "solid", heads: 1 });
+
+/** The shape selected in Forme (its frame, handles and context bar): ShapeInfo.id on its page. */
+export const selectedShape = signal<{ pageIndex: number; id: number } | null>(null);
+
+/**
+ * Forme's "Metti al centro" (the keyboard and screen-reader way to add a shape): bumped by the
+ * banner's button; ui/shapes/actions.ts (its effect calls placeShapeAtCentre on currentPage) puts
+ * a default shape of the current kind in the middle of what shows.
+ */
+export const shapeCentreRequest = signal(0);
 
 /**
  * The text writer can be used: in Compila e firma, and in Modifica with Aggiungi testo. Its

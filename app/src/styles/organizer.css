@@ -1,6 +1,7 @@
 /* The page organizer around the thumbnails (viewer/Thumbnails.tsx, ui/organizer): the "+"
    between pages and at the end, the drop marker and the dragged pages' label, a PDF file dragged
-   over the thumbnails, the "+" menu, the action bar (desktop panel and phone sheet), the phone's
+   over the thumbnails, the "+" menu, the action bar (desktop panel and phone sheet), the More
+   sheet's "Elimina pagina N" when it cannot delete, the phone's
    full-screen "Organizza" sheet with its bars and toasts, and the two dialogs ("Da un altro
    PDF…" with its page picker, "Sposta in posizione…" uses the plain dialog styles). The
    thumbnails themselves are in pages.css. Colours only from tokens.css; hover tints only where
@@ -164,12 +165,13 @@
   color: var(--danger-text);
 }
 
-/* Desktop panel (168 px): the count and Deseleziona, then the icons in rows of three. */
+/* Desktop panel (168 px): the count and Deseleziona (or "Pagina N"), then the icons over their
+   short labels in rows of three. */
 .org-bar-panel {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px 8px max(8px, env(safe-area-inset-bottom, 0px));
+  padding: 6px 6px max(8px, env(safe-area-inset-bottom, 0px));
 }
 
 .org-bar-head {
@@ -195,9 +197,8 @@
 
 .org-bar-panel .org-bar-actions {
   display: grid;
-  grid-template-columns: repeat(3, var(--btn));
-  justify-content: center;
-  gap: 4px 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
 }
 
 /* Phone sheet: one row of icons over short labels. */
@@ -227,6 +228,32 @@
 .org-action-label {
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+/* The panel's columns are about 50 px: the whole width for the label ("Duplicate"). */
+.org-bar-panel .org-action.btn.has-label {
+  padding-inline: 0;
+}
+
+/* --- "Elimina pagina N" in the phone's More sheet (PhoneSheets.tsx), when it cannot delete:
+   muted, with no hover or press tint, and the reason under its label (a toast would be behind
+   the modal sheet). --------------------------------------------------------------------------- */
+
+.more-row[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* (More specific than phone.css's .more-row:hover and :active, which come later.) */
+.more-row[aria-disabled="true"]:hover,
+.more-row[aria-disabled="true"]:active {
+  background: transparent;
+}
+
+.more-reason {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-sm);
 }
 
 /* --- The phone's "Organizza" sheet ----------------------------------------------------------

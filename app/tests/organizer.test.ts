@@ -15,10 +15,24 @@
 // waits (P17), and the "+" between pages after a delete (P15: the line it is drawn on, a place
 // past the end, an open menu's place). Fix round 2 (P18): a keyboard move takes its place among
 // the changes when it is pressed and is worked out in the queue, so Ctrl+Z pressed after it, behind
-// a download or a long insert, undoes the move.
+// a download or a long insert, undoes the move. Release 6: the panel's action bar with nothing
+// selected acts on the page shown, and "Delete page N" in the More menu and the phone's More sheet
+// deletes it through the same command, or says why it cannot; after its review, that menu row's
+// reason read once, a delete that empties the selection taking the focused button away, a
+// double-click deleting once, and the page shown at either end of the scroll however short.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import "./stubs/browser-globals";
+
+// Components called as functions, outside a render (the More menu's rows, open: `hooks.state`).
+const hooks = vi.hoisted(() => ({ state: undefined as unknown }));
+vi.mock("preact/hooks", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("preact/hooks")>()),
+  useState: (init: unknown) => [hooks.state ?? init, () => undefined],
+  useRef: (init: unknown) => ({ current: init }),
+  useId: () => "m1",
+  useEffect: () => undefined,
+}));
 
 vi.mock("../src/engine/client.ts", () => {
   class EngineError extends Error {
@@ -532,6 +546,219 @@ describe("the action bar's commands", () => {
     expect(commands.pagesFor(d, d.pages[3])).toEqual([d.pages[3]]);
     model.clearSelection();
     expect(commands.pagesFor(d, d.pages[0])).toEqual([d.pages[0]]);
+  });
+});
+
+describe("release 6: deleting a page in plain sight", () => {
+  /** Every vnode in `node` (a component's output, not rendered), depth first. */
+  const nodes = (node: any): any[] => {
+    if (Array.isArray(node)) return node.flatMap(nodes);
+    if (!node || typeof node !== "object" || !node.props) return [];
+    return [node, ...nodes(node.props.children)];
+  };
+  const g = globalThis as any;
+  g.document.querySelector ??= () => null; // the focus rescued after an action: no thumbnails here
+  g.Element ??= class {}; // the More sheet's rows check what was tapped (leaveSheet)
+
+  it("the panel's bar with nothing selected: 'Page N' and the actions on the page shown, each with a visible label", async () => {
+    const { ActionBar } = await import("../src/ui/organizer/ActionBar");
+    const d = await openPages(4);
+    state.currentPage.value = 2;
+    const bar = () => nodes(ActionBar({ doc: d, variant: "panel" }));
+    const action = (label: string) => bar().find((n) => n.props.label === label);
+    expect(bar()[0].props["aria-label"]).toBe("Page 3");
+    expect(bar().find((n) => n.props.class === "org-bar-count").props.children).toBe("Page 3");
+    expect(bar().some((n) => n.props["aria-label"] === "Deselect")).toBe(false); // nothing to deselect
+    expect(["Rotate right", "Rotate left", "Duplicate", "Extract", "Move to…", "Delete"].map((l) => action(l).props.short ?? l))
+      .toEqual(["Right", "Left", "Duplicate", "Extract", "Move", "Delete"]);
+    expect(action("Delete").props.blocked).toBe(false);
+
+    const before = idsOf();
+    action("Delete").props.onClick({ detail: 1 });
+    await vi.waitFor(() => expect(calls).toEqual(["editPages:delete:2"]));
+    expect(idsOf()).toEqual([before[0], before[1], before[3]]);
+    expect(state.toasts.value[0].text).toBe("1 page deleted.");
+    expect(state.toasts.value[0].action?.label).toBe("Undo");
+    // The page after it is shown, and the bar is about it now.
+    expect(state.currentPage.value).toBe(2);
+    expect(bar()[0].props["aria-label"]).toBe("Page 3");
+
+    // With pages selected it is the bar it was: the count, Deselect, the selection.
+    selectPages(d, [0, 1]);
+    expect(bar().find((n) => n.props.class === "org-bar-count").props.children).toBe("2 pages selected");
+    expect(bar().some((n) => n.props["aria-label"] === "Deselect")).toBe(true);
+    calls.length = 0;
+    action("Rotate right").props.onClick();
+    await vi.waitFor(() => expect(calls).toEqual(["editPages:rotate:0,1:90"]));
+    model.clearSelection();
+
+    // The phone's sheet still waits for a selection.
+    const sheet = nodes(ActionBar({ doc: d, variant: "sheet" }));
+    expect(sheet.find((n) => n.props.label === "Delete").props.blocked).toBe(true);
+    expect(sheet.some((n) => n.props.class === "org-bar-count")).toBe(false);
+
+    // The last page cannot go: Delete says why.
+    const one = await openPages(1);
+    const del = nodes(ActionBar({ doc: one, variant: "panel" })).find((n) => n.props.label === "Delete");
+    expect([del.props.blocked, del.props.reason]).toEqual([true, "At least one page must stay."]);
+  });
+
+  it("'Delete page N' in the More menu and the phone's More sheet deletes the page shown, through the same command", async () => {
+    const { TopBar } = await import("../src/ui/TopBar");
+    const { MoreActions } = await import("../src/ui/PhoneSheets");
+    const menuItem = () => nodes(TopBar()).find((n) => Array.isArray(n.props.items)).props.items
+      .find((x: any) => x.key === "delete-page");
+    const sheetRow = () => {
+      const row = nodes(MoreActions()).find((n) => n.type?.name === "DeletePageRow");
+      return nodes(row.type(row.props)).find((n) => n.props.label?.startsWith("Delete page"));
+    };
+
+    const d = await openPages(4);
+    state.currentPage.value = 1;
+    expect(menuItem().label).toBe("Delete page 2");
+    const before = idsOf();
+    menuItem().onSelect();
+    await vi.waitFor(() => expect(calls).toEqual(["editPages:delete:1"]));
+    expect(idsOf()).toEqual([before[0], before[2], before[3]]);
+    expect(state.toasts.value.map((x) => [x.text, x.action?.label])).toEqual([["1 page deleted.", "Undo"]]);
+
+    // The phone: the sheet closes first (the toast's Undo must be in reach), then the page goes.
+    state.toasts.value = [];
+    calls.length = 0;
+    state.sheet.value = "more";
+    expect([sheetRow().props.label, sheetRow().props.reason]).toEqual(["Delete page 2", undefined]);
+    sheetRow().props.onClick({ currentTarget: null });
+    expect(state.sheet.value).toBeNull();
+    await vi.waitFor(() => expect(calls).toEqual(["editPages:delete:1"]));
+    expect(d.pages).toHaveLength(2);
+    expect(state.toasts.value[0].action?.label).toBe("Undo");
+
+    // Pages the engine cannot change: it says so, as the organizer does.
+    const { EngineError } = await import("../src/engine/client");
+    const editPages = engineImpl.editPages;
+    engineImpl.editPages = async () => {
+      engineImpl.editPages = editPages;
+      throw new EngineError("refused", "not-editable");
+    };
+    state.toasts.value = [];
+    menuItem().onSelect();
+    await vi.waitFor(() => expect(toastTexts()).toEqual(["The pages of this PDF can't be changed."]));
+    expect(d.pages).toHaveLength(2);
+  });
+
+  it("is refused with its reason when one page is left, or editing has stopped; the engine is not asked", async () => {
+    const { TopBar } = await import("../src/ui/TopBar");
+    const { MoreActions } = await import("../src/ui/PhoneSheets");
+    const menuItem = () => nodes(TopBar()).find((n) => Array.isArray(n.props.items)).props.items
+      .find((x: any) => x.key === "delete-page");
+    const sheetRow = () => {
+      const row = nodes(MoreActions()).find((n) => n.type?.name === "DeletePageRow");
+      return nodes(row.type(row.props)).find((n) => n.props.label?.startsWith("Delete page"));
+    };
+    const keepOne = "At least one page must stay.";
+    const stoppedNote = "Editing is off for this file: download it to keep your changes, or reload the page to start again.";
+
+    await openPages(1);
+    expect(menuItem().label).toBe("Delete page 1");
+    expect(menuItem().reason).toBe(keepOne); // (the menu shows it as off, says it, and toasts it when chosen)
+    menuItem().onSelect();
+    expect(toastTexts()).toEqual([keepOne]);
+    expect(sheetRow().props.reason).toBe(keepOne); // (Row shows it, and does nothing when pressed)
+
+    await openPages(3);
+    state.editingStopped.value = true;
+    try {
+      expect(menuItem().reason).toBe(stoppedNote);
+      expect(sheetRow().props.reason).toBe(stoppedNote);
+    } finally {
+      state.editingStopped.value = false;
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("in the More menu that row is named by its label alone: the reason is its description and tooltip, read once", async () => {
+    const { TopBar } = await import("../src/ui/TopBar");
+    await openPages(1);
+    const more = nodes(TopBar()).find((n) => Array.isArray(n.props.items));
+    hooks.state = true; // the menu open
+    let rows: any[];
+    try {
+      rows = nodes(more.type(more.props)).filter((n) => n.props.class === "menu-item");
+    } finally {
+      hooks.state = undefined;
+    }
+    const row = rows.find((n) => n.props["aria-disabled"] === "true");
+    expect([row.props["aria-label"], row.props.title]).toEqual(["Delete page 1", "At least one page must stay."]);
+    const why = nodes(row.props.children).find((n) => n.props.id === row.props["aria-describedby"]);
+    expect(why.props.children).toBe("At least one page must stay.");
+    expect(rows.filter((n) => n !== row).every((n) => n.props["aria-label"] === undefined)).toBe(true); // named by their text
+  });
+
+  it("a delete that empties the selection makes the bar's buttons anew (a focused Delete goes, the thumbnails take the focus); a double-click deletes once", async () => {
+    const { ActionBar } = await import("../src/ui/organizer/ActionBar");
+    const d = await openPages(5);
+    state.currentPage.value = 0;
+    const bar = () => nodes(ActionBar({ doc: d, variant: "panel" }));
+    const buttonsKey = () => bar().find((n) => n.props.class === "org-bar-actions").key;
+    const del = () => bar().find((n) => n.props.label === "Delete");
+
+    selectPages(d, [2, 3]);
+    expect(buttonsKey()).toBe("selection");
+    del().props.onClick({ detail: 1 });
+    await vi.waitFor(() => expect(calls).toEqual(["editPages:delete:2,3"]));
+    // About the page shown now, with other buttons: the one that had the focus is gone.
+    expect(bar()[0].props["aria-label"]).toBe("Page 3");
+    expect(buttonsKey()).toBe("page");
+
+    // The second click of a double-click lands on the new Delete: nothing more goes.
+    del().props.onClick({ detail: 2 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toEqual(["editPages:delete:2,3"]);
+    // Enter (detail 0) deletes the page shown, and the bar stays the same, about the page after it.
+    del().props.onClick({ detail: 0 });
+    await vi.waitFor(() => expect(calls).toEqual(["editPages:delete:2,3", "editPages:delete:2"]));
+    expect(buttonsKey()).toBe("page");
+    // A held Enter: its repeats activate nothing (the first press does, as above).
+    const { ignoreRepeat } = await import("../src/ui/organizer/ActionBar");
+    const press = (repeat: boolean, k = "Enter") => {
+      let prevented = false;
+      ignoreRepeat({ key: k, repeat, preventDefault: () => (prevented = true) } as any);
+      return prevented;
+    };
+    expect([press(true), press(false), press(true, " "), press(true, "Tab")]).toEqual([true, false, true, false]);
+  });
+
+  it("the page shown is the first one at the start of the scroll and the last one at its end, however short", async () => {
+    const { currentPageAt } = await import("../src/viewer/Viewer");
+    const { computeLayout, fitWidthZoom, pageIndexAt } = await import("../src/viewer/layout");
+    // 12 landscape A4 slides on a phone, fit to its width.
+    const slides = Array.from({ length: 12 }, () => ({ width: 842, height: 595 })) as any[];
+    const L = computeLayout(slides, fitWidthZoom(slides, 390), 390);
+    const h = 655, max = L.contentHeight - h;
+    const view = (scrollTop: number) => ({ scrollTop, clientHeight: h, scrollHeight: L.contentHeight });
+    // The middle of the view named page 2 at the start and never reached page 12.
+    expect([pageIndexAt(L, h / 2), pageIndexAt(L, max + h / 2)]).toEqual([1, 10]);
+    expect([currentPageAt(L, view(0)), currentPageAt(L, view(max))]).toEqual([0, 11]);
+    // Every page is the current one somewhere on the way, in order.
+    const seen: number[] = [];
+    for (let top = 0; top <= max; top++) {
+      const i = currentPageAt(L, view(top));
+      if (i !== seen[seen.length - 1]) seen.push(i);
+    }
+    expect(seen).toEqual([...Array(12).keys()]);
+    // Half way, the middle of the view, as before; a document that fits whole: its first page.
+    expect(currentPageAt(L, view(max / 2))).toBe(pageIndexAt(L, max / 2 + h / 2));
+    expect(currentPageAt(L, { scrollTop: 0, clientHeight: L.contentHeight + 50, scrollHeight: L.contentHeight + 50 })).toBe(0);
+    const two = computeLayout(slides.slice(0, 2), fitWidthZoom(slides.slice(0, 2), 390), 390);
+    expect(currentPageAt(two, { scrollTop: 0, clientHeight: 655, scrollHeight: 655 })).toBe(0);
+    // A long document: away from both ends, the page in the middle of the view, as before.
+    const a4 = Array.from({ length: 100 }, () => ({ width: 595, height: 842 })) as any[];
+    const long = computeLayout(a4, 1, 1000), vh = 800, lmax = long.contentHeight - vh;
+    for (const f of [0.02, 0.1, 0.5, 0.9, 0.98]) {
+      const top = Math.round(lmax * f);
+      expect(currentPageAt(long, { scrollTop: top, clientHeight: vh, scrollHeight: long.contentHeight })).toBe(pageIndexAt(long, top + vh / 2));
+    }
+    expect(currentPageAt(long, { scrollTop: lmax, clientHeight: vh, scrollHeight: long.contentHeight })).toBe(99);
   });
 });
 

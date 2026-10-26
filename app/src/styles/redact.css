@@ -1,5 +1,5 @@
-/* Release 5: Modifica's Bianchetto and Oscura (viewer/RedactLayer.tsx, ui/EditBar.tsx) and the
-   review of "Oscura tutti i risultati…" (ui/redact/RedactAllDialog.tsx).
+/* Release 5: Modifica's Bianchetto and Oscura (viewer/RedactLayer.tsx; their banner: shell.css)
+   and the review of "Oscura tutti i risultati…" (ui/redact/RedactAllDialog.tsx).
    On the page (white in both themes, like the other page marks): the tap catcher at the bottom,
    the text lines above it (1: quiet until the pointer or the keyboard is on one), the rectangle
    being dragged out (2), the waiting box (3) with the image frame's handles and grip (viewer.css),
@@ -200,27 +200,6 @@
 
   .btn.redact-use {
     height: 36px;
-  }
-}
-
-/* Modifica's banner with five sub-tools: icons only below Compila e firma's width (shell.css). */
-@container tool-banner (max-width: 899.98px) {
-  .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
-    width: 32px;
-    padding: 0;
-  }
-
-  .edit-banner.is-edit .sub-tools.is-banner .sub-tool-label {
-    display: none;
-  }
-}
-
-/* Touch screens: those icons keep the full 44 px width (shell.css does the same below 640 px). */
-@media (pointer: coarse) {
-  @container tool-banner (max-width: 899.98px) {
-    .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
-      width: var(--tap);
-    }
   }
 }
 

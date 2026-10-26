@@ -4,14 +4,16 @@
 // Aggiungi testo) the fill layer (taps, the writer, what the user wrote) and the pictures the user
 // added, and in Compila e firma its form fields too; with no tool on (browse), its form fields
 // alone; in Modifica with Bianchetto or Oscura (release 5) the layer that marks an area to white
-// out or redact (RedactLayer) instead of the lines and images. Form fields never show in Modifica.
+// out or redact (RedactLayer) instead of the lines and images, and with Forme (release 6) the
+// shapes the app drew, with what draws new ones (ShapeLayer), instead of them too. Form fields
+// never show in Modifica.
 // Cerca's highlights (SearchLayer) go on every near page with hits, whatever the tool. Overlays
 // are mounted for near pages, and also for a page far away that holds what is open or focused
-// (the area waiting to be applied too), what the app asks to focus (focusRequest), or, for its
-// form fields, the next or previous page with fields from the field focused last (so Tab and
-// Shift+Tab reach them: fields.ts). Switching Modifica's sub-tool swaps the layers: a box
-// that had the keyboard focus hands it to the same picture's box in the new layer when there is
-// one, else to the scroller, never to <body> (ui/actions.ts, focusAfterLayers).
+// (the area waiting to be applied and the selected shape too), what the app asks to focus
+// (focusRequest), or, for its form fields, the next or previous page with fields from the field
+// focused last (so Tab and Shift+Tab reach them: fields.ts). Switching Modifica's sub-tool swaps
+// the layers: a box that had the keyboard focus hands it to the same picture's box in the new
+// layer when there is one, else to the scroller, never to <body> (ui/actions.ts, focusAfterLayers).
 //
 // Rendering: at zoom × devicePixelRatio (capped in pixels on touch devices), through the shared
 // render queue. On a zoom change the old bitmap stays, stretched by CSS, and the new one is
@@ -20,10 +22,11 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t } from "../i18n";
 import {
-  devicePixelRatio, editingLine, editingStopped, editTool, focusedField, focusRequest, openWriter, selectedImage, tool,
-  type EditTool, type Tool,
+  devicePixelRatio, editingLine, editingStopped, editTool, focusedField, focusRequest, openWriter, selectedImage,
+  selectedShape, tool, type EditTool, type Tool,
 } from "../state";
 import { pendingRedact, redactMode } from "../ui/redact/pending";
+import { shapesMode } from "../ui/shapes/actions";
 import { hitsByPage } from "../ui/search/runner";
 import { nextToFieldFocus, pageHasFields } from "./fields";
 import { everyPageAction, FillLayer } from "./FillLayer";
@@ -33,6 +36,7 @@ import { LineLayer } from "./LineLayer";
 import type { PageModel } from "./model";
 import { RedactLayer } from "./RedactLayer";
 import { SearchLayer } from "./SearchLayer";
+import { ShapeLayer } from "./ShapeLayer";
 import type { RenderQueue } from "./renderQueue";
 import type { PageVisibility } from "./visibility";
 
@@ -124,6 +128,8 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
   // Bianchetto and Oscura: near pages, and the page with the area waiting to be applied.
   const redact = redactMode.value;
   const redactOverlay = redact !== null && (near || pendingRedact.value?.page === page);
+  // Forme: near pages, and the page with the selected shape.
+  const shapesOverlay = shapesMode.value && (near || here(selectedShape.value));
   const searchOverlay = near && hitsByPage.value.has(page.index);
 
   useEffect(() => {
@@ -208,6 +214,7 @@ export function PageView({ page, left, top, width, height, zoom, queue, vis }: P
       )}
       {searchOverlay && <SearchLayer key="search" page={page} zoom={zoom} />}
       {redactOverlay && <RedactLayer key="redact" page={page} zoom={zoom} mode={redact} />}
+      {shapesOverlay && <ShapeLayer key="shapes" page={page} zoom={zoom} canvasRev={shownRev} />}
     </div>
   );
 }

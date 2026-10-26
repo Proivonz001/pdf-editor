@@ -1,28 +1,28 @@
 // Phone bottom sheets, driven by the `sheet` signal: "pages" (full screen, "Organizza": the page
 // organizer of ui/organizer, its thumbnail grid; picking a page outside "Seleziona" closes it),
-// "more" (open another PDF, share, download with options, details, zoom, the
-// signatures saved on this device when there are any, "Install the app" where it can be installed
-// and is not yet, language, update, close document, then the privacy note and the source link)
-// and "details" (what the desktop's details panel says, live,
-// without the shortcuts). On phones they stand in for the desktop's thumbnails panel, zoom
+// "more" (open another PDF, share, download with options, details, zoom, "Elimina pagina N" for
+// the page shown, the signatures saved on this device when there are any, "Install the app" where
+// it can be installed and is not yet, language, update, close document, then the privacy note and
+// the source link) and "details" (what the desktop's details panel says, live, without the
+// shortcuts). On phones they stand in for the desktop's thumbnails panel, zoom
 // controls, More menu, the chevron of the Download button and the details panel. Styled by
 // styles/phone.css (.sheet-more), styles/organizer.css (.sheet-organize) and styles/details.css
 // (.sheet-details).
 //
-// Open, Share, Download with options, Saved signatures, Install the app and Close document close
-// the sheet first: they lead somewhere else (the file picker, the share sheet, the download
-// options sheet, the signature chooser, the install steps or the browser's own install dialog,
-// the home page). Details swaps the More sheet for the details sheet, whose
-// Edit and Fill & sign buttons close it before starting their tool. Zoom, language and update
-// keep the More sheet open, so their effect shows behind it (an update that needs a
-// confirmation asks above it).
+// Open, Share, Download with options, Elimina pagina, Saved signatures, Install the app and Close
+// document close the sheet first: they lead somewhere else (the file picker, the share sheet, the
+// download options sheet, the page gone with a toast whose "Annulla" must be in reach, the
+// signature chooser, the install steps or the browser's own install dialog, the home page).
+// Details swaps the More sheet for the details sheet, whose Edit and Fill & sign buttons close it
+// before starting their tool. Zoom, language and update keep the More sheet open, so their effect
+// shows behind it (an update that needs a confirmation asks above it).
 import type { ComponentChildren } from "preact";
 import { useEffect, useId } from "preact/hooks";
 import { LOCALE_NAMES, otherLocale, pageCount, t, toggleLocale } from "../i18n";
 import { SOURCE_URL } from "../links";
 import { canOfferInstall } from "../platform/install";
 import { updateInstalled, updateReady } from "../platform/pwa";
-import { fitMode, savedSignatures, sheet, zoom } from "../state";
+import { doc, fitMode, savedSignatures, sheet, zoom } from "../state";
 import { MAX_ZOOM, MIN_ZOOM } from "../viewer/layout";
 import type { OpenDoc } from "../viewer/model";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
@@ -32,9 +32,10 @@ import { openFilePicker } from "./filePicker";
 import { openSavedSignatures, savedKind } from "./fill/FillBar";
 import {
   IconClose, IconCode, IconDetails, IconDownload, IconFitWidth, IconGlobe, IconInstall, IconMinus, IconOpen, IconPlus,
-  IconShare, IconShield, IconSignature, IconUpdate, IconZoom,
+  IconShare, IconShield, IconSignature, IconTrash, IconUpdate, IconZoom,
 } from "./icons";
 import { canSharePdf, shortcuts } from "./media";
+import { deletePages, deleteShown } from "./organizer/commands";
 import { SheetOrganizer } from "./organizer/Organizer";
 import { Sheet } from "./Sheet";
 
@@ -62,14 +63,45 @@ function Row(p: {
   accent?: boolean;
   /** It opens a dialog of its own (aria-haspopup). */
   opensDialog?: boolean;
+  /**
+   * It does nothing now, for this reason: shown under its label (a toast would be behind the
+   * modal sheet) and its description; it keeps the focus (aria-disabled).
+   */
+  reason?: string;
   onClick: (e: MouseEvent) => void;
 }) {
+  const reasonId = useId();
   return (
     <button type="button" class={p.accent ? "more-row is-accent" : "more-row"} title={p.tip}
-      aria-haspopup={p.opensDialog ? "dialog" : undefined} onClick={p.onClick}>
+      aria-haspopup={p.opensDialog ? "dialog" : undefined} aria-label={p.reason ? p.label : undefined}
+      aria-disabled={p.reason ? true : undefined} aria-describedby={p.reason ? reasonId : undefined}
+      onClick={(e) => { if (!p.reason) p.onClick(e); }}>
       {p.icon}
-      <span class="more-label" lang={p.lang}>{p.label}</span>
+      <span class="more-label" lang={p.lang}>
+        {p.label}
+        {p.reason && <span id={reasonId} class="more-reason">{p.reason}</span>}
+      </span>
     </button>
+  );
+}
+
+/** "Elimina pagina N", the page shown: the sheet closes first, so the delete's toast and its "Annulla" are in reach. */
+function DeletePageRow() {
+  const d = doc.value;
+  if (!d) return null;
+  const del = deleteShown(d);
+  return (
+    <div class="more-section">
+      <Row
+        icon={<IconTrash />}
+        label={del.label}
+        reason={del.reason}
+        onClick={(e) => {
+          leaveSheet(e);
+          void deletePages([del.page]);
+        }}
+      />
+    </div>
   );
 }
 
@@ -192,6 +224,7 @@ export function MoreActions() {
         />
       </div>
       <ZoomRow />
+      <DeletePageRow />
       <SavedSignaturesRow />
       <div class="more-section">
         {canOfferInstall.value && (

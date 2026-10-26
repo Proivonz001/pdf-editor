@@ -69,6 +69,11 @@
 // and the signatures counted again, as do its undo and redo. The search is stateless steps the
 // client drives (search.ts), over a cache of page texts that follows the history: a step's
 // changedPages leave it, a page operation's layout moves it, a new document empties it.
+//
+// Forme (release 6, ARCHITECTURE.md "Forme"): a shape drawn and a shape changed or deleted
+// (shapes.ts) are two more kinds of logged edit, plain data (the shape in page space as checked,
+// and its id), replayed like the others, each shape checked on its page again (onPage); the id a
+// new shape gets must be the logged one at every replay, as for a new line of text.
 import type * as MuPDF from "mupdf";
 import {
   captureGlyphs,
@@ -132,11 +137,14 @@ import {
 } from "./pages";
 import { checkPdfA, convertToPdfA, countSignatures, dropPdfaClaim, pdfaClaim } from "./pdfa";
 import {
-  MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_SOURCE_BYTES, MAX_TEXT_CHARS, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_TEXT_SIZE, passwordProblem,
+  MAX_ALT_CHARS, MAX_IMAGE_SIDE, MAX_PEN_POINTS, MAX_SHAPE_WIDTH, MAX_SOURCE_BYTES, MAX_TEXT_CHARS, MAX_TEXT_SIZE, MIN_IMAGE_SIDE, MIN_SHAPE_SIZE,
+  MIN_SHAPE_WIDTH, MIN_TEXT_SIZE, passwordProblem,
 } from "./protocol";
 import { RedactError, previewRedaction, redactAreas } from "./redact";
 import { MAX_REDACT_RECTS, clampAreas } from "./redactGeometry";
 import { normalizeQuery, readPageText, searchPageText, type PageText } from "./search";
+import { isShapeDrawable } from "./shapeGeometry";
+import { SHAPE_DASHES, SHAPE_KINDS, addShape as drawShape, listShapes, rewriteShape } from "./shapes";
 import type {
   AddImageResult,
   AddTextResult,
@@ -179,6 +187,9 @@ import type {
   SearchStep,
   SegmentSource,
   SessionExport,
+  Shape,
+  ShapeInfo,
+  ShapeResult,
   SourceResult,
   TextStyle,
 } from "./protocol";
@@ -316,7 +327,8 @@ export interface RenderPixels {
 }
 
 /** One applied edit, as replayed by undo. Plain data, so it can be stored ("Riprendi": exportSession). */
-export type LoggedEdit = TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit | PageOpEdit | RedactEdit;
+export type LoggedEdit =
+  | TextEdit | ImageEdit | FieldEdit | AddTextEdit | AddedTextEdit | AddImageEdit | MixedLineEdit | PageOpEdit | RedactEdit | AddShapeEdit | ShapeEdit;
 
 /** One whole line of text replaced (deleted when `replacement` is empty). */
 export interface TextEdit {
@@ -461,6 +473,26 @@ export interface RedactEdit {
 }
 
 /**
+ * A new shape (shapes.addShape): `shape` as checked (page space). `id` is the one it got (its
+ * block's /PEShape): a replay that gives another one no longer fits the log, since later edits of
+ * the shape name it.
+ */
+export interface AddShapeEdit {
+  kind: "addShape";
+  pageIndex: number;
+  shape: Shape;
+  id: number;
+}
+
+/** A shape the app drew (ShapeInfo.id) drawn again as `shape` (as checked), in place, or deleted (null): shapes.rewriteShape. */
+export interface ShapeEdit {
+  kind: "editShape";
+  pageIndex: number;
+  id: number;
+  shape: Shape | null;
+}
+
+/**
  * The pages an edit changes, ascending: what undo and redo report as changedPages. For a page
  * operation, the pages it turned or made, as indices of the pages after it (a move or a delete
  * changes how no page looks; HistoryState.layout says where the pages went).
@@ -480,6 +512,8 @@ export function pagesOf(e: LoggedEdit): number[] {
     case "addText":
     case "editAdded":
     case "mixed":
+    case "addShape":
+    case "editShape":
       return [e.pageIndex];
     default: {
       const unknown: never = e;
@@ -1538,6 +1572,54 @@ export class EngineSession {
     return { ...this.history(pagesOf(edit), this.formLayout(edit)), report };
   }
 
+  // ------------------------------------------------------------------ Forme (release 6)
+
+  /**
+   * Draws a new shape on the page (shapes.addShape): over everything else, in a marked block of its
+   * own, one edit. Checked as untrusted (shapeFrom, onPage), "bad-request" with nothing done: a
+   * kind, points, colour, width, dash or heads out of what Shape says, a point off the page (one a
+   * hair outside, as a pen stroke along the edge leaves, is brought onto it), a line or a box side
+   * shorter than MIN_SHAPE_SIZE. A page whose content cannot take an addition is "not-editable".
+   */
+  addShape(pageIndex: number, shape: Shape): ShapeResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const checked = this.onPage(doc, pageIndex, shapeFrom(shape));
+    const edit: AddShapeEdit = { kind: "addShape", pageIndex, shape: checked, id: 0 };
+    const r = this.commit(doc, edit, () => {
+      const out = drawShape(this.mupdf, doc, pageIndex, checked);
+      edit.id = out.id; // logged right after this: replays must give the shape the same id
+      return out;
+    }, "Could not draw the shape");
+    return { ...this.history([pageIndex]), pageIndex, id: r.id };
+  }
+
+  /** The page's shapes drawn by the app (ShapeInfo), in painting order, each with its id to edit it. */
+  shapes(pageIndex: number): ShapeInfo[] {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    return listShapes(this.mupdf, doc, pageIndex);
+  }
+
+  /**
+   * Draws shape `id` of the page (ShapeInfo.id) again as `shape`, in place (its id and its place in
+   * the painting order stay), or deletes it (null): one edit. `shape` is checked as addShape checks
+   * it; a shape the same as the one there (to 0.001) is a no-op (nothing logged, changedPages
+   * empty). Refused ("bad-request"): no such shape on the page.
+   */
+  editShape(pageIndex: number, id: number, shape: Shape | null): ShapeResult {
+    const doc = this.requireDoc();
+    this.checkPage(doc, pageIndex);
+    const current = Number.isInteger(id) ? listShapes(this.mupdf, doc, pageIndex).find((s) => s.id === id) : undefined;
+    if (!current) throw new SessionError(`No shape ${id} drawn by the app on page ${pageIndex + 1}`, "bad-request");
+    const checked = shape === null ? null : this.onPage(doc, pageIndex, shapeFrom(shape));
+    if (checked && sameShape(checked, current.shape)) return { ...this.history([]), pageIndex, id };
+    const edit: ShapeEdit = { kind: "editShape", pageIndex, id, shape: checked };
+    const failure = checked ? "Could not change the shape" : "Could not delete the shape";
+    const r = this.commit(doc, edit, () => rewriteShape(this.mupdf, doc, pageIndex, id, checked), failure);
+    return { ...this.history([pageIndex]), pageIndex, id: r.id };
+  }
+
   // ------------------------------------------------------------------ saving
 
   /**
@@ -1812,6 +1894,21 @@ export class EngineSession {
     return [p[0], p[1]];
   }
 
+  /**
+   * A shape (shapeFrom) on the page: every point within its bounds, one at most SHAPE_SLACK
+   * outside brought onto the edge (a pen stroke along it, a rounding), anything further refused;
+   * then its size checked (checkSize: bringing points in may shorten it). "bad-request".
+   */
+  private onPage(doc: MuPDF.PDFDocument, pageIndex: number, shape: Shape): Shape {
+    const [x0, y0, x1, y1] = this.boundsOf(doc, pageIndex);
+    const points = shape.points.map(([x, y]): [number, number] => {
+      if (!(x >= x0 - SHAPE_SLACK && x <= x1 + SHAPE_SLACK && y >= y0 - SHAPE_SLACK && y <= y1 + SHAPE_SLACK))
+        throw new SessionError("A point of the shape is off the page", "bad-request");
+      return [Math.min(x1, Math.max(x0, x)), Math.min(y1, Math.max(y0, y))];
+    });
+    return checkSize({ ...shape, points });
+  }
+
   /** Refuses ("bad-request") a text none of whose characters a font of the app can draw in `style`. */
   private checkDrawable(text: string, style: TextStyle) {
     const missing = missingChars(this.mupdf, text, style);
@@ -1939,6 +2036,15 @@ export class EngineSession {
         break;
       case "redact":
         this.applyRedact(doc, edit);
+        break;
+      case "addShape": {
+        // (on the page again, as drawn: a stored log is untrusted, and a point far off it could write a number PDF cannot read)
+        const { id } = drawShape(this.mupdf, doc, edit.pageIndex, this.onPage(doc, edit.pageIndex, edit.shape));
+        if (id !== edit.id) throw new Error(`The new shape on page ${edit.pageIndex + 1} got id ${id}, the log has ${edit.id}`);
+        break;
+      }
+      case "editShape":
+        rewriteShape(this.mupdf, doc, edit.pageIndex, edit.id, edit.shape && this.onPage(doc, edit.pageIndex, edit.shape));
         break;
       default: {
         const unknown: never = edit;
@@ -2497,6 +2603,8 @@ const copyPlan = (p: DecorationPlan): DecorationPlan => ({
   links: p.links.map((l) => ({ bounds: copyRect(l.bounds), uri: l.uri, range: [l.range[0], l.range[1]] })),
 });
 
+const copyShape = (s: Shape): Shape => ({ ...s, points: s.points.map(copyPoint), color: [s.color[0], s.color[1], s.color[2]] });
+
 /** A copy of a log entry, its matrices, points, styles, values and bytes included. */
 function copyEdit(e: LoggedEdit): LoggedEdit {
   switch (e.kind) {
@@ -2536,6 +2644,10 @@ function copyEdit(e: LoggedEdit): LoggedEdit {
     }
     case "redact":
       return { ...e, areas: e.areas.map((a) => ({ pageIndex: a.pageIndex, rects: a.rects.map(copyRect) })) };
+    case "addShape":
+      return { ...e, shape: copyShape(e.shape) };
+    case "editShape":
+      return { ...e, shape: e.shape && copyShape(e.shape) };
     case "pages":
       switch (e.op) {
         case "move":
@@ -3050,6 +3162,13 @@ class LogReader {
         });
         return { kind: "redact", mode: o.mode as RedactMode, areas };
       }
+      case "addShape":
+        return { kind: "addShape", pageIndex: pageIndex(), shape: checkSize(shapeFrom(o.shape)), id: this.index(o.id, "The shape's id") };
+      case "editShape":
+        return {
+          kind: "editShape", pageIndex: pageIndex(), id: this.index(o.id, "The shape's id"),
+          shape: o.shape === null ? null : checkSize(shapeFrom(o.shape)),
+        };
       default:
         return this.bad(`Unknown edit ${String(o.kind)}`);
     }
@@ -3516,6 +3635,64 @@ function styleFrom(s: unknown): TextStyle {
 function sameStyle(a: TextStyle, b: TextStyle): boolean {
   return a.family === b.family && a.bold === b.bold && a.italic === b.italic && Math.abs(a.size - b.size) < 0.001 &&
     a.color.every((v, k) => Math.abs(v - b.color[k]) < 0.001);
+}
+
+/** How far outside the page a shape's point may be and still be taken, brought onto the edge (points). */
+const SHAPE_SLACK = 1;
+
+/**
+ * A shape from the main thread or a stored log, checked as untrusted ("bad-request" otherwise), as
+ * Shape says: a kind, points of two finite numbers each (two; a pen 2 to MAX_PEN_POINTS), an sRGB
+ * colour of three numbers within 0..1, a width within MIN_SHAPE_WIDTH..MAX_SHAPE_WIDTH, a dash,
+ * heads 0, 1 or 2. Made plain: a pen or a highlight is solid, a highlight's width 0 (ignored),
+ * heads 0 but on a line. A copy: nothing of the caller's object is kept. Where the points are, and
+ * the size, are checked apart (onPage, checkSize).
+ */
+function shapeFrom(v: unknown): Shape {
+  const bad = (message: string): never => {
+    throw new SessionError(message, "bad-request");
+  };
+  const o = (v && typeof v === "object" ? v : bad("A shape is an object")) as Partial<Record<keyof Shape, unknown>>;
+  const kind = o.kind as Shape["kind"];
+  if (!SHAPE_KINDS.includes(kind)) bad(`Unknown shape ${String(o.kind)}`);
+  const pts = o.points;
+  const count = Array.isArray(pts) ? pts.length : -1;
+  if (kind === "pen" ? count < 2 || count > MAX_PEN_POINTS : count !== 2)
+    bad(kind === "pen" ? `A stroke has 2 to ${MAX_PEN_POINTS} points` : "A line or a box has two points");
+  const points = (pts as unknown[]).map((p): [number, number] => {
+    if (!Array.isArray(p) || p.length !== 2 || !p.every((x) => typeof x === "number" && Number.isFinite(x))) bad("A point is two finite numbers");
+    return [(p as number[])[0], (p as number[])[1]];
+  });
+  const c = o.color;
+  if (!Array.isArray(c) || c.length !== 3 || !c.every((x) => typeof x === "number" && x >= 0 && x <= 1)) bad("A shape's colour is three numbers from 0 to 1");
+  const color = c as [number, number, number];
+  const width = kind === "highlight" ? 0 : o.width;
+  if (typeof width !== "number" || (kind !== "highlight" && !(width >= MIN_SHAPE_WIDTH && width <= MAX_SHAPE_WIDTH)))
+    bad(`A stroke is ${MIN_SHAPE_WIDTH} to ${MAX_SHAPE_WIDTH} points wide`);
+  if (!SHAPE_DASHES.includes(o.dash as Shape["dash"])) bad(`Unknown line style ${String(o.dash)}`);
+  if (o.heads !== 0 && o.heads !== 1 && o.heads !== 2) bad("Arrow heads are 0, 1 or 2");
+  return {
+    kind, points, color: [color[0], color[1], color[2]], width: width as number,
+    dash: kind === "pen" || kind === "highlight" ? "solid" : (o.dash as Shape["dash"]),
+    heads: kind === "line" ? (o.heads as Shape["heads"]) : 0,
+  };
+}
+
+/**
+ * Refuses ("bad-request") a shape (shapeFrom) too small to see or grab: a line shorter than
+ * MIN_SHAPE_SIZE, a box with a side shorter, a pen stroke whose box is shorter both ways
+ * (shapeGeometry.isShapeDrawable, the rule the viewer applies before sending one). Returns it.
+ */
+function checkSize(s: Shape): Shape {
+  if (!isShapeDrawable(s)) throw new SessionError(`A shape is at least ${MIN_SHAPE_SIZE} pt long and wide`, "bad-request");
+  return s;
+}
+
+/** The same shape, as one reads back (its numbers to 0.001). */
+function sameShape(a: Shape, b: Shape): boolean {
+  const near = (x: number, y: number) => Math.abs(x - y) < 0.001;
+  return a.kind === b.kind && a.dash === b.dash && a.heads === b.heads && near(a.width, b.width) && a.color.every((v, k) => near(v, b.color[k])) &&
+    a.points.length === b.points.length && a.points.every((p, k) => near(p[0], b.points[k][0]) && near(p[1], b.points[k][1]));
 }
 
 /**

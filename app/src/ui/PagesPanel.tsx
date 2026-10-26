@@ -1,6 +1,6 @@
 // Desktop pages panel (left, next to the tool rail): a header with the page count, then the page
 // thumbnails in one column filling the rest, which are also the page organizer (select, drag,
-// "+" between pages), with the action bar for the selected pages under them (ui/organizer).
+// "+" between pages), with the action bar under them (the selected pages, or the page shown) (ui/organizer).
 // app.tsx mounts it while pagesPanelOpen; the rail's Pages button points at it through
 // aria-controls, hence the fixed id.
 import { pageCount, t } from "../i18n";

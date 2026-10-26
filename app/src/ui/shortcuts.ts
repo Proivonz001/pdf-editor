@@ -4,24 +4,25 @@
 // while a document is open), F3 and Ctrl+G (the next result; with Shift the previous one; they
 // open the search when it is closed; Enter and Esc are the search bar's own), and Escape, one step
 // at a time: in Modifica it closes the text writer of Aggiungi testo (nothing written), else
-// deselects the selected image, else drops the area waiting in Bianchetto or Oscura, else goes from
-// Aggiungi testo, Bianchetto or Oscura back to Cambia, else leaves Modifica (the line
-// editor, the writer's field and the image frame handle their own Escape first; the frame also its
-// arrows, with Shift or Alt, + / −, comma and full stop, and Delete); in Compila e firma it closes
-// the text writer (nothing written), else cancels the signature waiting to be placed (back to
-// Testo), else deselects the picture, else leaves Compila e firma. Where the writer writes text
-// (Compila e firma with Testo, Modifica with Aggiungi testo), Enter on the page region (the
-// viewer's scroll area, where the focus goes when a writer closes) opens a writer in the middle of
-// what shows, as "Put it in the middle" does (no pointer needed). Undo/redo are left to the field
-// while typing in one; nothing is handled while a dialog, a sheet or the scan flow is open (a
-// modal: the document under it is not to change unseen; the scan flow's Escape is its own).
+// deselects the selected image, else deselects the selected shape (Forme), else drops the area
+// waiting in Bianchetto or Oscura, else goes from Aggiungi testo, Forme, Bianchetto or Oscura back
+// to Cambia, else leaves Modifica (the line editor, the writer's field, the image frame and the
+// shape frame (viewer/ShapeLayer.tsx) handle their own Escape first; the frames also their arrows,
+// with Shift or Alt, and Delete, the image frame + / −, comma and full stop too); in Compila e
+// firma it closes the text writer (nothing written), else cancels the signature waiting to be
+// placed (back to Testo), else deselects the picture, else leaves Compila e firma. Where the
+// writer writes text (Compila e firma with Testo, Modifica with Aggiungi testo), Enter on the page
+// region (the viewer's scroll area, where the focus goes when a writer closes) opens a writer in
+// the middle of what shows, as "Put it in the middle" does (no pointer needed). Undo/redo are left
+// to the field while typing in one; nothing is handled while a dialog, a sheet or the scan flow is
+// open (a modal: the document under it is not to change unseen; the scan flow's Escape is its own).
 import {
   dialog, doc, editingLine, editMode, editTool, fillMode, openWriter, pendingPlacement, scanFlow, selectedImage,
-  sheet, writerKind, writerOn,
+  selectedShape, sheet, writerKind, writerOn,
 } from "../state";
 import { fitWidth, zoomIn, zoomOut } from "../viewer/zoom";
 import {
-  cancelPlacement, cancelWriter, download, placeAtCentre, redo, selectImage, setEditTool, setTool, undo,
+  cancelPlacement, cancelWriter, deselectShape, download, placeAtCentre, redo, selectImage, setEditTool, setTool, undo,
 } from "./actions";
 import { openFilePicker } from "./filePicker";
 import { viewerScroller } from "./focus";
@@ -41,6 +42,7 @@ function escapeStep(): boolean {
     if (editingLine.peek()) return false; // the line editor's own
     if (openWriter.peek()) cancelWriter(); // as in Compila e firma: from the writer's context bar
     else if (selected) void selectImage(selected.pageIndex, null);
+    else if (selectedShape.peek()) void deselectShape();
     else if (editTool.peek() !== "change") {
       if (!cancelPendingRedact()) void setEditTool("change"); // Bianchetto and Oscura: the waiting area first
     }

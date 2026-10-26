@@ -7,7 +7,7 @@
 // page changed meanwhile, a refusal), "Oscura tutti i risultati…" (its review's texts, the hits'
 // areas by page, one edit (several, all undone by Annulla, for a page with more rects than one
 // takes), the toast with Annulla, a refusal naming its page, more hits than Cerca shows, Cerca run
-// again and what is left), Modifica's bar with five sub-tools (short labels on the phone strip,
+// again and what is left), Modifica's bar with six sub-tools (short labels on the phone strip,
 // the hints, the banner note, "Metti al centro", 44 px targets on touch), and the download named
 // "-oscurato" with its toast, also after Riprendi, and named by the history the bytes come from.
 // RU7 calls the layer and its box as functions (hooks mocked): what they say and where the focus goes.
@@ -798,21 +798,21 @@ describe("RU6 Modifica's bar and the download", () => {
   }
   const ofType = (node: any, type: unknown) => nodes(node).filter((n) => n.type === type);
 
-  it("five sub-tools, Bianchetto and Oscura toggles after Aggiungi immagine; short labels on the phone strip", async () => {
+  it("six sub-tools, Bianchetto and Oscura toggles after Forme; short labels on the phone strip", async () => {
     const d = await inMode("bar.pdf", "redact");
     const items = edit.editToolItems(state.editTool.value, false);
     expect(items.map((x) => [x.id, x.pressed])).toEqual([
-      ["change", false], ["addText", false], ["addImage", undefined], ["whiteout", false], ["redact", true],
+      ["change", false], ["addText", false], ["addImage", undefined], ["shapes", false], ["whiteout", false], ["redact", true],
     ]);
-    expect(items.slice(3).map((x) => [x.label, x.tip])).toEqual([
+    expect(items.slice(4).map((x) => [x.label, x.tip])).toEqual([
       ["White-out", "Remove text and drawings from an area and leave it white"],
       ["Redact", "Permanently remove text, drawings and images from an area: a black box stays"],
     ]);
     i18n.setLocale("it");
-    expect(edit.EditStrip().props.items.map((x: any) => x.label)).toEqual(["Cambia", "Testo", "Immagine", "Bianchetto", "Oscura"]);
-    expect(edit.editToolItems("change", false).map((x) => x.label)).toEqual(["Cambia", "Aggiungi testo", "Aggiungi immagine", "Bianchetto", "Oscura"]);
+    expect(edit.EditStrip().props.items.map((x: any) => x.label)).toEqual(["Cambia", "Testo", "Immagine", "Forme", "Bianchetto", "Oscura"]);
+    expect(edit.editToolItems("change", false).map((x) => x.label)).toEqual(["Cambia", "Aggiungi testo", "Aggiungi immagine", "Forme", "Bianchetto", "Oscura"]);
     i18n.setLocale("en");
-    items[3].onChoose();
+    items[4].onChoose();
     await settle();
     expect(state.editTool.value).toBe("whiteout");
 
@@ -839,13 +839,10 @@ describe("RU6 Modifica's bar and the download", () => {
     expect(i18n.t("details.redactLimits")).toMatch(/font incorporati.*«Riprendi da dove eri» tiene su questo dispositivo finché non chiudi il documento/);
   });
 
-  it("touch: Modifica's icon-only sub-tools stay 44 px wide; a thin box's corner targets are 44 px", () => {
+  // Modifica's icon-only sub-tools keep 44 px on touch: shell.css, checked in shapes-ui.test.ts SU1.
+  it("touch: a thin box's corner targets are 44 px", () => {
     const css = readFileSync(new URL("../src/styles/redact.css", import.meta.url), "utf8")
       .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\s+/g, " ");
-    const narrow = css.indexOf("@container tool-banner (max-width: 899.98px) { .edit-banner.is-edit .sub-tools.is-banner .sub-tool { width: 32px;");
-    const wide = css.indexOf("@media (pointer: coarse) { @container tool-banner (max-width: 899.98px) { .edit-banner.is-edit .sub-tools.is-banner .sub-tool { width: var(--tap); } } }");
-    expect(narrow).toBeGreaterThanOrEqual(0);
-    expect(wide).toBeGreaterThan(narrow); // the same selector later wins
     // The corner targets: 44 × 44, `--reach-*` inside the box (RedactLayer), the rest outside.
     const at = css.indexOf("@media (pointer: coarse) { .redact-box { cursor: default; }");
     const coarse = css.slice(at, css.indexOf("@", at + 1));

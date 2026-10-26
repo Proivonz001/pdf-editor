@@ -5,8 +5,9 @@
 // shortcuts there, and its buttons that start a tool close the sheet first. It follows what the
 // user is doing:
 // - browsing: facts about the document (file, pages, size of the current page, PDF/A format,
-//   protection, digital signature, form fields, edits and whether they were downloaded), how to
-//   start editing (changing, moving, adding text and images) or filling in, and the privacy note;
+//   protection, digital signature, form fields, edits and whether they were downloaded; where
+//   pages are deleted, rotated and moved: Pagine), how to start editing (changing, moving,
+//   adding text and images) or filling in, and the privacy note;
 // - Modifica with Cambia, nothing open: the three steps, Aggiungi testo and Aggiungi immagine,
 //   the legend of the line and image marks, the shortcuts;
 // - Modifica with a line open: that line's text, font, size, style and colour, what follows its
@@ -18,6 +19,8 @@
 //   picture the user added as above, or else short steps for writing; the shortcuts;
 // - Modifica with Bianchetto or Oscura: how to mark an area and apply it, what each one removes and
 //   what cannot be guaranteed (release 5); the box's shortcuts;
+// - Modifica with Forme (release 6): how to draw the kind chosen, what each kind does, that shapes
+//   become part of the page and hide nothing (Oscura removes); the selected shape's keys;
 // - Fill mode, nothing open: its steps, the legend of the field and text marks, the shortcuts;
 //   with a writer open: its size and colour; with a picture it added selected: as in Modifica;
 // - a form field with the focus (in Fill mode or browsing, D2): its label, type, whether it is
@@ -29,7 +32,7 @@ import type { DocInfo, FieldWidget, ImageInfo, LineDecorations, LineInfo } from 
 import { formatFontSize, formatMm, t } from "../i18n";
 import {
   currentPage, dirty, editingDecorations, editingLine, editingStopped, editTool, focusedField, history, INK, openWriter,
-  pendingPlacement, selectedImage, tool, writerOn, type InkColor, type OpenWriter, type SelectedImage,
+  pendingPlacement, selectedImage, selectedShape, tool, writerOn, type InkColor, type OpenWriter, type SelectedImage,
 } from "../state";
 import { fontDisplayName, isSubsetFont } from "../viewer/fontName";
 import { ppi, rotationDeg, sides } from "../viewer/imageGeometry";
@@ -37,6 +40,7 @@ import type { OpenDoc } from "../viewer/model";
 import {
   decorationNames, decorationReasonText, distinctLeft, listText, lockReasonText, setTool, upperFirst,
 } from "./actions";
+import { editHint, SHAPE_TOOL_KINDS } from "./EditBar";
 import { fillableFields, formCountText } from "./fill/FillBar";
 import { rescueFocus, viewerScroller } from "./focus";
 import { IconCheck, IconEditText, IconShield, IconSign } from "./icons";
@@ -157,6 +161,7 @@ function DocumentInfo({ doc, leaveSheet }: { doc: OpenDoc; leaveSheet?: LeaveShe
             )}
           </Row>
         </dl>
+        {!stopped && <p class="dp-note">{t("details.pagesHowTo")}</p>}
       </Section>
       <div class="dp-section">
         {stopped ? (
@@ -280,6 +285,33 @@ function RedactSteps({ mode }: { mode: "whiteout" | "redact" }) {
       <Steps steps={steps} />
       <p class="dp-note">{t(mode === "redact" ? "details.redactWhat" : "details.whiteoutWhat")}</p>
       <p class="dp-note">{t("details.redactLimits")}</p>
+    </Section>
+  );
+}
+
+/**
+ * Modifica with Forme: the steps (the second is the banner's hint for the kind chosen: the pen and
+ * the highlighter are drawn their own way), what each kind draws, and what shapes are not: things
+ * a reader can move, or a way to hide text.
+ */
+function ShapeSteps() {
+  const touch = isCoarse.value;
+  const steps = [
+    t("details.shapesStep1"),
+    editHint("shapes", touch),
+    t(touch ? "details.shapesStep3Touch" : "details.shapesStep3"),
+    t("details.step3"),
+  ];
+  return (
+    <Section title={t("edit.shapes")}>
+      <Steps steps={steps} />
+      <dl class="dp-list">
+        {SHAPE_TOOL_KINDS.map(({ kind }) => (
+          <Row key={kind} label={t(`edit.shapeKind.${kind}`)}>{t(`details.shapeKind.${kind}`)}</Row>
+        ))}
+      </dl>
+      <p class="dp-note">{t("details.shapesPage")}</p>
+      <p class="dp-note">{t("details.shapesHide")}</p>
     </Section>
   );
 }
@@ -608,6 +640,20 @@ export function redactShortcuts(): [key: string, action: string][] {
 }
 
 /**
+ * The keys of the selected shape's frame (viewer/ShapeLayer.tsx); Esc deselects it, or with none
+ * selected goes back to Cambia (ui/shortcuts.ts). Alt is Option (⌥) on a Mac keyboard.
+ */
+export function shapeShortcuts(selected: boolean): [key: string, action: string][] {
+  return [
+    ["←↑→↓", t("shortcut.moveShape")],
+    ["Shift + ←↑→↓", t("shortcut.nudgeFar")],
+    [`${isMac ? "⌥" : "Alt"} + ←↑→↓`, t("shortcut.stretchShape")],
+    [t("key.delete"), t("shortcut.deleteImage")],
+    [t("key.esc"), t(selected ? "shortcut.deselect" : "shortcut.backToChange")],
+  ];
+}
+
+/**
  * Modifica with Aggiungi testo, no writer open: the writer's Enter and Shift+Enter (Enter on the
  * page region opens one in the middle of what shows), and Esc goes back to Cambia. No Tab:
  * Modifica has no form fields. With the writer open, its keys are Fill mode's (fillShortcuts).
@@ -620,13 +666,16 @@ export function addTextShortcuts(): [key: string, action: string][] {
   ];
 }
 
-type ShortcutFocus = "edit" | "line" | "image" | "addText" | "redact" | "fill" | "writer" | "pending" | "field";
+type ShortcutFocus =
+  | "edit" | "line" | "image" | "addText" | "redact" | "shapes" | "shape" | "fill" | "writer" | "pending" | "field";
 
 function shortcutRows(focus: ShortcutFocus): [key: string, action: string][] {
   switch (focus) {
     case "image": return imageShortcuts();
     case "addText": return addTextShortcuts();
     case "redact": return redactShortcuts();
+    case "shapes": return shapeShortcuts(false);
+    case "shape": return shapeShortcuts(true);
     case "fill": return fillShortcuts("idle");
     case "writer": return fillShortcuts("writer");
     case "pending": return fillShortcuts("pending");
@@ -676,7 +725,7 @@ interface ToolDetailsProps {
 /**
  * Modifica. With Cambia: the open line, else the selected image, else the steps. With Aggiungi
  * testo: the open writer, else the selected picture the user added, else the steps for writing.
- * With Bianchetto or Oscura: their steps.
+ * With Bianchetto or Oscura: their steps. With Forme: its steps, and the frame's keys.
  */
 function EditDetails({ line, image, selected, keys }: ToolDetailsProps & { line: LineInfo | null }) {
   const sub = editTool.value;
@@ -685,6 +734,14 @@ function EditDetails({ line, image, selected, keys }: ToolDetailsProps & { line:
       <>
         <RedactSteps mode={sub} />
         {keys && <Shortcuts focus="redact" />}
+      </>
+    );
+  }
+  if (sub === "shapes") {
+    return (
+      <>
+        <ShapeSteps />
+        {keys && <Shortcuts focus={selectedShape.value ? "shape" : "shapes"} />}
       </>
     );
   }

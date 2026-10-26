@@ -1,8 +1,8 @@
 // What the buttons, shortcuts, the line editor, the image frame and the fill layer do: open,
-// close, the tools (Modifica with its sub-tools Cambia and Aggiungi testo, and its Aggiungi
-// immagine; Compila e firma), edit a line (and say what its underline, link or background did),
-// select, move, delete or replace an image, add a picture, write text anywhere (Compila e firma,
-// and Modifica with Aggiungi testo), fill form fields, place signatures and initials (on every
+// close, the tools (Modifica with its sub-tools Cambia, Aggiungi testo, Forme with its kind,
+// Bianchetto and Oscura, and its Aggiungi immagine; Compila e firma), edit a line (and say what
+// its underline, link or background did), select, move, delete or replace an image, add a
+// picture, write text anywhere (Compila e firma, and Modifica with Aggiungi testo), fill form fields, place signatures and initials (on every
 // page too; with a tap, or in the middle from the keyboard), keep signatures on the device and
 // say when that fails, undo/redo, download (one tap, or with options: PDF/A, password; asking
 // first about empty required fields; never leaving an empty file where the save failed; the
@@ -45,10 +45,10 @@ import {
   editingLine, editingStopped, editMode, editTool, engine, engineStatus, fillMode, fillTool, fitMode, flushEditor,
   focusedField, focusRequest, hasUnsavedWork, history, imageEditsPending, INK, initialsSource, isApplied, lastEditId,
   markSaved, opening, openWriter, pendingPlacement, recordHistory, resetHistory, resetImageEdits, saveKey, selectedImage,
-  sessionSignatures, sheet, showDialog, showToast, startHistory, stepAsked, stepChangesPages, stepsAheadChangePages, tool,
-  typingField, writerKind, writerOn, writerStyle, zoom,
+  selectedShape, sessionSignatures, shapeKind, sheet, showDialog, showToast, startHistory, stepAsked, stepChangesPages,
+  stepsAheadChangePages, tool, typingField, writerKind, writerOn, writerStyle, zoom,
   type BusyKind, type DialogState, type EditTool, type FillTool, type InkColor, type OpenWriter, type SavePurpose,
-  type Signature, type ToastAction, type Tool,
+  type ShapeToolKind, type Signature, type ToastAction, type Tool,
 } from "../state";
 import { lastFieldFocus } from "../viewer/fields";
 import { releaseSprite } from "../viewer/images";
@@ -169,9 +169,11 @@ function stopEditing() {
 let writerAsks = 0;
 
 /**
- * Close what is open on the pages: the line editor, the image selection, the text writer (and one
- * still on its way), a signature waiting to be placed, the focused field. Nothing is written
- * (flushEditor first for that). Firma and Sigla, without their signature, go back to Testo.
+ * Close what is open on the pages: the line editor, the image selection, the selected shape
+ * (Forme), the text writer (and one still on its way), a signature waiting to be placed, the
+ * focused field. Nothing is written (flushEditor first for that: the shape frame registers its
+ * keyboard moves still waiting, as the image frame does). Firma and Sigla, without their
+ * signature, go back to Testo.
  * `forStep`: for an undo or redo about to run, which may change the pages' indices. A new text's
  * writer, opened since the step was asked for (a tap while it waited its turn), stays open with
  * what is typed: it has no index to go stale. One still on its way, asked for after the step,
@@ -182,6 +184,7 @@ function clearOpenWork(forStep = false) {
   batch(() => {
     editingLine.value = null;
     selectedImage.value = null;
+    selectedShape.value = null;
     if (!forStep || openWriter.peek()?.editing !== null) openWriter.value = null;
     pendingPlacement.value = null;
     focusedField.value = null;
@@ -624,10 +627,10 @@ export function setEditMode(on: boolean): Promise<void> {
 }
 
 /**
- * Modifica's sub-tool: Cambia (a tap opens a line to change it, or selects an image to move it)
- * or Aggiungi testo (a tap opens the text writer, as Testo in Compila e firma). What the line
- * editor or the writer holds is written first (or an image's keyboard move), then what is open
- * closes. Refused without a document, outside Modifica or once editing has stopped; nothing when
+ * Modifica's sub-tool: Cambia (a tap opens a line to change it, or selects an image to move it),
+ * Aggiungi testo (a tap opens the text writer, as Testo in Compila e firma), Forme, Bianchetto or
+ * Oscura. What the line editor or the writer holds is written first (or an image's or a shape's
+ * keyboard move), then what is open closes (the selected shape too). Refused without a document, outside Modifica or once editing has stopped; nothing when
  * that sub-tool is on already.
  */
 export async function setEditTool(next: EditTool): Promise<void> {
@@ -652,6 +655,26 @@ function switchEditTool(next: EditTool, before: Element | null) {
     editTool.value = next;
   });
   if (before && before !== document.body) rescueFocus(focusAfterLayers(before));
+}
+
+/**
+ * Forme (release 6): deselect the selected shape, after writing its keyboard move still waiting
+ * (flushEditor), as selectImage(…, null) does for images. A shape selected meanwhile stays selected.
+ */
+export async function deselectShape(): Promise<void> {
+  const selected = selectedShape.peek();
+  if (!selected) return;
+  await flushEditor();
+  if (selectedShape.peek() === selected) selectedShape.value = null;
+}
+
+/**
+ * Forme: what the next drag or tap draws (the banner's kind picker), at once. The selected shape
+ * is deselected (deselectShape), so the choice is what comes next.
+ */
+export async function setShapeKind(kind: ShapeToolKind): Promise<void> {
+  shapeKind.value = kind;
+  await deselectShape();
 }
 
 /**

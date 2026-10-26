@@ -4,7 +4,7 @@
 //   Share, Download PDF (a split button: the one-tap download, and a chevron that opens the
 //   download options), Update and a "More" menu (language, "Install the app" where it can be
 //   installed and is not yet, what the bar has no room for, the signatures saved on this device
-//   when there are any, source code, close document);
+//   when there are any, "Elimina pagina N" for the page shown, source code, close document);
 // - phone with a document: Back (closes it), the file name over "Page n of m · Edited", Cerca's
 //   magnifier, Undo, Redo and Download. Zoom, share, the download options, language, update and
 //   open live in the phone "More" sheet (PhoneSheets), editing in the tab bar. While the search is
@@ -37,11 +37,12 @@ import { openFilePicker } from "./filePicker";
 import { openSavedSignatures, savedKind } from "./fill/FillBar";
 import {
   IconBack, IconChevronDown, IconClose, IconCode, IconDownload, IconFitWidth, IconGlobe, IconInstall, IconMore,
-  IconOpen, IconRedo, IconShare, IconSignature, IconUndo, IconUpdate, IconZoomIn, IconZoomOut,
+  IconOpen, IconRedo, IconShare, IconSignature, IconTrash, IconUndo, IconUpdate, IconZoomIn, IconZoomOut,
 } from "./icons";
 import { Logo } from "./Logo";
 import { canSharePdf, hasZoomRoom, isCoarse, isNarrow, isRoomy, isWide, shortcuts } from "./media";
 import { MenuButton, type MenuItem } from "./Menu";
+import { deletePages, deleteShown } from "./organizer/commands";
 import { PhoneSearch, SearchKeeper, SearchToggle } from "./search/SearchBar";
 import { searchOpen } from "./search/state";
 
@@ -248,7 +249,9 @@ export function TopBar() {
       onSelect: () => void openSavedSignatures(savedKind(saved)),
     });
   }
+  const del = deleteShown(d);
   items.push(
+    { key: "delete-page", label: del.label, icon: <IconTrash />, reason: del.reason, onSelect: () => void deletePages([del.page]) },
     {
       key: "source", label: t("toolbar.source"), icon: <IconCode />,
       onSelect: () => void window.open(SOURCE_URL, "_blank", "noopener,noreferrer"),

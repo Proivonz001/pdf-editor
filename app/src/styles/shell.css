@@ -785,9 +785,10 @@
    Done on the right, so none of them moves when the hint changes; under them the hint and, in
    Fill mode, the form's field count with "Next empty field" and the form's notes. When the bar
    is narrow the sub-tools show their icons only (each keeps its name, on the button, and its
-   tooltip): below 900 px of bar in Fill mode (six of them), below 640 px in Edit mode (three);
-   below 620 px Fill mode's name goes too. On phones the bar holds only the hint, the count and
-   the buttons (phone.css). */
+   tooltip): below 900 px of bar in Fill mode (six of them), below 1000 px in Edit mode (six,
+   with longer names: Aggiungi immagine); below 620 px Fill mode's name goes too. With Forme the
+   second row starts with its kind picker (shapes.css). On phones the bar holds only the hint,
+   the count and the buttons, and Forme's picker on a row of its own (phone.css). */
 
 .edit-banner.is-tools {
   container: tool-banner / inline-size;
@@ -958,7 +959,7 @@
   height: 18px;
 }
 
-/* Icons only: Fill mode's six sub-tools need more room than Edit mode's three. */
+/* Icons only: Fill mode's six sub-tools, and Edit mode's six with their longer names. */
 @container tool-banner (max-width: 899.98px) {
   .edit-banner.is-fill .sub-tools.is-banner .sub-tool {
     width: 32px;
@@ -976,7 +977,7 @@
   }
 }
 
-@container tool-banner (max-width: 639.98px) {
+@container tool-banner (max-width: 999.98px) {
   .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
     width: 32px;
     padding: 0;
@@ -1017,7 +1018,7 @@
     }
   }
 
-  @container tool-banner (max-width: 639.98px) {
+  @container tool-banner (max-width: 999.98px) {
     .edit-banner.is-edit .sub-tools.is-banner .sub-tool {
       width: var(--tap);
     }

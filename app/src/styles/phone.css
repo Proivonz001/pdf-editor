@@ -214,6 +214,20 @@
   outline-offset: -2px; /* inside the strip, which clips what stands out */
 }
 
+/* Modifica's six sub-tools (Forme, release 6) on the narrowest phones: each keeps its 44 px
+   target with less room around its label, so all six fit at 320 px without scrolling. */
+@media (max-width: 359.98px) {
+  .sub-tools.is-strip {
+    gap: 1px;
+    padding: 2px;
+  }
+
+  .sub-tools.is-strip .sub-tool {
+    min-width: var(--tap);
+    padding: 0 2px;
+  }
+}
+
 /* The toasts sit above the strip too (overlays.css puts them above the tab bar). */
 .app[data-layout="phone"].has-doc:has(.tool-strip) .toast-stack {
   bottom: calc(var(--tab-h) + 48px + env(safe-area-inset-bottom) + 12px);
@@ -235,6 +249,14 @@
 
 .app[data-layout="phone"] .tool-banner-actions {
   gap: 4px;
+}
+
+/* Forme's kind picker (release 6, shapes.css): a row of its own under the hint and the buttons,
+   the six kinds spread over the whole width. */
+.app[data-layout="phone"] .shape-kinds {
+  flex-basis: 100%;
+  justify-content: space-between;
+  margin: 0 0 6px;
 }
 
 .app[data-layout="phone"] .fill-banner-form {

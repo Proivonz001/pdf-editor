@@ -121,7 +121,8 @@
 //
 // Release 5: the boxes Bianchetto and Oscura draw (redact.ts, blocks marked /PERedact) are never a
 // line's decoration: a thin one at the foot of a line would otherwise read as its underline, and
-// follow the next edit of that line (redactBoxes).
+// follow the next edit of that line (appBoxes). Release 6: nor are the shapes the app draws
+// (shapes.ts, blocks marked /PEShape): a line drawn under a word is the user's, not its underline.
 //
 // Links do not depend on the paths: on a page too complex for its shapes they still follow. A
 // link is found again by its rect and its URI as MuPDF reads it (one with no scheme, such as
@@ -603,39 +604,52 @@ function readContent(pageObj: Obj): Content {
 }
 
 /**
- * Release 5: the page-space bounds of the boxes Bianchetto and Oscura drew (redact.ts: a block
- * /Artifact <</PERedact id>> BDC q g ... f Q EMC appended from the page's initial state, its
- * path made of m and l), which the device pass paints as one fill each.
+ * The page-space bounds of each path the app's own blocks paint, appended from the page's initial
+ * state: release 5's Bianchetto and Oscura boxes (redact.ts: /Artifact <</PERedact id>> BDC q g
+ * ... f Q EMC, one fill each) and release 6's shapes (shapes.ts: /Artifact <</PEShape id ...>>
+ * BDC, a stroke and a fill of heads, curves among them), control points included as the device
+ * pass counts them.
  */
-function redactBoxes(content: Content, T: Matrix): Rect[] {
+function appBoxes(content: Content, T: Matrix): Rect[] {
   const out: Rect[] = [];
   for (const bytes of content.bytes) {
-    if (!holdsRedactMark(bytes)) continue;
+    if (!holdsMark(bytes, REDACT_MARK) && !holdsMark(bytes, SHAPE_MARK)) continue;
     const s = latin1(bytes);
     let marks = 0, inside = 0;
     let points: Point[] = [];
+    const flush = () => {
+      if (points.length) out.push(pointBounds(points.map(([x, y]) => applyTo(T, x, y))));
+      points = [];
+    };
     for (const o of operations(s)) {
       if (o.op === "BDC" || o.op === "BMC") {
         marks++;
-        if (!inside && o.op === "BDC" && o.args[o.args.length - 1]?.dict?.PERedact !== undefined) inside = marks;
+        const d = o.op === "BDC" ? o.args[o.args.length - 1]?.dict : undefined;
+        if (!inside && d && (d.PERedact !== undefined || d.PEShape !== undefined)) inside = marks;
       } else if (o.op === "EMC") {
         if (inside && marks === inside) {
-          if (points.length) out.push(pointBounds(points.map(([x, y]) => applyTo(T, x, y))));
-          points = [];
+          flush();
           inside = 0;
         }
         if (marks > 0) marks--;
-      } else if (inside && (o.op === "m" || o.op === "l") && isNumeric(o.args, 2)) points.push([o.args[0].num!, o.args[1].num!]);
+      } else if (!inside) continue;
+      else if (o.op === "re" && isNumeric(o.args, 4)) {
+        const [x, y, w, h] = o.args.map((a) => a.num!);
+        points.push([x, y], [x + w, y + h]);
+      } else if (PATH.has(o.op) && o.args.length && o.args.length % 2 === 0 && isNumeric(o.args, o.args.length)) {
+        for (let k = 0; k < o.args.length; k += 2) points.push([o.args[k].num!, o.args[k + 1].num!]);
+      } else if (PAINT.has(o.op) || o.op === "n") flush();
     }
   }
   return out;
 }
 
 const REDACT_MARK = Array.from("PERedact", (c) => c.charCodeAt(0));
-/** Whether content holds the bytes "PERedact", searched as bytes: a long content is made a string only when it does. */
-function holdsRedactMark(bytes: Uint8Array): boolean {
-  for (let i = bytes.indexOf(REDACT_MARK[0]); i >= 0; i = bytes.indexOf(REDACT_MARK[0], i + 1))
-    if (REDACT_MARK.every((c, k) => bytes[i + k] === c)) return true;
+const SHAPE_MARK = Array.from("PEShape", (c) => c.charCodeAt(0));
+/** Whether content holds the bytes of `mark`, searched as bytes: a long content is made a string only when it does. */
+function holdsMark(bytes: Uint8Array, mark: number[]): boolean {
+  for (let i = bytes.indexOf(mark[0]); i >= 0; i = bytes.indexOf(mark[0], i + 1))
+    if (mark.every((c, k) => bytes[i + k] === c)) return true;
   return false;
 }
 
@@ -1030,9 +1044,10 @@ function findShapes(
   // as often as it is drawn: MuPDF runs it each time.
   if (countPaints(content.bytes, page.getObject().getInheritable("Resources"), 2 * MAX_PATHS) > 2 * MAX_PATHS) return [];
   const pass = devicePass(mupdf, page, region, lineBox);
-  // Release 5: the app's Bianchetto and Oscura boxes are no line's decoration (a thin one under a line looks like an underline).
-  const boxes = redactBoxes(content, page.getTransform() as Matrix);
-  if (boxes.length) pass.drawn = pass.drawn.filter((d) => d.paint !== "fill" || !boxes.some((b) => nearRect(b, d.bbox, 0.05)));
+  // The app's Bianchetto and Oscura boxes (release 5) and shapes (release 6) are no line's
+  // decoration: a thin box or a line drawn under a line looks like its underline.
+  const boxes = appBoxes(content, page.getTransform() as Matrix);
+  if (boxes.length) pass.drawn = pass.drawn.filter((d) => !boxes.some((b) => nearRect(b, d.bbox, 0.05)));
 
   // The paint of each character's glyph (the first drawn at its origin).
   const glyphPaint = hit.chars.map((ch) => {
